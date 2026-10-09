@@ -1,0 +1,284 @@
+# swell configuration (defaults)
+# Copy to ~/.config/swell/config.toml and edit; every key is optional.
+
+[runner]
+# false turns the module off
+enable = true
+# move on to the next queued command if one runs longer than this (it keeps running); 0 waits forever
+timeout_ms = 10000
+# print every command the runner starts to stderr
+log = false
+
+# Hooks: when an event matching `on` (a glob, e.g. "window.*") fires, run
+# the `run` commands with sh -c, one after another. Hooks run in a single
+# queue so their order is kept; `detach = true` starts the commands and
+# moves on without waiting. Commands get $SWELL_EVENT and the event's
+# details ($SWELL_WORKSPACE, $SWELL_APP_ID, ...). Defining any hook replaces
+# these defaults; `hook = []` disables them. Events: see README.
+
+[[runner.hook]]
+on = "workspace.empty"
+run = ["awww unpause"]
+detach = true
+
+[[runner.hook]]
+on = "workspace.occupied"
+run = ["awww pause"]
+
+[workspaces]
+# false turns the module off
+enable = true
+# keep workspaces numbered 1..n, renaming them after every change
+renumber = true
+# wait this long after the last workspace event before renumbering
+debounce_ms = 30
+
+[osd]
+# false turns the module off
+enable = true
+# layer-shell namespace of the surface
+namespace = "nixosd"
+# panel width, logical px
+width = 220
+# panel height, logical px
+height = 260
+# panel corner radius (0 = square)
+corner = 0
+# gap between the top edge (or bar) and the panel
+top_gap = 12
+# ring centre, px from the panel top
+ring_cy = 110
+# ring radius
+ring_radius = 88
+# ring stroke width
+ring_width = 10
+# snowflake radius, tip to centre
+logo_radius = 64
+# baseline of the icon + percentage text, px from the panel top
+text_baseline = 238
+# font family (cairo toy font API)
+font = "IosevkaTerm Nerd Font"
+# text size
+font_size = 22
+# panel background
+background = "#000000f0"
+# 1px panel border
+border = "#6a6a6a"
+# unfilled ring track
+track = "#333333"
+# snowflake dark lambdas
+nix_dark = "#8c8c8c"
+# snowflake light lambdas
+nix_light = "#cfcfcf"
+# ring gradient, dark end
+ring_dark = "#a0a0a0"
+# ring gradient, light end
+ring_light = "#d6d6d6"
+# second lap above 100%, dark end
+over_dark = "#eeeeee"
+# second lap above 100%, light end
+over_light = "#ffffff"
+# above 100%: the over-lap, text and logo pulse to this
+pulse_light = "#ff3b3b"
+# above 100%: pulse colour of the dark end
+pulse_dark = "#b81414"
+# ring and logo when muted
+muted = "#5a5a5a"
+# icon and percentage text
+text = "#f2f2f2"
+# strength of the red tint on the logo above 100%
+logo_pulse_alpha = 0.75
+# highest accepted level, percent (above 100 starts a second lap)
+max_pct = 200
+# time after the last update before retracting
+hide_timeout_ms = 1200
+# level change animation
+tween_ms = 260
+# drop-down / retract animation
+slide_ms = 220
+# one red pulse cycle above 100%
+pulse_ms = 900
+
+[popup]
+# false turns the module off
+enable = true
+# layer-shell namespace of the surface
+namespace = "popup"
+# panel width, logical px
+width = 560
+# tallest panel (with a media row) and the surface height
+height = 529
+# inner padding of the panel
+pad = 36
+# gap between the bottom edge (or bar) and the panel
+bottom_gap = 12
+# font family (cairo toy font API)
+font = "IosevkaTerm Nerd Font"
+# HH:MM size
+font_clock = 112
+# :SS size
+font_seconds = 30
+# date size
+font_date = 20
+# level, row and workspace strip size
+font_row = 18
+# compact workspace column size
+font_ws = 16
+# panel background
+background = "#000000f0"
+# 1px panel border
+border = "#6a6a6a"
+# bar tracks and separators
+track = "#333333"
+# level bar gradient, left end
+bar_dark = "#a0a0a0"
+# level bar gradient, right end
+bar_light = "#d6d6d6"
+# main text
+text = "#f2f2f2"
+# secondary text
+dim = "#949494"
+# labels, muted and missing values
+muted = "#5a5a5a"
+# focused workspace cell
+ws_focus = "#2e2e2e"
+# low battery and urgent workspaces
+warn = "#ff3b3b"
+# battery at or below this (discharging) is shown in warn
+battery_low_pct = 15
+# refresh period while shown
+refresh_ms = 1000
+# kill wpctl/nmcli/playerctl if one is still running after this
+command_timeout_ms = 3000
+# slide up into place
+pop_ms = 220
+# slide back down
+close_ms = 220
+# hold this long to reveal the details
+expand_delay_ms = 2000
+# clock-only to full panel
+expand_ms = 260
+# media row opening/closing while expanded
+media_ms = 260
+# clock baseline to date cap top
+gap_date = 28.0
+# date baseline to separator
+gap_sep = 34.0
+# separator to level cap top (and last row to footer)
+gap_cols = 34.0
+# level baseline to bar top
+gap_bar = 14.0
+# level bar height
+bar_h = 4.0
+# bar inset inside each level column
+col_inset = 14.0
+# bar bottom to first row cap top
+gap_rows = 40.0
+# row baseline to baseline
+row_step = 42.0
+# HH:MM to :SS
+sec_gap = 4.0
+# icon ink to its text
+icon_gap = 8.0
+# compact-panel level indicator size
+mini_font = 15.0
+# mini icon ink to its value
+mini_gap = 7.0
+# workspace strip cell height
+ws_h = 32.0
+# workspace strip cell minimum width
+ws_min_w = 36.0
+# text inset each side of a cell
+ws_text_pad = 11.0
+# gap between strip cells
+ws_gap = 2.0
+# lower separator to the strip
+gap_ws = 26.0
+# compact column cell minimum width
+wsc_min_w = 30.0
+# compact column cell maximum width
+wsc_max_w = 92.0
+# compact cells inset inside their row
+wsc_inset = 2.0
+# "more" arrow half-width
+wsc_arrow = 4.0
+# strip edge room for a "more" arrow
+ws_arrow_w = 16.0
+
+[overview]
+# false turns the module off
+enable = true
+# live window thumbnails (false: outlines only)
+capture = true
+# keep thumbnails updating (false: capture each once)
+live = true
+# live thumbnail update rate
+fps = 30
+# show the "New workspace" slot
+new_workspace_slot = true
+# pango font description
+font = "IosevkaTerm Nerd Font 12"
+# margin around the grid (px)
+layout_pad = 48.0
+# gap between workspace tiles (px)
+layout_gap = 36.0
+# workspace name row height (px)
+label_height = 30.0
+# space for the window title at the bottom (px)
+caption_height = 56.0
+# gap between spread-out tabbed/stacked windows (tree px)
+spread_gap = 24.0
+# pointer travel that starts a drag (px)
+drag_threshold = 8.0
+# hover time before the window preview grows
+zoom_delay_ms = 250
+# preview grow/shrink duration
+zoom_anim_ms = 140
+# preview width limit, fraction of the output
+zoom_max_width = 0.55
+# preview height limit, fraction of the output
+zoom_max_height = 0.65
+# no preview unless it grows at least this much
+zoom_min_gain = 1.2
+# preview distance from the output edges (px)
+zoom_margin = 16.0
+# scrim over the whole output
+background = "#121217f0"
+# workspace tile
+tile = "#24242b"
+# workspace tile border
+tile_border = "#42424d"
+# border of a visible (unfocused) workspace
+tile_visible = "#8c8c99"
+# selection, focused workspace name, drop markers
+accent = "#5e9cff"
+# urgent workspace name / window border
+urgent = "#ed5454"
+# window placeholder behind thumbnails
+window = "#383845"
+# window border
+window_border = "#575766"
+# hovered window/workspace border
+hover = "#ffffffa6"
+# text
+text = "#ebebf2"
+# dim text (labels without thumbnails, +)
+text_dim = "#9e9ead"
+# border of the focused workspace
+focused_border = "#5e9cff73"
+# tint of a workspace a window is dragged over
+drop_fill = "#5e9cff2e"
+# "New workspace" slot fill
+new_slot_fill = "#ffffff08"
+# "New workspace" slot fill while a window is dragged over it
+new_slot_drop_fill = "#5e9cff26"
+# shadow under dragged windows/workspaces
+shadow = "#00000059"
+# each of the 3 shadow rings of the preview
+zoom_shadow = "#0000001f"
+# title band at the bottom of the preview
+zoom_title_band = "#0d0d12c7"
+# opacity of a window/workspace while it is dragged away
+drag_source_alpha = 0.3
+# opacity of the dragged window/workspace under the pointer
+drag_ghost_alpha = 0.9
