@@ -11,7 +11,7 @@ All of it runs in a single event loop with one Wayland connection, one sway IPC 
 
 ## Decisions (from the user, 2026-10-08)
 - **One daemon.** `swell daemon` runs every module, and `swell <module> <cmd>` is a thin client over `$XDG_RUNTIME_DIR/swell.sock`, or `$SWELL_SOCK` if set.
-- **New CLI only.** There are no compat FIFOs or dynwork.sock. The user's sway config is never edited by us; we give them a snippet instead (see README).
+- **New CLI only.** There are no compat FIFOs or dynwork.sock. The user's sway config is never edited by us. `sway.config` in this repo is a migrated copy for them to install themselves (see below).
 - **Runtime config.** `~/.config/swell/config.toml` (TOML) holds every tunable, with no compile-time `#define`s for settings. The defaults equal the old tools' constants and the user's current flags. Two ways to apply a change:
   - **Rerun `swell daemon`.** This replaces a running daemon, so `exec_always swell daemon` picks up edits on `swaymsg reload`.
   - **`swell reload`.** This applies the change live.
@@ -25,7 +25,7 @@ All of it runs in a single event loop with one Wayland connection, one sway IPC 
 meson.build             top-level build; modules list their sources in src/modules/<m>/meson.build as <m>_src
 lib/i3ipc/              i3ipc-simple (swayverview's patched copy), compiled with -w
 lib/tomlc17/            TOML parser (MIT), compiled with -w
-protocols/              wlr-layer-shell XML (the rest comes from wayland-protocols)
+protocols/              wlr-layer-shell XML, plus the virtual pointer/keyboard XML for test/live/vin (the rest comes from wayland-protocols)
 src/main.c              CLI, daemon, config build/reload, built-in commands (reload/status/quit/help/config)
 src/core/               shared code, see the interfaces below
 src/modules/module.h    the module interface
@@ -34,8 +34,11 @@ src/modules/<m>/        osd, popup, overview, workspaces, runner
 test/                   meson tests
 config/config.example.toml   generated: `swell config --defaults`
 nix/                    package.nix, hm-module.nix
+sway.config             the user's ~/.config/sway/config migrated to swell, then reformatted (2026-10-08)
 ```
-Build and test with `meson setup build && ninja -C build && meson test -C build`.
+Build and test with `meson setup build && ninja -C build && meson test -C build` (13 tests).
+
+This is a git repo (initial commit `67e3835`, 2026-10-08, on the default branch, with no remote). Commit only when the user asks. The flake only sees files tracked by git, so `git add` new files before `nix build`.
 
 ## Core interfaces (fixed; ask the main agent before changing)
 - **`core/loop.h`:** `loop_add_fd`, `loop_add_timer` (timerfd, `loop_timer_arm(ms, interval)` / `loop_timer_arm_abs`), `loop_add_prepare(priority, fn)` (runs before every poll and may return a timeout; Wayland flushes at priority 100, so modules use < 100), `loop_watch_child(pid, fn)` (pidfd; the loop reaps). SIGINT/SIGTERM quit the loop, and SIGPIPE is ignored.
@@ -75,6 +78,9 @@ Build and test with `meson setup build && ninja -C build && meson test -C build`
 - [x] config.example.toml (generated; meson test `example-config-up-to-date` keeps it in sync), README with the sway snippet
 - [x] nix flake, package, devShell, home-manager module (HM eval checked; `nix build` passes and runs the test suite)
 - [x] nested-sway live test harness (`test/live/`) + parity pass (stress test, 15 bugs fixed; see the log)
+- [x] `sway.config`: migrated and formatted copy of the user's sway config (validated with `sway -C`)
+- [x] git repo initialised and everything committed
+- [ ] The user switches over: stop the old daemons, install `sway.config`, `swaymsg reload`. This is pending the user; afterwards, check the "Not verified" list in the real session.
 
 ## Notes / log (append below, newest last, prefix with who)
 
@@ -188,6 +194,16 @@ Build and test with `meson setup build && ninja -C build && meson test -C build`
   - `swell config` reads the default path (or `-c`), not the running daemon's `-c`.
 - main: `test/live/vin` (built by meson, not installed) is the overview agent's virtual pointer/keyboard driver: `vin m X Y | g X Y N | bd | bu | click | mclick | rclick | k [ctrl+][shift+]KEY | kd KEY | ku KEY | s MS`. `nested-sway.sh stop` deletes its dir unless KEEP=1.
 - main: the popup's command kill time is now `command_timeout_ms` (default 3000).
+
+- main: `sway.config` is a copy of `~/.config/sway/config`, which was only read and stays untouched.
+  - `set $swell /home/sudhirk/Projects/swell/swellshell/build/swell`; change it to `swell` once installed on PATH.
+  - Startup is `exec_always $swell daemon`, replacing the dynwork, awww-kill, nixosd and popup execs. `awww-daemon` and the other startups are kept.
+  - `$volosd` and the brightness keys call `$swell osd ...`. F10 calls `popup show` and `popup hide` (`--release`).
+  - `$mod+Tab` is `overview toggle`. Swipe up/down is `overview open/close`, and swipe left/right is `ws next/prev`. `$mod+1..0` is `ws goto 1..10`.
+  - The FIFO variables, `socat` and the `--font` flags are gone.
+  - It was then reformatted into sections with consistent 4-space indentation and aligned columns. A normalized comparison of directives against the original shows only the swell changes. `sway -C` passes.
+  - Before installing it, the old nixosd/popup/dynwork/awww-kill processes must be stopped, or both stacks react to the same events.
+- main: `git init` in swellshell/ and a single initial commit of every file (107). `.gitignore` covers `build*/`, `result*` and `.direnv/`.
 
 ## Adding a feature
 - **A new setting:** add a field to the module's config struct, its default to the defaults initialiser, and one `CFG_*` line with a doc string. Then regenerate `config/config.example.toml` with `build/swell config --defaults > config/config.example.toml`.
