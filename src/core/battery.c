@@ -56,7 +56,7 @@ static bool find_battery(char *name, size_t n) {
   return found;
 }
 
-bool battery_read(int *percent, bool *charging) {
+bool battery_read(int *percent, bool *on_ac) {
   char bat[256];
   long long cap;
   if (!find_battery(bat, sizeof(bat)) || !read_num(bat, "capacity", &cap))
@@ -64,8 +64,8 @@ bool battery_read(int *percent, bool *charging) {
   char status[32] = "";
   read_attr(bat, "status", status, sizeof(status));
   *percent = (int)cap;
-  *charging = !strcmp(status, "Charging") || !strcmp(status, "Full") ||
-              !strcmp(status, "Not charging");
+  *on_ac = !strcmp(status, "Charging") || !strcmp(status, "Full") ||
+           !strcmp(status, "Not charging");
   return true;
 }
 
