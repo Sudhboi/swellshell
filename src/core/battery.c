@@ -69,11 +69,16 @@ bool battery_read(int *percent, bool *charging) {
   return true;
 }
 
-bool battery_power(double *watts) {
+bool battery_power(double *watts, bool *charging) {
   char bat[256], status[32] = "";
   if (!find_battery(bat, sizeof(bat)) ||
-      !read_attr(bat, "status", status, sizeof(status)) ||
-      strcmp(status, "Discharging") != 0)
+      !read_attr(bat, "status", status, sizeof(status)))
+    return false;
+  if (!strcmp(status, "Charging"))
+    *charging = true;
+  else if (!strcmp(status, "Discharging"))
+    *charging = false;
+  else
     return false;
   /* power_now is in µW; batteries without it report current_now (µA) and
    * voltage_now (µV). Some drivers sign the rate. */

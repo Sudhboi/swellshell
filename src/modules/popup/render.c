@@ -392,7 +392,8 @@ static void draw_stats(cairo_t *cr, const struct info *in, double base)
 		snprintf(cpu, sizeof cpu, "--   ");
 	else
 		snprintf(cpu, sizeof cpu, "%d%%   ", in->cpu);
-	snprintf(pwr, sizeof pwr, "%.1fW   ", in->power_w);
+	snprintf(pwr, sizeof pwr, "%s%.2fW   ", in->power_charging ? "▲" : "",
+	         in->power_w);
 	snprintf(mem, sizeof mem, "%.1f/%.1fG   ",
 	         in->mem_used_gib, in->mem_total_gib);
 	if (d > 0)
@@ -402,7 +403,8 @@ static void draw_stats(cairo_t *cr, const struct info *in, double base)
 	else
 		snprintf(up, sizeof up, "%ldm", m);
 
-	/* The power draw is shown only on battery, after the CPU. */
+	/* The battery's power, after the CPU: the draw, or ▲charge rate (btop's
+	 * charging arrow). */
 	struct piece p[8] = {
 		{ "CPU ", C->muted, false }, { cpu, C->dim, false },
 	};

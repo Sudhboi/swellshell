@@ -112,7 +112,9 @@ int main(int argc, char **argv)
 	snprintf(c.media_artist, sizeof c.media_artist,
 	         "Berliner Philharmoniker, Herbert von Karajan");
 	c.charging = true;
-	c.has_power = false;
+	c.has_power = true;
+	c.power_charging = true;
+	c.power_w = 38.71;
 	c.battery = 100;
 	c.volume = 130;
 	c.net = NET_WIRED;
@@ -131,6 +133,7 @@ int main(int argc, char **argv)
 	/* the widest stats row: on battery, with every field long */
 	struct info g = c;
 	g.charging = false;
+	g.power_charging = false;
 	g.has_power = true;
 	g.power_w = 45.62;
 	g.mem_used_gib = 27.3;

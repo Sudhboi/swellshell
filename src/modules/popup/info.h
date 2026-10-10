@@ -25,8 +25,9 @@ struct info {
   bool has_battery;
   int battery;   /* percent */
   bool charging; /* Charging, or Full/Not charging on AC */
-  bool has_power; /* on battery, with a known discharge rate */
-  double power_w; /* system power draw, watts */
+  bool has_power;      /* the battery reports a charge/discharge rate */
+  bool power_charging; /* power_w is the charge rate, not the system's draw */
+  double power_w;      /* watts */
 
   bool has_volume;
   int volume; /* percent, may exceed 100 */

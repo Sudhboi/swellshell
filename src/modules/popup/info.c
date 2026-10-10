@@ -50,7 +50,7 @@ static void copy_str(char *dst, size_t n, const char *src)
 static void read_battery(struct info *in)
 {
 	in->has_battery = battery_read(&in->battery, &in->charging);
-	in->has_power = in->has_battery && battery_power(&in->power_w);
+	in->has_power = in->has_battery && battery_power(&in->power_w, &in->power_charging);
 }
 
 static void read_brightness(struct info *in)
