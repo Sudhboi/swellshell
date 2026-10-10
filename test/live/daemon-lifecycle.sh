@@ -41,6 +41,8 @@ enable = false
 enable = false
 [overview]
 enable = false
+[wallpaper]
+enable = false
 [runner]
 hook = []
 EOF
