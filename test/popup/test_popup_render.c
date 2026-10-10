@@ -48,6 +48,8 @@ static struct info normal(void)
 	in.has_battery = true;
 	in.battery = 78;
 	in.charging = false;
+	in.has_power = true;
+	in.power_w = 7.4;
 	in.has_volume = true;
 	in.volume = 45;
 	in.has_brightness = true;
@@ -110,6 +112,7 @@ int main(int argc, char **argv)
 	snprintf(c.media_artist, sizeof c.media_artist,
 	         "Berliner Philharmoniker, Herbert von Karajan");
 	c.charging = true;
+	c.has_power = false;
 	c.battery = 100;
 	c.volume = 130;
 	c.net = NET_WIRED;
@@ -125,6 +128,14 @@ int main(int argc, char **argv)
 	c.ws[2].focused = false;
 	c.ws[11].focused = true;
 	rc |= dump(&c, dir, "long_media");
+	/* the widest stats row: on battery, with every field long */
+	struct info g = c;
+	g.charging = false;
+	g.has_power = true;
+	g.power_w = 45.62;
+	g.mem_used_gib = 27.3;
+	g.mem_total_gib = 31.0;
+	rc |= dump(&g, dir, "wide_stats");
 	rc |= dump_anim(&c, dir, "anim_compact_many_ws", 1, 0);
 	rc |= dump_anim(&c, dir, "anim_expand_quarter_many_ws", 1, 0.25);
 
@@ -136,6 +147,7 @@ int main(int argc, char **argv)
 	d.net_name[0] = '\0';
 	d.media_artist[0] = '\0';
 	d.charging = true;
+	d.has_power = false;
 	d.net_signal = 20;
 	d.ws_count = 0;
 	rc |= dump(&d, dir, "missing");
@@ -143,6 +155,7 @@ int main(int argc, char **argv)
 
 	struct info e = normal();
 	e.charging = true;
+	e.has_power = false;
 	e.battery = 43;
 	e.volume = 10;
 	e.net_signal = 20;

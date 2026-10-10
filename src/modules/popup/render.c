@@ -385,13 +385,14 @@ static void draw_media(cairo_t *cr, const struct info *in, double base)
 
 static void draw_stats(cairo_t *cr, const struct info *in, double base)
 {
-	char cpu[16], mem[32], up[32];
+	char cpu[16], pwr[24], mem[32], up[32];
 	long m = in->uptime_s / 60, h = m / 60, d = h / 24;
 
 	if (in->cpu < 0)
 		snprintf(cpu, sizeof cpu, "--   ");
 	else
 		snprintf(cpu, sizeof cpu, "%d%%   ", in->cpu);
+	snprintf(pwr, sizeof pwr, "%.1fW   ", in->power_w);
 	snprintf(mem, sizeof mem, "%.1f/%.1fG   ",
 	         in->mem_used_gib, in->mem_total_gib);
 	if (d > 0)
@@ -401,12 +402,20 @@ static void draw_stats(cairo_t *cr, const struct info *in, double base)
 	else
 		snprintf(up, sizeof up, "%ldm", m);
 
-	struct piece p[] = {
+	/* The power draw is shown only on battery, after the CPU. */
+	struct piece p[8] = {
 		{ "CPU ", C->muted, false }, { cpu, C->dim, false },
-		{ "RAM ", C->muted, false }, { mem, C->dim, false },
-		{ "up ",  C->muted, false }, { up,  C->dim, false },
 	};
-	draw_pieces(cr, C->width / 2.0, base, p, 6);
+	int n = 2;
+	if (in->has_power) {
+		p[n++] = (struct piece){ "PWR ", C->muted, false };
+		p[n++] = (struct piece){ pwr, C->dim, false };
+	}
+	p[n++] = (struct piece){ "RAM ", C->muted, false };
+	p[n++] = (struct piece){ mem, C->dim, false };
+	p[n++] = (struct piece){ "up ", C->muted, false };
+	p[n++] = (struct piece){ up, C->dim, false };
+	draw_pieces(cr, C->width / 2.0, base, p, n);
 }
 
 /* Height of the clock-only panel. */

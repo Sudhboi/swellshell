@@ -9,4 +9,9 @@
  * Full/Not charging on AC). False if there is none. */
 bool battery_read(int *percent, bool *charging);
 
+/* The system's power draw in watts, as the battery's discharge rate. False
+ * unless the battery is discharging (on AC, the battery's rate isn't the
+ * system's draw). */
+bool battery_power(double *watts);
+
 #endif

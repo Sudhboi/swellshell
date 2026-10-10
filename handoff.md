@@ -238,3 +238,4 @@ This is a git repo (initial commit `67e3835`, 2026-10-08, on the default branch,
 - A real media start/stop tween.
 - XWayland windows in the overview.
 - The systemd user service from the home-manager module in a real login.
+- main (2026-10-10): **popup power draw.** The expanded popup's stats row shows `PWR 12.3W` after the CPU when on battery. The value comes from `battery_power()` in core/battery.c: the battery's `power_now`, or `current_now × voltage_now` if there is no `power_now`. On AC it is hidden, because the battery reports 0 or its charge rate, not the system's draw; RAPL `energy_uj` is root-only here. The render test gained `wide_stats.png`, the widest row, and it fits at the default width. Not verified on a discharging battery (the machine was on AC).
