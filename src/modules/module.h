@@ -2,8 +2,9 @@
  * popup, ...). Adding one:
  *   1. src/modules/<name>/<name>.c defining `const struct swell_module
  *      <name>_module`,
- *   2. one line in src/modules/modules.c,
- *   3. its sources in meson.build.
+ *   2. src/modules/<name>/meson.build listing its sources as <name>_src,
+ *   3. <name> in the module list in meson.build and in src/modules/modules.c,
+ *   4. test/<name>/meson.build, and <name> in the list in test/meson.build.
  *
  * Configuration is handled by the core: it copies `defaults`, applies the
  * [<name>] section of config.toml through `fields`, calls `configure` for

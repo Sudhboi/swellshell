@@ -10,7 +10,8 @@ extern const struct swell_module workspaces_module;
 extern const struct swell_module runner_module;
 extern const struct swell_module wallpaper_module;
 
-/* Initialisation order: the runner first so it sees the others' events. */
+/* Initialisation order: the runner first so it sees the others' events.
+ * Every module here is also listed in meson.build and test/meson.build. */
 const struct swell_module *const swell_modules[] = {
     &runner_module,     &workspaces_module, &osd_module,
     &popup_module,      &overview_module,   &wallpaper_module,

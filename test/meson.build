@@ -3,7 +3,8 @@ test('config', test_config)
 
 subdir('core')
 
-# Per-module tests live in test/<module>/meson.build.
+# Per-module tests live in test/<module>/meson.build. Keep this list in sync
+# with the one in ../meson.build and src/modules/modules.c.
 foreach m : ['osd', 'popup', 'overview', 'workspaces', 'runner', 'wallpaper']
   subdir(m)
 endforeach

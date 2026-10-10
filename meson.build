@@ -82,6 +82,7 @@ core_dep = declare_dependency(link_with: core, include_directories: core_inc,
   dependencies: deps)
 
 # ---- modules: each subdir lists its sources in a <name>_src variable ----
+# Keep this list in sync with src/modules/modules.c and test/meson.build.
 module_src = files('src/modules/modules.c')
 foreach m : ['osd', 'popup', 'overview', 'workspaces', 'runner', 'wallpaper']
   subdir('src/modules' / m)
