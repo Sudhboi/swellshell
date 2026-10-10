@@ -51,6 +51,10 @@ static void *build_config(const struct swell_module *m,
   extra[n++] = "enable";
   for (int i = 0; m->extra_keys && m->extra_keys[i] && n < 31; ++i)
     extra[n++] = m->extra_keys[i];
+  if (n == 31 && m->extra_keys[n - 1])
+    warn("%s: more than 30 extra config keys; raise the limit in "
+         "build_config",
+         m->name);
   extra[n] = NULL;
   cfg_apply(sec, m->name, m->fields, m->nfields, cfg, extra);
 

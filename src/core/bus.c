@@ -57,6 +57,8 @@ void bus_emit(const char *name, ...) {
   char *s;
   while ((s = va_arg(ap, char *)) && n < (int)ARRAY_LEN(env) - 1)
     env[n++] = s;
+  if (s)
+    warn("bus: %s: more than %d variables, the rest are dropped", name, n);
   va_end(ap);
   env[n] = NULL;
   bus_emitv(name, env);
