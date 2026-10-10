@@ -1,6 +1,6 @@
 # swell
 
-A small shell for sway in one daemon. It merges five earlier tools:
+A small shell for sway in one daemon. It merges five earlier tools and adds a live wallpaper:
 
 | module | was | what it does |
 |---|---|---|
@@ -9,6 +9,7 @@ A small shell for sway in one daemon. It merges five earlier tools:
 | `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav |
 | `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n |
 | `runner` | awww-kill | runs shell commands on events (by default: pauses awww while the focused workspace has windows) |
+| `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar and a turning Nix snowflake; animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
 
 Every module runs in a single event loop. They share one Wayland connection and one sway IPC connection, and are controlled through one socket:
 
@@ -19,6 +20,7 @@ swell popup show|hide|toggle
 swell overview [open|close|toggle]
 swell ws next|prev|goto N|reorder
 swell runner fire EVENT [KEY=VALUE...] | list
+swell wallpaper status | percent N|auto
 swell reload | status | quit | help
 swell config [--defaults]    # print the effective configuration as TOML
 ```
@@ -63,6 +65,7 @@ Hook `on` patterns are globs (`window.*`). Commands run through `sh -c` in a sin
 | `popup.show`, `popup.hide`, `popup.expand` | |
 | `overview.open`, `overview.close` | |
 | `workspaces.renumber` | the workspaces were renamed to 1..n |
+| `wallpaper.animate`, `wallpaper.freeze` | the wallpaper started or stopped animating |
 
 ## Sway config
 
@@ -70,7 +73,6 @@ Replace the old tools' lines with:
 
 ```
 exec_always swell daemon
-exec awww-daemon
 
 set $volosd swell osd vol $(pactl get-sink-volume @DEFAULT_SINK@ | awk 'NR==1{print substr($5,1,length($5)-1)}') $(pactl get-sink-mute @DEFAULT_SINK@ | grep -q yes && echo mute)
 bindsym XF86AudioRaiseVolume exec pactl set-sink-volume @DEFAULT_SINK@ +5% && $volosd
@@ -92,7 +94,7 @@ bindsym $mod+1 exec swell ws goto 1
 # ... through $mod+0 -> swell ws goto 10
 ```
 
-Remove the old `dynwork daemon`, `awww-kill`, `nixosd` and `popup` exec lines, the FIFO variables, and the `socat` bindings. `exec_always` means a `swaymsg reload` restarts the daemon with the current config. If you use the home-manager module's systemd service instead, drop the `exec_always` line.
+Remove the old `dynwork daemon`, `awww-kill`, `nixosd` and `popup` exec lines, `awww-daemon` and any wallpaper script (the `wallpaper` module draws the wallpaper; with awww gone, the runner's default awww hooks have nothing to do: set `hook = []` under `[runner]` or replace them), the FIFO variables, and the `socat` bindings. `exec_always` means a `swaymsg reload` restarts the daemon with the current config. If you use the home-manager module's systemd service instead, drop the `exec_always` line.
 
 ## Building
 

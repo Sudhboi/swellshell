@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "battery.h"
 #include "util.h"
 
 /* --- small file helpers --- */
@@ -48,28 +49,7 @@ static void copy_str(char *dst, size_t n, const char *src)
 
 static void read_battery(struct info *in)
 {
-	DIR *d = opendir("/sys/class/power_supply");
-	in->has_battery = false;
-	if (!d)
-		return;
-	struct dirent *e;
-	while ((e = readdir(d))) {
-		if (strncmp(e->d_name, "BAT", 3))
-			continue;
-		char path[300], status[32] = "";
-		long cap;
-		snprintf(path, sizeof(path), "/sys/class/power_supply/%s/capacity", e->d_name);
-		if (!read_long(path, &cap))
-			continue;
-		snprintf(path, sizeof(path), "/sys/class/power_supply/%s/status", e->d_name);
-		read_line(path, status, sizeof(status));
-		in->has_battery = true;
-		in->battery = (int)cap;
-		in->charging = !strcmp(status, "Charging") || !strcmp(status, "Full") ||
-		               !strcmp(status, "Not charging");
-		break;
-	}
-	closedir(d);
+	in->has_battery = battery_read(&in->battery, &in->charging);
 }
 
 static void read_brightness(struct info *in)

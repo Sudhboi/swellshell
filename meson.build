@@ -30,6 +30,7 @@ protocol_xml = [
   wlp_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
   wlp_dir / 'stable/tablet/tablet-v2.xml',
   wlp_dir / 'staging/cursor-shape/cursor-shape-v1.xml',
+  wlp_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml',
   wlp_dir / 'staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml',
   wlp_dir / 'staging/ext-image-capture-source/ext-image-capture-source-v1.xml',
   wlp_dir / 'staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml',
@@ -61,11 +62,13 @@ tomlc17_dep = declare_dependency(link_with: tomlc17,
 core_inc = include_directories('src/core', 'src/modules')
 core_src = files(
   'src/core/anim.h',
+  'src/core/battery.c',
   'src/core/buffer.c',
   'src/core/bus.c',
   'src/core/config.c',
   'src/core/ipc.c',
   'src/core/loop.c',
+  'src/core/nixlogo.c',
   'src/core/surface.c',
   'src/core/sway.c',
   'src/core/util.c',
@@ -80,7 +83,7 @@ core_dep = declare_dependency(link_with: core, include_directories: core_inc,
 
 # ---- modules: each subdir lists its sources in a <name>_src variable ----
 module_src = files('src/modules/modules.c')
-foreach m : ['osd', 'popup', 'overview', 'workspaces', 'runner']
+foreach m : ['osd', 'popup', 'overview', 'workspaces', 'runner', 'wallpaper']
   subdir('src/modules' / m)
   module_src += get_variable(m + '_src')
 endforeach

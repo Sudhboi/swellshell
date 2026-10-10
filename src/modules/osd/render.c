@@ -1,6 +1,7 @@
 /* Cairo drawing of one OSD frame. */
 #include "render.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -148,8 +149,14 @@ void osd_render_frame(cairo_t *cr, const struct osd_config *c,
 
   draw_ring(cr, c, s);
   cairo_push_group(cr);
-  nixlogo_draw(cr, c, c->width / 2.0, c->ring_cy, c->logo_radius,
-               s->level * 2 * PI, s->kind == OSD_VOLUME && s->muted, 1.0);
+  bool grey = s->kind == OSD_VOLUME && s->muted;
+  /* Muted: both shades in c->muted, the light lambdas at 75%. */
+  uint32_t dark = grey ? c->muted : c->nix_dark;
+  uint32_t light = grey ? (c->muted & ~0xffu) |
+                              (uint32_t)lround((c->muted & 0xff) * 0.75)
+                        : c->nix_light;
+  nixlogo_draw(cr, c->width / 2.0, c->ring_cy, c->logo_radius,
+               s->level * 2 * PI, dark, light, 1.0);
   cairo_pattern_t *logo = cairo_pop_group(cr);
   cairo_set_source(cr, logo);
   cairo_paint(cr);

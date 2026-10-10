@@ -282,3 +282,57 @@ zoom_title_band = "#0d0d12c7"
 drag_source_alpha = 0.3
 # opacity of the dragged window/workspace under the pointer
 drag_ghost_alpha = 0.9
+
+[wallpaper]
+# false turns the module off
+enable = true
+# layer-shell namespace of the surfaces
+namespace = "swell-wallpaper"
+# frame rate cap at the resting spin (0 = the display rate)
+fps = 30
+# frame rate cap while the pointer spins the logo faster (0 = the display rate)
+fps_spin = 0
+# freeze after this long without input (0 = never)
+idle_timeout_s = 300
+# battery re-read period while animating
+battery_interval_s = 30
+# background
+background = "#000000"
+# battery bar at full pulse brightness
+bar = "#ffffff"
+# snowflake
+logo = "#181818"
+# snowflake, every other lambda
+logo_alt = "#111111"
+# bar top edge (px on a 2880 px wide output; all sizes scale with the output width)
+bar_top = 10.0
+# bar length, px
+bar_width = 600.0
+# bar thickness, px
+bar_height = 10.0
+# outline width, px
+bar_border = 2.0
+# gap between the outline and the fill, px
+bar_gap = 2.0
+# bar brightness between pulses (0..1)
+bar_min = 0.0980392
+# time between pulses at 50% (scales with the percent)
+pulse_period_s = 4.0
+# shortest time between pulses (near 0%)
+pulse_period_min_s = 0.5
+# pulse fade width at 50% (Gaussian sigma)
+pulse_sigma_s = 0.4
+# time at full brightness per pulse at 50%
+pulse_hold_s = 1.0
+# fill change animation
+tween_ms = 600
+# snowflake radius, px
+logo_radius = 225.0
+# snowflake rotation, degrees/s clockwise
+spin_speed = 7.5
+# extra speed (x spin_speed) per px of pointer travel
+spin_gain = 0.02
+# most extra speed (x spin_speed)
+spin_max = 12.0
+# extra speed decay time constant
+spin_decay_s = 1.2

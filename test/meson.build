@@ -4,7 +4,7 @@ test('config', test_config)
 subdir('core')
 
 # Per-module tests live in test/<module>/meson.build.
-foreach m : ['osd', 'popup', 'overview', 'workspaces', 'runner']
+foreach m : ['osd', 'popup', 'overview', 'workspaces', 'runner', 'wallpaper']
   subdir(m)
 endforeach
 subdir('live')

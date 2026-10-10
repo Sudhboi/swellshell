@@ -9,6 +9,7 @@
 
 #include "cursor-shape-v1-client-protocol.h"
 #include "ext-foreign-toplevel-list-v1-client-protocol.h"
+#include "ext-idle-notify-v1-client-protocol.h"
 #include "ext-image-capture-source-v1-client-protocol.h"
 #include "ext-image-copy-capture-v1-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
@@ -368,6 +369,9 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
   } else if (strcmp(iface, wp_cursor_shape_manager_v1_interface.name) == 0) {
     wl->cursor_shape =
         wl_registry_bind(reg, name, &wp_cursor_shape_manager_v1_interface, 1);
+  } else if (strcmp(iface, ext_idle_notifier_v1_interface.name) == 0) {
+    wl->idle_notifier =
+        wl_registry_bind(reg, name, &ext_idle_notifier_v1_interface, 1);
   } else if (strcmp(iface, ext_foreign_toplevel_list_v1_interface.name) == 0) {
     wl->toplevel_list_name = name;
     wl->toplevel_list_version = version;
@@ -507,6 +511,8 @@ void wl_destroy(struct swell_wl *wl) {
   if (wl->source_manager)
     ext_foreign_toplevel_image_capture_source_manager_v1_destroy(
         wl->source_manager);
+  if (wl->idle_notifier)
+    ext_idle_notifier_v1_destroy(wl->idle_notifier);
   if (wl->cursor_shape)
     wp_cursor_shape_manager_v1_destroy(wl->cursor_shape);
   if (wl->fractional)

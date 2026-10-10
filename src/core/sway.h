@@ -52,6 +52,10 @@ void sway_workspaces_invalidate(void);
  * bus now, even if it did not change since the last report. */
 void sway_emit_focused_state(void);
 
+/* The last reported state of the focused workspace: 1 empty, 0 occupied,
+ * -1 unknown (not connected, or not queried yet). */
+int sway_focused_empty(void);
+
 /* Run a sway command (printf-style). Returns 0 if every command
  * succeeded, otherwise warns and returns -1. */
 int sway_command(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

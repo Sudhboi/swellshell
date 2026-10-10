@@ -1,8 +1,6 @@
 /* The Nix snowflake, drawn as six filled lambda polygons. */
 #include "nixlogo.h"
 
-#include <stdint.h>
-
 static const double PI = 3.14159265358979323846;
 
 /* One lambda from NixOS/nixos-artwork logo/nix-snowflake-colours.svg,
@@ -21,8 +19,8 @@ static void set_rgba(cairo_t *cr, uint32_t c, double alpha) {
                         (c & 0xff) / 255.0 * alpha);
 }
 
-void nixlogo_draw(cairo_t *cr, const struct osd_config *c, double cx,
-                  double cy, double r, double angle, bool grey, double alpha) {
+void nixlogo_draw(cairo_t *cr, double cx, double cy, double r, double angle,
+                  uint32_t dark, uint32_t light, double alpha) {
   cairo_save(cr);
   cairo_translate(cr, cx, cy);
   cairo_rotate(cr, angle);
@@ -31,10 +29,7 @@ void nixlogo_draw(cairo_t *cr, const struct osd_config *c, double cx,
 
   for (int k = 0; k < 6; k++) {
     /* Even k is dark in the SVG, odd k light. */
-    if (grey)
-      set_rgba(cr, c->muted, alpha * (k % 2 ? 0.75 : 1.0));
-    else
-      set_rgba(cr, k % 2 ? c->nix_light : c->nix_dark, alpha);
+    set_rgba(cr, k % 2 ? light : dark, alpha);
 
     cairo_save(cr);
     cairo_rotate(cr, k * PI / 3.0);

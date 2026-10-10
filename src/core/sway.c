@@ -239,6 +239,12 @@ static void sync_focused_empty(void) {
   free(tree);
 }
 
+int sway_focused_empty(void) {
+  if (!connected || focused_empty == EMPTY_UNKNOWN)
+    return -1;
+  return focused_empty == EMPTY_YES;
+}
+
 void sway_emit_focused_state(void) {
   if (!connected)
     return;
