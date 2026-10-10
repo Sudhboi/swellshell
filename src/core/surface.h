@@ -1,7 +1,6 @@
 /* A single layer-shell surface that is created on show and destroyed on
- * hide, with double-buffered shm, frame-callback pacing and fractional
- * scaling (wp_fractional_scale_v1 + viewporter, falling back to the integer
- * output scale). Used by the osd and the popup. */
+ * hide, with double-buffered shm, frame-callback pacing and integer
+ * output scaling. Used by the osd and the popup. */
 #ifndef SWELL_SURFACE_H
 #define SWELL_SURFACE_H
 
@@ -39,7 +38,7 @@ void layer_surface_hide(struct layer_surface *s);
 bool layer_surface_shown(struct layer_surface *s);
 /* Schedule a redraw (immediate unless a frame callback is pending). */
 void layer_surface_redraw(struct layer_surface *s);
-/* The current buffer scale (fractional when supported). */
-double layer_surface_scale(struct layer_surface *s);
+/* The current buffer scale: the integer output scale. */
+int layer_surface_scale(struct layer_surface *s);
 
 #endif

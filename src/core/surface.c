@@ -1,13 +1,10 @@
 #include "surface.h"
 
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "buffer.h"
-#include "fractional-scale-v1-client-protocol.h"
 #include "util.h"
-#include "viewporter-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 struct layer_surface {
@@ -18,20 +15,18 @@ struct layer_surface {
 
   struct wl_surface *surface;
   struct zwlr_layer_surface_v1 *layer;
-  struct wp_viewport *viewport;
-  struct wp_fractional_scale_v1 *fractional;
   struct wl_callback *frame_cb;
   struct buffer *bufs[2];
   bool configured, dirty;
-  int int_scale;     /* from wl_surface.enter */
-  uint32_t scale120; /* preferred fractional scale, 0 if unknown */
+  /* From wl_surface.enter. Like the old nixosd and popup, we draw at the
+   * integer output scale (2 on a 1.5x output) and let the compositor
+   * downscale; native fractional rendering hints text differently. */
+  int int_scale;
 };
 
 static void draw_frame(struct layer_surface *s);
 
-double layer_surface_scale(struct layer_surface *s) {
-  if (s->scale120 && s->viewport)
-    return s->scale120 / 120.0;
+int layer_surface_scale(struct layer_surface *s) {
   return s->int_scale > 0 ? s->int_scale : 1;
 }
 
@@ -64,10 +59,9 @@ static const struct wl_callback_listener frame_listener = {.done = frame_done};
 static void draw_frame(struct layer_surface *s) {
   if (!s->surface || !s->configured)
     return;
-  double scale = layer_surface_scale(s);
-  bool fractional = s->scale120 && s->viewport;
-  int pw = (int)lround(s->opts.width * scale);
-  int ph = (int)lround(s->opts.height * scale);
+  int scale = layer_surface_scale(s);
+  int pw = s->opts.width * scale;
+  int ph = s->opts.height * scale;
   struct buffer *b = get_buffer(s, pw, ph);
   if (!b) {
     /* Both buffers are busy; a release arrives with the next frame. */
@@ -84,7 +78,7 @@ static void draw_frame(struct layer_surface *s) {
   cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
   cairo_paint(cr);
   cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-  cairo_scale(cr, (double)pw / s->opts.width, (double)ph / s->opts.height);
+  cairo_scale(cr, scale, scale);
   bool more = s->draw(cr, s->data);
   cairo_destroy(cr);
   cairo_surface_flush(b->cairo);
@@ -94,12 +88,7 @@ static void draw_frame(struct layer_surface *s) {
     s->frame_cb = wl_surface_frame(s->surface);
     wl_callback_add_listener(s->frame_cb, &frame_listener, s);
   }
-  if (fractional) {
-    wl_surface_set_buffer_scale(s->surface, 1);
-    wp_viewport_set_destination(s->viewport, s->opts.width, s->opts.height);
-  } else {
-    wl_surface_set_buffer_scale(s->surface, (int)scale);
-  }
+  wl_surface_set_buffer_scale(s->surface, scale);
   wl_surface_attach(s->surface, b->wl_buffer, 0, 0);
   wl_surface_damage_buffer(s->surface, 0, 0, pw, ph);
   wl_surface_commit(s->surface);
@@ -148,19 +137,6 @@ static const struct wl_surface_listener surface_listener = {
     .leave = surface_leave,
 };
 
-static void preferred_scale(void *data, struct wp_fractional_scale_v1 *f,
-                            uint32_t scale120) {
-  struct layer_surface *s = data;
-  if (s->scale120 != scale120) {
-    s->scale120 = scale120;
-    layer_surface_redraw(s);
-  }
-}
-
-static const struct wp_fractional_scale_v1_listener fractional_listener = {
-    .preferred_scale = preferred_scale,
-};
-
 struct layer_surface *layer_surface_create(struct swell_wl *wl,
                                            layer_draw_fn draw, void *data) {
   struct layer_surface *s = xcalloc(1, sizeof(*s));
@@ -185,13 +161,6 @@ void layer_surface_show(struct layer_surface *s, const struct layer_opts *opts) 
   s->opts = *opts;
   s->surface = wl_compositor_create_surface(wl->compositor);
   wl_surface_add_listener(s->surface, &surface_listener, s);
-  if (wl->viewporter)
-    s->viewport = wp_viewporter_get_viewport(wl->viewporter, s->surface);
-  if (wl->fractional && s->viewport) {
-    s->fractional = wp_fractional_scale_manager_v1_get_fractional_scale(
-        wl->fractional, s->surface);
-    wp_fractional_scale_v1_add_listener(s->fractional, &fractional_listener, s);
-  }
   if (opts->click_through) {
     struct wl_region *empty = wl_compositor_create_region(wl->compositor);
     wl_surface_set_input_region(s->surface, empty);
@@ -219,14 +188,6 @@ void layer_surface_hide(struct layer_surface *s) {
     wl_callback_destroy(s->frame_cb);
     s->frame_cb = NULL;
   }
-  if (s->fractional) {
-    wp_fractional_scale_v1_destroy(s->fractional);
-    s->fractional = NULL;
-  }
-  if (s->viewport) {
-    wp_viewport_destroy(s->viewport);
-    s->viewport = NULL;
-  }
   if (s->layer) {
     zwlr_layer_surface_v1_destroy(s->layer);
     s->layer = NULL;
@@ -242,7 +203,6 @@ void layer_surface_hide(struct layer_surface *s) {
   }
   s->configured = false;
   s->dirty = false;
-  s->scale120 = 0;
 }
 
 bool layer_surface_shown(struct layer_surface *s) { return s->surface != NULL; }
