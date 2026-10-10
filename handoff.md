@@ -17,7 +17,7 @@ All of it runs in a single event loop with one Wayland connection, one sway IPC 
 - **Runtime config.** `~/.config/swell/config.toml` (TOML) holds every tunable, with no compile-time `#define`s for settings. The defaults equal the old tools' constants and the user's current flags. Two ways to apply a change:
   - **Rerun `swell daemon`.** This replaces a running daemon, so `exec_always swell daemon` picks up edits on `swaymsg reload`.
   - **`swell reload`.** This applies the change live.
-- **The runner (formerly awww-kill) is a general event-hook runner.** The `[[runner.hook]]` entries default to awww pause/unpause.
+- **The runner (formerly awww-kill) is a general event-hook runner.** It has no hooks by default (changed 2026-10-10 by the user: the wallpaper module replaced awww; it used to default to awww pause/unpause).
 - **Build:** Meson, plus a nix flake with the package, a devShell and a home-manager module.
 - **Feature parity with all five tools is the goal.** Keep going until it is reached.
 - **Never touch the user's running session.** Don't install anything, edit `~/.config/sway`, or kill their daemons (nixosd, popup, dynwork and awww-kill are running). Live tests use a scratch `SWELL_SOCK` or a nested headless sway.
@@ -104,8 +104,7 @@ This is a git repo (initial commit `67e3835`, 2026-10-08, on the default branch,
 - main: runner module (`src/modules/runner/`).
   - `[[runner.hook]]` takes `on` (string or array of fnmatch globs), `run` (string or array) and `detach` (bool).
   - All matching commands go into one serial queue: each waits for the previous via pidfd, with `timeout_ms` (default 10 s) after which the queue moves on. `detach` double-forks and doesn't wait.
-  - Defining any hook replaces the defaults; `hook = []` means none.
-  - The defaults reproduce awww-kill: `workspace.empty` gives a detached `awww unpause`, and `workspace.occupied` gives a waited `awww pause`.
+  - No hooks by default (since 2026-10-10; they used to reproduce awww-kill: a detached `awww unpause` on `workspace.empty`, a waited `awww pause` on `workspace.occupied`).
   - The transition dedupe (awww-kill's `daemon_state`) lives in core/sway.c (`set_focused_empty`), so the events fire only on change, plus once whenever the runner starts (`sway_emit_focused_state`, called from runner init, which also covers it being enabled by `swell reload`).
   - Commands: `swell runner fire EVENT [K=V..]` and `swell runner list`. Config keys: `timeout_ms` and `log`.
 - main: `test/live/nested-sway.sh start|stop` is a nested headless sway (pixman, scale 1.25) with a scratch SWELL_SOCK and SWELL_CONFIG. `zenity` works as a test window; foot isn't installed.

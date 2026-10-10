@@ -1,4 +1,4 @@
-/* Hook parsing, defaults and event matching. */
+/* Hook parsing and event matching. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,14 +20,6 @@ static struct cfg_doc load(const char *text) {
 
 int main(void) {
   struct hook_list l = {0};
-  hooks_set_defaults(&l);
-  assert(l.n == 2);
-  assert(hook_matches(&l.hooks[0], "workspace.empty"));
-  assert(!hook_matches(&l.hooks[0], "workspace.occupied"));
-  assert(l.hooks[0].detach && !l.hooks[1].detach);
-  assert(strcmp(l.hooks[1].run[0], "awww pause") == 0);
-  hooks_free(&l);
-
   struct cfg_doc doc = load("[runner]\n"
                             "[[runner.hook]]\non = [\"window.*\", \"osd.show\"]\n"
                             "run = \"echo hi\"\n"
@@ -48,7 +40,7 @@ int main(void) {
   cfg_free(&doc);
 
   doc = load("[runner]\ntimeout_ms = 5\n");
-  assert(!hooks_parse(&l, cfg_section(&doc, "runner"), "runner"));
+  assert(!hooks_parse(&l, cfg_section(&doc, "runner"), "runner") && l.n == 0);
   cfg_free(&doc);
   puts("hooks ok");
   return 0;

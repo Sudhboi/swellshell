@@ -1,6 +1,6 @@
 /* runner: run shell commands when events happen (formerly awww-kill, which
  * paused the awww wallpaper daemon while the focused workspace had
- * windows; that is now the default configuration).
+ * windows). There are no hooks unless the config defines some.
  *
  * Events come from the bus: sway's (workspace.*, window.*, output.change,
  * and the workspace.empty/occupied transitions) and every module's
@@ -43,8 +43,7 @@ static const char *const extra_keys[] = {"hook", NULL};
 static void configure(void *cfgp, toml_datum_t section, const char *name) {
   struct runner_config *cfg = cfgp;
   cfg->hooks = (struct hook_list){0};
-  if (!hooks_parse(&cfg->hooks, section, name))
-    hooks_set_defaults(&cfg->hooks);
+  hooks_parse(&cfg->hooks, section, name);
 }
 
 static void free_config(void *cfgp) {

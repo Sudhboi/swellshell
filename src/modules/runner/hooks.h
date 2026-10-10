@@ -20,9 +20,6 @@ struct hook_list {
   int n;
 };
 
-/* awww-kill's behaviour: pause the wallpaper daemon while the focused
- * workspace has windows. */
-void hooks_set_defaults(struct hook_list *l);
 /* Parse the `hook` array of tables from [runner]. Invalid entries are
  * reported and skipped. Returns false if the key is absent. */
 bool hooks_parse(struct hook_list *l, toml_datum_t section, const char *sec);

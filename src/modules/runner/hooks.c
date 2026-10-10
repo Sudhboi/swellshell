@@ -7,24 +7,6 @@
 #include "config.h"
 #include "util.h"
 
-static void add(struct hook_list *l, const char *on, const char *run,
-                bool detach) {
-  l->hooks = xrealloc(l->hooks, (l->n + 1) * sizeof(*l->hooks));
-  struct hook *h = &l->hooks[l->n++];
-  *h = (struct hook){0};
-  h->on = xcalloc(1, sizeof(char *));
-  h->on[h->non++] = xstrdup(on);
-  h->run = xcalloc(1, sizeof(char *));
-  h->run[h->nrun++] = xstrdup(run);
-  h->detach = detach;
-}
-
-void hooks_set_defaults(struct hook_list *l) {
-  /* awww-kill started `awww unpause` detached and waited for `awww pause`. */
-  add(l, "workspace.empty", "awww unpause", true);
-  add(l, "workspace.occupied", "awww pause", false);
-}
-
 /* A string or an array of strings. */
 static bool string_list(toml_datum_t d, const char *sec, const char *key,
                         char ***out, int *n) {
@@ -135,9 +117,13 @@ void hooks_dump(FILE *f, const struct hook_list *l) {
         "and\n"
         "# moves on without waiting. Commands get $SWELL_EVENT and the "
         "event's\n"
-        "# details ($SWELL_WORKSPACE, $SWELL_APP_ID, ...). Defining any hook "
-        "replaces\n"
-        "# these defaults; `hook = []` disables them. Events: see README.\n",
+        "# details ($SWELL_WORKSPACE, $SWELL_APP_ID, ...). There are none by\n"
+        "# default. Events: see README. For example:\n"
+        "#\n"
+        "#   [[runner.hook]]\n"
+        "#   on = \"workspace.occupied\"\n"
+        "#   run = [\"notify-send \\\"$SWELL_WORKSPACE\\\"\"]\n"
+        "#   detach = true\n",
         f);
   if (l->n == 0)
     fputs("hook = []\n", f);

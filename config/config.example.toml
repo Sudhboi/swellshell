@@ -13,17 +13,14 @@ log = false
 # the `run` commands with sh -c, one after another. Hooks run in a single
 # queue so their order is kept; `detach = true` starts the commands and
 # moves on without waiting. Commands get $SWELL_EVENT and the event's
-# details ($SWELL_WORKSPACE, $SWELL_APP_ID, ...). Defining any hook replaces
-# these defaults; `hook = []` disables them. Events: see README.
-
-[[runner.hook]]
-on = "workspace.empty"
-run = ["awww unpause"]
-detach = true
-
-[[runner.hook]]
-on = "workspace.occupied"
-run = ["awww pause"]
+# details ($SWELL_WORKSPACE, $SWELL_APP_ID, ...). There are none by
+# default. Events: see README. For example:
+#
+#   [[runner.hook]]
+#   on = "workspace.occupied"
+#   run = ["notify-send \"$SWELL_WORKSPACE\""]
+#   detach = true
+hook = []
 
 [workspaces]
 # false turns the module off

@@ -28,8 +28,7 @@ in
           osd.hide_timeout_ms = 1500;
           overview.font = "Sans 11";
           runner.hook = [
-            { on = "workspace.empty"; run = [ "awww unpause" ]; detach = true; }
-            { on = "workspace.occupied"; run = [ "awww pause" ]; }
+            { on = "overview.open"; run = [ "notify-send overview" ]; detach = true; }
           ];
         }
       '';

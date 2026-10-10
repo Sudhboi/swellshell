@@ -8,7 +8,7 @@ A small shell for sway in one daemon. It merges five earlier tools and adds a li
 | `popup` | popup | hold-to-peek panel: clock, date, levels, network, media, CPU/RAM, workspaces |
 | `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav |
 | `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n |
-| `runner` | awww-kill | runs shell commands on events (by default: pauses awww while the focused workspace has windows) |
+| `runner` | awww-kill | runs shell commands on events (none by default) |
 | `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar and a turning Nix snowflake; animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
 
 Every module runs in a single event loop. They share one Wayland connection and one sway IPC connection, and are controlled through one socket:
@@ -39,14 +39,10 @@ font = "IosevkaTerm Nerd Font 12"
 [popup]
 enable = false            # any module can be turned off
 
-[[runner.hook]]
-on = "workspace.empty"
-run = ["awww unpause"]
-detach = true
-
-[[runner.hook]]
+[[runner.hook]]               # hooks: none unless you add some
 on = "workspace.occupied"
-run = ["awww pause"]
+run = ["notify-send \"$SWELL_WORKSPACE has windows\""]
+detach = true
 ```
 
 After editing the file, apply it with `swell reload`, or rerun `swell daemon`, which replaces the running one. Nothing needs recompiling. A bad value is reported with its file and line, and that key keeps its default.
@@ -94,7 +90,7 @@ bindsym $mod+1 exec swell ws goto 1
 # ... through $mod+0 -> swell ws goto 10
 ```
 
-Remove the old `dynwork daemon`, `awww-kill`, `nixosd` and `popup` exec lines, `awww-daemon` and any wallpaper script (the `wallpaper` module draws the wallpaper; with awww gone, the runner's default awww hooks have nothing to do: set `hook = []` under `[runner]` or replace them), the FIFO variables, and the `socat` bindings. `exec_always` means a `swaymsg reload` restarts the daemon with the current config. If you use the home-manager module's systemd service instead, drop the `exec_always` line.
+Remove the old `dynwork daemon`, `awww-kill`, `nixosd` and `popup` exec lines, `awww-daemon` and any wallpaper script (the `wallpaper` module draws the wallpaper), the FIFO variables, and the `socat` bindings. `exec_always` means a `swaymsg reload` restarts the daemon with the current config. If you use the home-manager module's systemd service instead, drop the `exec_always` line.
 
 ## Building
 
