@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "util.h"
+
 int ws_plan_renumber(const char *const *names, int n, int *want) {
   int count = 0;
   for (int i = 0; i < n; ++i) {
@@ -24,9 +26,7 @@ struct buf {
 static void put(struct buf *b, const char *s, size_t n) {
   if (b->len + n + 1 > b->cap) {
     b->cap = (b->len + n + 1) * 2;
-    b->s = realloc(b->s, b->cap);
-    if (!b->s)
-      abort();
+    b->s = xrealloc(b->s, b->cap);
   }
   memcpy(b->s + b->len, s, n);
   b->len += n;
@@ -56,9 +56,7 @@ static void put_rename(struct buf *b, const char *from, const char *to) {
 }
 
 char *ws_plan_commands(const char *const *names, int n) {
-  int *want = calloc(n ? n : 1, sizeof(*want));
-  if (!want)
-    abort();
+  int *want = xcalloc(n, sizeof(*want));
   if (ws_plan_renumber(names, n, want) == 0) {
     free(want);
     return NULL;
@@ -66,10 +64,8 @@ char *ws_plan_commands(const char *const *names, int n) {
   /* Renaming in order works unless a target is still held at that moment
    * by a workspace that hasn't been renamed yet; simulate it. */
   bool clash = false;
-  char(*cur)[16] = calloc(n, sizeof(*cur));
-  const char **now = calloc(n, sizeof(*now));
-  if (!cur || !now)
-    abort();
+  char(*cur)[16] = xcalloc(n, sizeof(*cur));
+  const char **now = xcalloc(n, sizeof(*now));
   for (int i = 0; i < n; ++i)
     now[i] = names[i];
   for (int i = 0; i < n && !clash; ++i) {
