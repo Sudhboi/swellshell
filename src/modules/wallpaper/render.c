@@ -49,7 +49,9 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
                 struct wp_rect out[2]) {
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
-  out[0] = clamp_rect(x, y, x + w, y + h, pw, ph);
+  /* A shake moves everything by up to this much. */
+  double sh = c->react_shake ? ceil(c->react_shake_px * pw / WP_REF_WIDTH) : 0;
+  out[0] = clamp_rect(x - sh, y - sh, x + w + sh, y + h + sh, pw, ph);
   /* The bloom and the speed lines reach past the logo, the visualiser
    * further still. */
   double k = pw / WP_REF_WIDTH;
@@ -61,6 +63,7 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
                   2);
   if (ring)
     r = fmax(r, ring_outer(c, c->logo_radius * k, k) + 1);
+  r += sh;
   out[1] = clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r,
                       pw, ph);
 }
@@ -376,6 +379,9 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   cairo_paint(cr);
   cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
   double k = pw / WP_REF_WIDTH, r = c->logo_radius * k;
+  /* A shake moves everything over the background, by whole pixels so the
+   * cached tiles stay sharp. */
+  cairo_translate(cr, round(f->shake_x * k), round(f->shake_y * k));
   double cx = pw / 2.0, cy = ph / 2.0;
   paint_bloom(cr, c, pw, ph, r, f->over); /* over the background, first */
   if (f->nbars > 0)

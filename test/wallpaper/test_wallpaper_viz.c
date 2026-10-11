@@ -129,11 +129,15 @@ int main(void) {
   /* A bass hit (a jump in dB) kicks once; a held note doesn't again. */
   v.bass_db = -12;
   wp_react_step(&r, &v, c, 1 / 60.0);
-  assert(r.pulse == 1 && fabs(r.kick - c->react_spin_kick) < 1e-9);
+  /* An 8 dB jump: a small kick, a little over the least growth. */
+  assert(r.since_kick == 0 && fabs(r.kick - c->react_spin_kick) < 1e-9);
+  double small = c->react_pulse_min +
+                 (1 - c->react_pulse_min) * 2 / (15 - 6);
+  assert(fabs(r.pulse - small) < 1e-9);
   double before = r.pulse;
   for (int i = 0; i < 60; ++i) {
     wp_react_step(&r, &v, c, 1 / 60.0);
-    assert(r.pulse < before); /* only easing back */
+    assert(r.pulse < before || r.pulse == 0); /* only easing back */
     before = r.pulse;
   }
   /* Quick hits each kick (the bars' slow fall doesn't hide them), but not
@@ -151,31 +155,51 @@ int main(void) {
     }
   }
   assert(kicks == 8);
+  assert(r.shake == 0); /* ordinary 12 dB hits don't shake */
   v.bass_db = -24;
   for (int i = 0; i < 30; ++i)
     wp_react_step(&r, &v, c, 1 / 60.0);
   v.bass_db = -12;
   wp_react_step(&r, &v, c, 1 / 60.0);
-  assert(r.pulse == 1);
+  assert(r.since_kick == 0 && r.pulse > small && r.pulse < 1); /* 12 dB */
   v.bass_db = -24;
   wp_react_step(&r, &v, c, 1 / 60.0);
   v.bass_db = -12;
   wp_react_step(&r, &v, c, 1 / 60.0);
-  assert(r.pulse < 1); /* 33 ms later: too soon */
+  assert(r.since_kick > 0); /* 33 ms later: too soon */
   /* Bass far under the loudest band doesn't kick, however it jumps. */
   v.bass_db = -60;
   for (int i = 0; i < 30; ++i)
     wp_react_step(&r, &v, c, 1 / 60.0);
   v.bass_db = -45;
   wp_react_step(&r, &v, c, 1 / 60.0);
-  assert(r.pulse < 1);
+  assert(r.since_kick > 0);
+
+  /* The biggest hits shake, once, easing back; a sound starting out of
+   * silence doesn't. */
+  v.bass_db = -40;
+  for (int i = 0; i < 30; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  v.bass_db = -10;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.pulse == 1 && r.shake == 1 && r.hit_rise >= 29);
+  for (int i = 0; i < 6; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.shake > 0 && r.shake < 1);
+  r.shake = 0;
+  v.bass_db = -200;
+  for (int i = 0; i < 30; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  v.bass_db = -10;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.pulse == 1 && r.shake == 0);
 
   /* Silence: everything returns to rest. */
   memset(&v, 0, sizeof(v));
   v.bass_db = -200;
   for (int i = 0; i < 600; ++i)
     wp_react_step(&r, &v, c, 1 / 60.0);
-  assert(r.loud < 1e-3 && r.pulse == 0 && r.kick == 0);
+  assert(r.loud < 1e-3 && r.pulse == 0 && r.kick == 0 && r.shake == 0);
   for (int g = 0; g < 6; ++g)
     assert(r.slices[g] < 1e-3);
 

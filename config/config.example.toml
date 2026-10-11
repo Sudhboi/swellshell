@@ -397,6 +397,8 @@ react_slide_dist = 0.1
 react_pulse = true
 # growth per bass hit (x logo_radius)
 react_pulse_scale = 0.1
+# growth for the softest bass hit, of react_pulse_scale; bigger hits grow more, fully from a 15 dB jump
+react_pulse_min = 0.6
 # how fast a bass hit eases back
 react_pulse_ms = 150
 # the snowflake brightens with loudness (needs viz)
@@ -415,3 +417,11 @@ react_spin_gain = 6.0
 react_spin_kick = 0.0
 # how fast a beat's extra speed eases off
 react_spin_kick_ms = 400
+# the whole wallpaper shakes on the biggest bass hits (needs viz)
+react_shake = true
+# how many dB a bass hit must jump to shake (most jump 6-10)
+react_shake_rise = 20.0
+# shake distance at its start (reference px)
+react_shake_px = 14.0
+# how fast a shake dies down
+react_shake_ms = 200

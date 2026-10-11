@@ -111,6 +111,12 @@ void wp_viz_analyse(const float *samples, int rate,
 #define KICK_WINDOW_S 0.1
 #define KICK_BELOW_PEAK_DB 25.0
 #define KICK_GAP_S 0.1
+/* A kick shakes when it jumps react_shake_rise and is about as loud as the
+ * loudest band, but not when it jumps out of silence (a song starting). */
+#define SHAKE_BELOW_PEAK_DB 10.0
+#define SHAKE_SILENCE_DB -90.0
+/* A kick this many dB over its low grows the logo all the way. */
+#define PULSE_FULL_DB 15.0
 
 void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
                  const float (*db)[WP_VIZ_MAX], double dt) {
@@ -196,6 +202,8 @@ void wp_react_step(struct wp_react *r, const struct wp_viz *v,
   r->since_kick += dt;
   r->pulse *= exp(-dt / fmax(c->react_pulse_ms / 1000.0, 1e-3));
   r->kick *= exp(-dt / fmax(c->react_spin_kick_ms / 1000.0, 1e-3));
+  r->shake *= exp(-dt / fmax(c->react_shake_ms / 1000.0, 1e-3));
+  r->shake_t += dt;
   /* The lowest bass in the last KICK_WINDOW_S (silence before it counts). */
   double low = bass;
   for (int i = 0; i < 16; ++i) {
@@ -208,7 +216,19 @@ void wp_react_step(struct wp_react *r, const struct wp_viz *v,
     r->held = false;
   if (!r->held && bass - low > KICK_RISE_DB &&
       bass > v->peak - KICK_BELOW_PEAK_DB && r->since_kick >= KICK_GAP_S) {
-    r->pulse = 1;
+    r->hit_rise = bass - low;
+    /* Bigger jumps grow the logo more: react_pulse_min at the smallest
+     * kick, all of it from PULSE_FULL_DB. */
+    double t = fmin((r->hit_rise - KICK_RISE_DB) /
+                        (PULSE_FULL_DB - KICK_RISE_DB),
+                    1);
+    double size = c->react_pulse_min + (1 - c->react_pulse_min) * fmax(t, 0);
+    if (r->hit_rise >= c->react_shake_rise &&
+        bass > v->peak - SHAKE_BELOW_PEAK_DB && low > SHAKE_SILENCE_DB) {
+      r->shake = 1;
+      r->shake_t = 0;
+    }
+    r->pulse = fmax(r->pulse, size); /* a soft kick doesn't cut a big one */
     r->kick = fmax(r->kick, c->react_spin_kick); /* quick hits don't stack */
     r->since_kick = 0;
     r->held = true;
@@ -223,6 +243,8 @@ void wp_react_step(struct wp_react *r, const struct wp_viz *v,
     r->pulse = 0;
   if (r->kick < 1e-3)
     r->kick = 0;
+  if (r->shake < 1e-3)
+    r->shake = 0;
 }
 
 double wp_viz_hash(int side, int bar, int what) {

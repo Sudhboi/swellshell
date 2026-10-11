@@ -81,6 +81,7 @@ static const struct wallpaper_config defaults = {
     .react_pulse = true,
     .react_pulse_scale = 0.1,
     .react_pulse_ms = 150,
+    .react_pulse_min = 0.6,
     .react_glow = true,
     .react_glow_amount = 0.6,
     .react_glow_spin = 1.0,
@@ -89,6 +90,10 @@ static const struct wallpaper_config defaults = {
     .react_spin_gain = 6,
     .react_spin_kick = 0,
     .react_spin_kick_ms = 400,
+    .react_shake = true,
+    .react_shake_rise = 20,
+    .react_shake_px = 14,
+    .react_shake_ms = 200,
 };
 
 #define S struct wallpaper_config
@@ -190,6 +195,9 @@ static const struct cfg_field fields[] = {
     CFG_BOOL(S, react_pulse, "the snowflake grows on bass hits (needs viz)"),
     CFG_DOUBLE(S, react_pulse_scale, 0, 1,
                "growth per bass hit (x logo_radius)"),
+    CFG_DOUBLE(S, react_pulse_min, 0, 1,
+               "growth for the softest bass hit, of react_pulse_scale; bigger "
+               "hits grow more, fully from a 15 dB jump"),
     CFG_INT(S, react_pulse_ms, 1, 10000, "how fast a bass hit eases back"),
     CFG_BOOL(S, react_glow,
              "the snowflake brightens with loudness (needs viz)"),
@@ -210,6 +218,14 @@ static const struct cfg_field fields[] = {
                "extra speed per beat (x spin_speed)"),
     CFG_INT(S, react_spin_kick_ms, 1, 10000,
             "how fast a beat's extra speed eases off"),
+    CFG_BOOL(S, react_shake,
+             "the whole wallpaper shakes on the biggest bass hits (needs "
+             "viz)"),
+    CFG_DOUBLE(S, react_shake_rise, 6, 100,
+               "how many dB a bass hit must jump to shake (most jump 6-10)"),
+    CFG_DOUBLE(S, react_shake_px, 0, 200,
+               "shake distance at its start (reference px)"),
+    CFG_INT(S, react_shake_ms, 1, 10000, "how fast a shake dies down"),
 };
 #undef S
 
@@ -261,6 +277,7 @@ static bool viz_showing(void) {
 /* The logo still shows the music (it lingers a little after the bars). */
 static bool reacting(void) {
   if (w.react.loud > 1e-3 || w.react.pulse > 0 || w.react.kick > 0 ||
+      w.react.shake > 0 ||
       w.spin_glow > 1e-3 || w.playing > 1e-3)
     return true;
   for (int k = 0; k < 6; ++k)
@@ -395,6 +412,10 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   for (int k = 0; k < 6; ++k)
     f->slide[k] =
         w.cfg.react_slide ? w.cfg.react_slide_dist * w.react.slices[k] : 0;
+  /* Two sines at unrelated rates, so the shake doesn't run on a line. */
+  double shake = w.cfg.react_shake ? w.cfg.react_shake_px * w.react.shake : 0;
+  f->shake_x = shake * sin(2 * M_PI * 11 * w.react.shake_t);
+  f->shake_y = shake * sin(2 * M_PI * 14 * w.react.shake_t + 1.3);
   f->over = over();
   f->dir = w.cfg.spin_speed < 0 ? -1 : 1;
   f->nbars = viz_showing() ? w.cfg.viz_bars : 0;
@@ -652,15 +673,17 @@ static int command(int argc, char **argv, struct reply *r) {
       reply_printf(r, "viz: left %.2f, right %.2f (peak %.0f dB)\n", top[0],
                    top[1], w.viz.peak);
       reply_printf(r,
-                   "react: loud %.2f, pulse %.2f, spin x%.2f (%s%s%s%s)\n",
-                   w.react.loud, w.react.pulse,
+                   "react: loud %.2f, pulse %.2f, shake %.2f, spin x%.2f "
+                   "(%s%s%s%s%s)\n",
+                   w.react.loud, w.react.pulse, w.react.shake,
                    1 + (w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.energy +
                                                w.react.kick
                                          : 0),
                    w.cfg.react_slide ? " slide" : "",
                    w.cfg.react_pulse ? " pulse" : "",
                    w.cfg.react_glow ? " glow" : "",
-                   w.cfg.react_spin ? " spin" : "");
+                   w.cfg.react_spin ? " spin" : "",
+                   w.cfg.react_shake ? " shake" : "");
     }
     reply_printf(r, "outputs: %d\n", wp_surfaces_count());
     return 0;

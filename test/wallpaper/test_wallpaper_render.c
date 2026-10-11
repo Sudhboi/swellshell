@@ -3,6 +3,7 @@
  * Usage: test_wallpaper_render [outdir]   (default: current directory) */
 #include <assert.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "module.h"
@@ -222,5 +223,41 @@ int main(int argc, char **argv) {
       assert(px(a, x, y) == px(t, x, y));
   cairo_surface_destroy(a);
   cairo_surface_destroy(t);
+
+  /* A shake moves the bar and the logo (with its bloom and pulse) by whole
+   * pixels, all inside the regions, and a partial repaint equals a full
+   * one, whichever way it shakes. */
+  for (int d = -1; d <= 1; d += 2) {
+    double sh = c->react_shake_px * d;
+    f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0.3,
+                          .pulse = 1, .over = 1, .dir = 1};
+    a = render(c, f, dir, NULL);
+    f.shake_x = sh;
+    f.shake_y = fabs(sh); /* down: up would push the bar off the top */
+    t = render(c, f, dir, d > 0 ? "wallpaper_shake" : NULL);
+    int dx = (int)round(sh * k), dy = (int)round(fabs(sh) * k);
+    assert(px(t, 1600 + dx, 7 + dy) == 0xffffff); /* the moved outline */
+    assert(px(t, 1600, 7) == 0x000000);
+    changed = 0;
+    for (int y = 0; y < H; y += 3)
+      for (int x = 0; x < W; x += 3)
+        if (px(a, x, y) != px(t, x, y)) {
+          bool in = false;
+          for (int i = 0; i < 2; ++i)
+            in |= x >= r[i].x && x < r[i].x + r[i].w && y >= r[i].y &&
+                  y < r[i].y + r[i].h;
+          assert(in);
+          changed++;
+        }
+    assert(changed > 0);
+    cr = cairo_create(a);
+    wp_render(cr, c, W, H, &f, false, false);
+    cairo_destroy(cr);
+    for (int y = 0; y < H; y += 3)
+      for (int x = 0; x < W; x += 3)
+        assert(px(a, x, y) == px(t, x, y));
+    cairo_surface_destroy(a);
+    cairo_surface_destroy(t);
+  }
   return 0;
 }

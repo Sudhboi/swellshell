@@ -67,6 +67,7 @@ struct wallpaper_config {
   double react_slide_dist;  /* x logo_radius at full level */
   bool react_pulse;         /* the logo grows on bass hits */
   double react_pulse_scale; /* x logo_radius per hit */
+  double react_pulse_min;   /* of it for the softest hit; full at 15 dB */
   int react_pulse_ms;       /* ease-back time constant */
   bool react_glow;          /* brightens with loudness */
   double react_glow_amount; /* of the way to logo_glow at full loudness */
@@ -76,6 +77,10 @@ struct wallpaper_config {
   double react_spin_gain;   /* x spin_speed extra at full loudness */
   double react_spin_kick;   /* x spin_speed extra per beat, decaying */
   int react_spin_kick_ms;   /* the beat's extra speed decay time constant */
+  bool react_shake;         /* everything shakes on the biggest bass hits */
+  double react_shake_rise;  /* dB a hit must jump to shake */
+  double react_shake_px;    /* reference px at the start of a shake */
+  int react_shake_ms;       /* the shake's decay time constant */
 };
 
 /* One frame's worth of animation state. */
@@ -88,6 +93,7 @@ struct wp_frame {
   int dir;        /* spin direction, 1 clockwise, -1 counter-clockwise */
   double pulse;    /* logo growth, 0..1 of react_pulse_scale */
   double slide[6]; /* lambda k moved out by this x logo radius */
+  double shake_x, shake_y; /* everything moved by this, reference px */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
 };
@@ -136,9 +142,13 @@ struct wp_react {
   double hist[16];  /* bass over the last KICK_WINDOW_S, newest last */
   double hist_t[16]; /* their ages, s */
   double bass_peak; /* the high since the last kick, dB */
-  double pulse;          /* 1 on a bass hit, easing back to 0 */
+  double pulse; /* on a bass hit, by its size (react_pulse_min..1), easing
+                 * back to 0 */
   double kick;           /* extra spin from beats (x spin_speed), decaying */
   double since_kick;     /* s */
+  double hit_rise;       /* the last kick's jump over the recent low, dB */
+  double shake;          /* 1 on a big bass hit, easing back to 0 */
+  double shake_t;        /* s since the shake started */
   bool held; /* a kick fired and the bass hasn't fallen from its peak */
   double slices[6];      /* per lambda, bass (0) to treble (5), 0..1 */
 };
