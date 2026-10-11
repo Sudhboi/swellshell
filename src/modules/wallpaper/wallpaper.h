@@ -100,11 +100,13 @@ struct wallpaper_config {
   bool media;
   char media_player[128]; /* playerctl -p, "": playerctl's pick */
   int media_interval_ms;  /* playerctl poll while animating */
-  bool media_progress;    /* the hexagon shows the progress */
-  int media_chase_ms;     /* no track length: a lit wedge steps round */
+  bool media_progress;    /* a line round the hexagon shows the progress */
+  int media_chase_ms;     /* no track length: a line runs round, a sixth
+                           * of the way in this long */
   bool media_art;         /* the cover, in grey, fills the hexagon */
-  double media_art_dim;   /* the cover outside the sweep, 0..1 */
-  uint32_t media_fill;    /* the sweep without a cover */
+  double media_art_alpha; /* the cover's opacity, 0..1 */
+  uint32_t media_line, media_track; /* the progress line, the rest */
+  double media_line_width;          /* reference px */
   double media_hex_size;  /* of the snowflake's hole, 0..1 */
   char media_font[128];
   double media_title_size, media_artist_size; /* reference px */
@@ -128,8 +130,8 @@ struct wp_frame {
   double shake_x, shake_y; /* everything moved by this, reference px */
   double media_alpha; /* the details (title, artist, hexagon), 0: none */
   const char *title, *artist;
-  double progress; /* 0..1 swept clockwise from the top, -1: none */
-  double chase;    /* -1, or the lit wedge going round, 0..6 */
+  double progress; /* 0..1 of the way round from the top, -1: none */
+  double chase;    /* -1, or where the running line is, 0..6 */
   cairo_surface_t *art; /* the cover in grey (RGB24, square), or NULL */
   unsigned art_id;      /* changes with the cover */
   int nbars;      /* visualiser bars per side, 0: no ring */

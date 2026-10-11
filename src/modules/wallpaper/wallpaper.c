@@ -114,8 +114,10 @@ static const struct wallpaper_config defaults = {
     .media_progress = true,
     .media_chase_ms = 2000,
     .media_art = true,
-    .media_art_dim = 0.3,
-    .media_fill = 0x8c8c8cffu,
+    .media_art_alpha = 0.5,
+    .media_line = 0xb4b4b4ffu,
+    .media_track = 0x262626ffu,
+    .media_line_width = 6,
     .media_hex_size = 0.9,
     .media_font = "IosevkaTerm Nerd Font",
     .media_title_size = 44,
@@ -305,17 +307,20 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, media_interval_ms, 100, 60000,
             "how often playerctl is asked while the wallpaper animates"),
     CFG_BOOL(S, media_progress,
-             "the snowflake's hexagonal hole fills clockwise from the top as "
-             "the track plays; without a track length one lit wedge of it "
-             "steps round"),
+             "a line runs clockwise round the snowflake's hexagonal hole from "
+             "its top as the track plays; without a track length a sixth of "
+             "it keeps running round"),
     CFG_INT(S, media_chase_ms, 100, 60000,
-            "the lit wedge's step when the track length is unknown"),
+            "without a track length, the running line moves a sixth of the "
+            "way round in this long"),
+    CFG_COLOR(S, media_line, "the progress line"),
+    CFG_COLOR(S, media_track, "the rest of the hexagon's border"),
+    CFG_DOUBLE(S, media_line_width, 0, 100,
+               "the progress line's width, px (0 = no line)"),
     CFG_BOOL(S, media_art,
              "the track's cover, in grey, fills the hexagon (file:// covers "
              "are read directly, http(s) ones fetched with curl)"),
-    CFG_DOUBLE(S, media_art_dim, 0, 1,
-               "the cover's opacity where the progress hasn't reached yet"),
-    CFG_COLOR(S, media_fill, "the progress in the hexagon without a cover"),
+    CFG_DOUBLE(S, media_art_alpha, 0, 1, "the cover's opacity"),
     CFG_DOUBLE(S, media_hex_size, 0, 1,
                "the hexagon's size, of the snowflake's hole"),
     CFG_STRING(S, media_font, "font of the title and artist"),
@@ -367,7 +372,7 @@ static struct {
   char title[256], artist[256];
   double media_alpha; /* the details' opacity, following the player */
   double progress;    /* the track's, 0..1, -1: none */
-  double chase;       /* the lit wedge, 0..6, while the length is unknown */
+  double chase;       /* the running line, 0..6, while the length is unknown */
   bool chasing;
 
   /* measured frame rate */

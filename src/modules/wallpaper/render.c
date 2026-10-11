@@ -670,14 +670,8 @@ static void hex_path(cairo_t *cr, double hr) {
   cairo_close_path(cr);
 }
 
-/* The hexagon's source in its own (turning) frame: the cover filling it,
- * or the plain fill without one. */
-static void hex_source(cairo_t *cr, const struct wallpaper_config *c,
-                       cairo_surface_t *art, double hr) {
-  if (!art) {
-    set_rgba(cr, c->media_fill, 1.0);
-    return;
-  }
+/* The cover filling a hexagon of radius hr, in its own (turning) frame. */
+static void hex_art(cairo_t *cr, cairo_surface_t *art, double hr) {
   int side = cairo_image_surface_get_width(art);
   cairo_pattern_t *p = cairo_pattern_create_for_surface(art);
   cairo_matrix_t m;
@@ -689,10 +683,40 @@ static void hex_source(cairo_t *cr, const struct wallpaper_config *c,
   cairo_pattern_destroy(p);
 }
 
+/* The point t (0..1) of the way clockwise round a hexagon of radius hr,
+ * from the middle of its top edge (at angle 0). */
+static void hex_point(double hr, double t, double *x, double *y) {
+  /* The top edge runs from corner 1 to corner 2; its middle is 1/12 of the
+   * way round before corner 2, each edge 1/6. */
+  double at = t * 6 + 0.5; /* in edges from corner 1; 6.5 is back at 0 */
+  int e = (int)floor(at);
+  double u = at - e;
+  double a = HOLE_ANGLE + (1 + e) * M_PI / 3, b = a + M_PI / 3;
+  *x = hr * (cos(a) + (cos(b) - cos(a)) * u);
+  *y = hr * (sin(a) + (sin(b) - sin(a)) * u);
+}
+
+/* The border from t0 to t1 (0 <= t0 <= t1 <= 1) of the way round. */
+static void hex_trace(cairo_t *cr, double hr, double t0, double t1) {
+  double x, y;
+  hex_point(hr, t0, &x, &y);
+  cairo_move_to(cr, x, y);
+  /* The corners in between, at 1/12, 3/12, ... 11/12. */
+  for (int k = 0; k < 6; ++k) {
+    double tc = (2 * k + 1) / 12.0;
+    if (tc > t0 && tc < t1) {
+      hex_point(hr, tc, &x, &y);
+      cairo_line_to(cr, x, y);
+    }
+  }
+  hex_point(hr, t1, &x, &y);
+  cairo_line_to(cr, x, y);
+}
+
 /* What's playing, in the snowflake's hole (resting radius r, now rp): the
- * cover in grey, dimmed except where the progress has swept clockwise from
- * the top. Without a track length one wedge lights up and steps round. The
- * hexagon and the cover turn with the snowflake; the sweep stays upright. */
+ * cover in grey, with a line round its border, clockwise from the top, as
+ * far as the track has played. Without a track length a sixth of it runs
+ * round. The hexagon, the cover and the line turn with the snowflake. */
 static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
                      double cy, double r, double rp,
                      const struct wp_frame *f) {
@@ -700,52 +724,43 @@ static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
   if (alpha <= 0)
     return;
   double hr = HOLE * c->media_hex_size * rp;
+  double lw = c->media_line_width * rp / c->logo_radius;
+  bool line = lw > 0 && (f->progress >= 0 || f->chase >= 0);
   cairo_surface_t *art =
       c->media_art ? art_tile(f, (int)ceil(2 * HOLE * c->media_hex_size * r))
                    : NULL;
-  if (!art && f->progress < 0 && f->chase < 0)
+  if (!art && !line)
     return;
   cairo_save(cr);
   cairo_translate(cr, cx, cy);
   cairo_rotate(cr, f->angle);
-  hex_path(cr, hr);
-  cairo_clip(cr);
-  if (art && c->media_art_dim > 0) {
-    hex_source(cr, c, art, hr);
-    cairo_paint_with_alpha(cr, alpha * c->media_art_dim);
-  }
-  if (f->progress > 0) {
+  if (art && c->media_art_alpha > 0) {
     cairo_save(cr);
-    hex_source(cr, c, art, hr);
-    cairo_rotate(cr, -f->angle);
-    double a0 = -M_PI / 2;
-    cairo_move_to(cr, 0, 0);
-    cairo_arc(cr, 0, 0, 2 * hr, a0, a0 + 2 * M_PI * fmin(f->progress, 1));
-    cairo_close_path(cr);
+    hex_path(cr, hr);
     cairo_clip(cr);
-    cairo_paint_with_alpha(cr, alpha);
+    hex_art(cr, art, hr);
+    cairo_paint_with_alpha(cr, alpha * c->media_art_alpha);
     cairo_restore(cr);
-  } else if (f->chase >= 0) {
-    /* The lit wedge eases over to the next in the last third of its step. */
-    int at = (int)f->chase % 6;
-    double t = fmin(fmax((f->chase - (int)f->chase - 2 / 3.0) * 3, 0), 1);
-    t = t * t * (3 - 2 * t);
-    for (int j = 0; j < 2; ++j) {
-      double lit = j ? t : 1 - t;
-      if (lit <= 0)
-        continue;
-      int i = (at + j) % 6;
-      cairo_save(cr);
-      hex_source(cr, c, art, hr);
-      double a = HOLE_ANGLE + i * M_PI / 3, b = a + M_PI / 3;
-      cairo_move_to(cr, 0, 0);
-      cairo_line_to(cr, 2 * hr * cos(a), 2 * hr * sin(a));
-      cairo_line_to(cr, 2 * hr * cos(b), 2 * hr * sin(b));
-      cairo_close_path(cr);
-      cairo_clip(cr);
-      cairo_paint_with_alpha(cr, alpha * lit);
-      cairo_restore(cr);
+  }
+  if (line) {
+    /* The line lies just inside the hexagon's edge. */
+    double hl = hr - lw / 2;
+    cairo_set_line_width(cr, lw);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_MITER);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_BUTT);
+    hex_path(cr, hl);
+    set_rgba(cr, c->media_track, alpha);
+    cairo_stroke(cr);
+    if (f->progress > 0) {
+      hex_trace(cr, hl, 0, fmin(f->progress, 1));
+    } else if (f->progress < 0) {
+      double t0 = fmod(f->chase, 6) / 6, t1 = t0 + 1 / 6.0;
+      hex_trace(cr, hl, t0, fmin(t1, 1));
+      if (t1 > 1)
+        hex_trace(cr, hl, 0, t1 - 1);
     }
+    set_rgba(cr, c->media_line, alpha);
+    cairo_stroke(cr);
   }
   cairo_restore(cr);
 }

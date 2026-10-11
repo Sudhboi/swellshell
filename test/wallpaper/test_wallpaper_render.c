@@ -56,6 +56,20 @@ static void write_jpeg(const char *path, int w, int h, int r, int g, int b) {
   fclose(f);
 }
 
+/* The pixel t (0..1) of the way clockwise round the hexagon of radius hr
+ * from the middle of its top edge, with the snowflake turned by angle. Its
+ * corners sit at 176.8 + 60 i degrees (y down, unturned). */
+static void rim(double hr, double t, double angle, int *x, int *y) {
+  double at = t * 6 + 0.5;
+  int e = (int)floor(at);
+  double u = at - e;
+  double a = (176.8 + 60 * (1 + e)) * M_PI / 180, b = a + M_PI / 3;
+  double hx = hr * (cos(a) + (cos(b) - cos(a)) * u);
+  double hy = hr * (sin(a) + (sin(b) - sin(a)) * u);
+  *x = (int)floor(W / 2.0 + hx * cos(angle) - hy * sin(angle));
+  *y = (int)floor(H / 2.0 + hx * sin(angle) + hy * cos(angle));
+}
+
 static cairo_surface_t *render(const struct wallpaper_config *c,
                                struct wp_frame f, const char *dir,
                                const char *name) {
@@ -561,53 +575,85 @@ int main(int argc, char **argv) {
       }
   assert(changed > 0 && texted > 0);
   cairo_surface_destroy(t);
-  /* The sweep: from the top clockwise to 40% (144 degrees), upright
-   * however the snowflake turns; the cover is dimmed past it. */
-  double hd = 0.5 * 0.39 * c->media_hex_size * c->logo_radius * k;
-#define AT(deg)                                                               \
-  (int)(W / 2 + hd * sin((deg) * M_PI / 180)),                               \
-      (int)(H / 2 - hd * cos((deg) * M_PI / 180))
+  /* The line: clockwise round the hexagon's border from the middle of its
+   * top edge to 40% of the way, the rest of the border the track, the cover
+   * inside at media_art_alpha; all turning with the snowflake. */
+  double hl = 0.39046 * c->media_hex_size * c->logo_radius * k -
+              c->media_line_width * k / 2;
+  uint32_t line = c->media_line >> 8, track = c->media_track >> 8;
+  unsigned art_v = (unsigned)lround(255 * c->media_art_alpha);
   f.art = white;
   f.art_id = 2;
   for (double ang = 0; ang < 7; ang += 2.2) {
     f.angle = ang;
     t = render(c, f, dir, NULL);
-    assert(px(t, AT(30)) == 0xffffff && px(t, AT(120)) == 0xffffff);
-    unsigned dim = px(t, AT(200)) & 0xff;
-    assert(abs((int)dim - (int)lround(255 * c->media_art_dim)) <= 1);
-    assert((px(t, AT(170)) & 0xff) == dim && (px(t, AT(300)) & 0xff) == dim);
+    int x, y;
+    rim(hl, 0.01, ang, &x, &y);
+    assert(px(t, x, y) == line);
+    rim(hl, 0.2, ang, &x, &y);
+    assert(px(t, x, y) == line);
+    rim(hl, 0.39, ang, &x, &y);
+    assert(px(t, x, y) == line);
+    rim(hl, 0.41, ang, &x, &y);
+    assert(px(t, x, y) == track);
+    rim(hl, 0.7, ang, &x, &y);
+    assert(px(t, x, y) == track);
+    rim(hl * 0.5, 0.7, ang, &x, &y); /* inside: the cover */
+    assert(abs((int)(px(t, x, y) & 0xff) - (int)art_v) <= 1);
     cairo_surface_destroy(t);
   }
-  /* Without a cover the sweep is the plain fill, the rest the hole. */
+  /* Without a cover (or with media_art off) the inside is the hole. */
   f.angle = 0.3;
   f.art = NULL;
-  t = render(c, f, dir, NULL);
-  assert(px(t, AT(30)) == (c->media_fill >> 8) && px(t, AT(200)) == 0);
-  cairo_surface_destroy(t);
-  /* Half the cover off: only the dim part shows, and media_art off. */
   struct wallpaper_config noart = *c;
   noart.media_art = false;
-  f.art = white;
-  f.art_id = 2;
-  t = render(&noart, f, dir, NULL);
-  assert(px(t, AT(30)) == (c->media_fill >> 8) && px(t, AT(200)) == 0);
-  cairo_surface_destroy(t);
-  /* No length: one wedge lit, turning with the snowflake. Wedge 0 runs from
-   * the hole's corner at 176.8 degrees (screen, y down, at angle 0) on by
-   * 60. */
+  for (int n = 0; n < 2; ++n) {
+    if (n)
+      f.art = white;
+    t = render(n ? &noart : c, f, dir, NULL);
+    int x, y;
+    rim(hl, 0.2, 0.3, &x, &y);
+    assert(px(t, x, y) == line);
+    rim(hl * 0.5, 0.2, 0.3, &x, &y);
+    assert(px(t, x, y) == 0);
+    cairo_surface_destroy(t);
+  }
+  /* No length: a sixth of the border runs round, wrapping past the top. */
   f.art = white;
   f.progress = -1;
-  f.chase = 0.2;
   f.angle = 0;
+  f.chase = 0.2; /* 0.033 .. 0.2 */
   t = render(c, f, dir, NULL);
   {
-    double wa = 176.8 + 30; /* the wedge's middle, cairo angle */
-    int wx = (int)(W / 2 + hd * cos(wa * M_PI / 180));
-    int wy = (int)(H / 2 + hd * sin(wa * M_PI / 180));
-    assert(px(t, wx, wy) == 0xffffff);
-    wx = (int)(W / 2 - hd * cos(wa * M_PI / 180));
-    wy = (int)(H / 2 - hd * sin(wa * M_PI / 180));
-    assert((px(t, wx, wy) & 0xff) < 0x80);
+    int x, y;
+    rim(hl, 0.1, 0, &x, &y);
+    assert(px(t, x, y) == line);
+    rim(hl, 0.01, 0, &x, &y);
+    assert(px(t, x, y) == track);
+    rim(hl, 0.5, 0, &x, &y);
+    assert(px(t, x, y) == track);
+  }
+  cairo_surface_destroy(t);
+  f.chase = 5.5; /* 0.917 .. 1.083 */
+  t = render(c, f, dir, NULL);
+  {
+    int x, y;
+    rim(hl, 0.97, 0, &x, &y);
+    assert(px(t, x, y) == line);
+    rim(hl, 0.04, 0, &x, &y);
+    assert(px(t, x, y) == line);
+    rim(hl, 0.5, 0, &x, &y);
+    assert(px(t, x, y) == track);
+  }
+  cairo_surface_destroy(t);
+  /* Line width 0: no line, no track. */
+  struct wallpaper_config noline = *c;
+  noline.media_line_width = 0;
+  t = render(&noline, f, dir, NULL);
+  {
+    int x, y;
+    rim(hl, 0.04, 0, &x, &y);
+    assert(px(t, x, y) == art_v * 0x010101u);
   }
   cairo_surface_destroy(t);
   f.art = cover;
