@@ -369,10 +369,12 @@ viz = true
 viz_target = ""
 # visualiser bars per side (left channel on the left, right on the right)
 viz_bars = 48
-# where the bars start (x logo_radius)
-viz_inner = 1.32
-# bar length at full level, px
+# the line the bars grow from, both ways (x logo_radius)
+viz_radius = 1.6
+# bar length at full level, both ends together, px
 viz_length = 260.0
+# share of a bar's length that grows inwards (0 = all outwards from viz_radius)
+viz_inward = 0.4
 # bar thickness, as a fraction of its slot
 viz_width = 0.55
 # visualiser bars
@@ -385,5 +387,5 @@ viz_low_hz = 50.0
 viz_high_hz = 10000.0
 # how fast the bars fall (gravity, full heights per s^2)
 viz_fall = 4.0
-# irregularity: each bar's start, angle, width and gain vary a little (0 = a perfect ring)
+# irregularity: each bar's angle, width, length and gain vary a little (0 = a perfect ring)
 viz_jitter = 1.0

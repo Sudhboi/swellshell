@@ -125,13 +125,19 @@ int main(int argc, char **argv) {
         changed++;
       }
   assert(changed > 0 && outside_small > 0);
-  /* Bass at the bottom: the bottom bars sit just below the logo on either
-   * side of the vertical. */
-  double k = W / WP_REF_WIDTH;
-  int below = (int)(H / 2 + c->logo_radius * k * c->viz_inner + 20);
-  int off = (int)(M_PI * 0.5 / c->viz_bars * c->logo_radius * k *
-                  c->viz_inner);
-  assert(px(t, W / 2 + off, below) != 0 && px(t, W / 2 - off, below) != 0);
+  /* Bass at the bottom: the bottom bars cross the viz_radius line below
+   * the logo on either side of the vertical, reaching in and out from it,
+   * and nothing is drawn inside where the inner ends can reach. */
+  double k = W / WP_REF_WIDTH, rc = c->logo_radius * k * c->viz_radius;
+  double half = 0.5 * c->viz_length * k * 0.5; /* the bass bars are >= 0.5 */
+  int off = (int)(M_PI * 0.5 / c->viz_bars * rc);
+  for (int d = -1; d <= 1; ++d) {
+    int y = (int)(H / 2 + rc + d * half * 0.8 *
+                                  (d < 0 ? c->viz_inward : 1 - c->viz_inward));
+    assert(px(t, W / 2 + off, y) != 0 && px(t, W / 2 - off, y) != 0);
+  }
+  int inside = (int)(H / 2 + rc - c->viz_length * k * c->viz_inward * 1.1);
+  assert(px(t, W / 2 + off, inside) == 0);
   /* The same levels on both sides: jitter keeps the halves from mirroring
    * exactly; without it the ring is perfectly symmetric. */
   int asym = 0;

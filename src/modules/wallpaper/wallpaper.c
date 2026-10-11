@@ -66,8 +66,9 @@ static const struct wallpaper_config defaults = {
     .viz = true,
     .viz_target = "",
     .viz_bars = 48,
-    .viz_inner = 1.32,
+    .viz_radius = 1.6,
     .viz_length = 260,
+    .viz_inward = 0.4,
     .viz_width = 0.55,
     .viz_color = 0x5a5a5affu,
     .viz_alpha = 1.0,
@@ -151,9 +152,13 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, viz_bars, 1, WP_VIZ_MAX,
             "visualiser bars per side (left channel on the left, right on "
             "the right)"),
-    CFG_DOUBLE(S, viz_inner, 0, 10,
-               "where the bars start (x logo_radius)"),
-    CFG_DOUBLE(S, viz_length, 0, 10000, "bar length at full level, px"),
+    CFG_DOUBLE(S, viz_radius, 0, 10,
+               "the line the bars grow from, both ways (x logo_radius)"),
+    CFG_DOUBLE(S, viz_length, 0, 10000,
+               "bar length at full level, both ends together, px"),
+    CFG_DOUBLE(S, viz_inward, 0, 1,
+               "share of a bar's length that grows inwards (0 = all "
+               "outwards from viz_radius)"),
     CFG_DOUBLE(S, viz_width, 0, 1, "bar thickness, as a fraction of its slot"),
     CFG_COLOR(S, viz_color, "visualiser bars"),
     CFG_DOUBLE(S, viz_alpha, 0, 1, "visualiser opacity"),
@@ -162,7 +167,7 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, viz_fall, 0.01, 1000,
                "how fast the bars fall (gravity, full heights per s^2)"),
     CFG_DOUBLE(S, viz_jitter, 0, 1,
-               "irregularity: each bar's start, angle, width and gain vary "
+               "irregularity: each bar's angle, width, length and gain vary "
                "a little (0 = a perfect ring)"),
 };
 #undef S

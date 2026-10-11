@@ -53,8 +53,9 @@ struct wallpaper_config {
   bool viz;
   char viz_target[128]; /* PipeWire sink to listen to, "": the default */
   int viz_bars;         /* per side */
-  double viz_inner;     /* x logo_radius */
-  double viz_length;    /* reference px at full level */
+  double viz_radius;    /* the bars' centre line, x logo_radius */
+  double viz_length;    /* reference px at full level, both ends together */
+  double viz_inward;    /* the share of a bar that grows inwards, 0..1 */
   double viz_width;     /* of each bar's slot, 0..1 */
   uint32_t viz_color;
   double viz_alpha;
