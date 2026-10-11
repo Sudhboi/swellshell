@@ -627,6 +627,14 @@ static void update_animating(void) {
   } else if (!wp_ticking()) {
     loop_timer_disarm(w.battery_timer);
   }
+  /* A window open freezes the plain wallpaper, as before the details
+   * existed: no title and no lit lambdas. Idle on an empty workspace keeps
+   * them. */
+  bool cleared = !w.ws_empty && w.media_alpha > 0;
+  if (cleared) {
+    w.media_alpha = 0;
+    memset(w.lit, 0, sizeof w.lit);
+  }
   if (want) {
     arm_idle_fallback();
     if (w.cfg.viz)
@@ -638,13 +646,13 @@ static void update_animating(void) {
     return;
   }
   if (!was_animating) {
-    if (doze)
+    if (doze || cleared)
       wp_surfaces_draw(false); /* start the bar's frames */
     return;
   }
   loop_timer_disarm(w.idle_timer);
   wp_audio_stop();
-  wp_media_stop(); /* the frozen frame keeps the details it shows */
+  wp_media_stop(); /* idle, the frozen frame keeps the details it shows */
   bool glowing = w.boost > 0 || viz_showing() || reacting();
   w.boost = 0;
   memset(&w.viz, 0, sizeof(w.viz));
@@ -656,7 +664,7 @@ static void update_animating(void) {
   /* A window opened (or the user idled) mid-spin or mid-song: don't
    * leave the brightened logo or the bars as the frozen frame. Dozing
    * draws on for the bar. */
-  if (glowing || doze)
+  if (glowing || doze || cleared)
     wp_surfaces_draw(false);
   bus_emit("wallpaper.freeze", NULL);
 }
