@@ -141,6 +141,8 @@ muted = "#5a5a5a"
 ws_focus = "#2e2e2e"
 # low battery and urgent workspaces
 warn = "#ff3b3b"
+# hold line tail (its growing end is the border colour)
+hold = "#333333"
 # battery at or below this (discharging) is shown in warn
 battery_low_pct = 15
 # refresh period while shown
@@ -201,6 +203,8 @@ wsc_inset = 2.0
 wsc_arrow = 4.0
 # strip edge room for a "more" arrow
 ws_arrow_w = 16.0
+# thickness of the line that traces the border until the expand; 0 hides it
+hold_h = 1.0
 
 [overview]
 # false turns the module off

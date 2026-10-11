@@ -13,7 +13,7 @@ extern const struct swell_module popup_module;
 
 static cairo_t *draw(const struct popup_config *c, const struct info *in) {
   cairo_t *cr = canvas(c->width, popup_surface_height(c));
-  popup_render(cr, c, in, 1, 1, 0);
+  popup_render(cr, c, in, 1, 1, 0, 0);
   return cr;
 }
 

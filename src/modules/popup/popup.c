@@ -41,6 +41,7 @@ static const struct popup_config defaults = {
     .muted = 0x5a5a5affu,
     .ws_focus = 0x2e2e2effu,
     .warn = 0xff3b3bffu,
+    .hold = 0x333333ffu,
     .battery_low_pct = 15,
     .refresh_ms = 1000,
     .command_timeout_ms = 3000,
@@ -71,6 +72,7 @@ static const struct popup_config defaults = {
     .wsc_inset = 2,
     .wsc_arrow = 4,
     .ws_arrow_w = 16,
+    .hold_h = 1,
 };
 
 #define S struct popup_config
@@ -98,6 +100,7 @@ static const struct cfg_field fields[] = {
     CFG_COLOR(S, muted, "labels, muted and missing values"),
     CFG_COLOR(S, ws_focus, "focused workspace cell"),
     CFG_COLOR(S, warn, "low battery and urgent workspaces"),
+    CFG_COLOR(S, hold, "hold line tail (its growing end is the border colour)"),
     CFG_INT(S, battery_low_pct, 0, 100,
             "battery at or below this (discharging) is shown in warn"),
     CFG_INT(S, refresh_ms, 100, 600000, "refresh period while shown"),
@@ -132,6 +135,9 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, wsc_inset, 0, 1024, "compact cells inset inside their row"),
     CFG_DOUBLE(S, wsc_arrow, 0, 1024, "\"more\" arrow half-width"),
     CFG_DOUBLE(S, ws_arrow_w, 0, 1024, "strip edge room for a \"more\" arrow"),
+    CFG_DOUBLE(S, hold_h, 0, 1024,
+               "thickness of the line that traces the border until the "
+               "expand; 0 hides it"),
 };
 #undef S
 
@@ -148,6 +154,8 @@ static struct {
   int64_t expand_at;       /* ms, 0 until the details are revealed */
   int64_t media_at;        /* ms: start of the media row tween */
   double media_from, media_to;
+  int64_t hold_at;         /* ms: expand timer armed, 0 while not running */
+  double hold;             /* hold line, kept as it was when it stopped */
 } p;
 
 static double tween(int64_t t0, int ms, int64_t now, bool *more) {
@@ -180,6 +188,21 @@ static void sync_media(void) {
   p.media_at = now;
 }
 
+/* How far the expand delay has run (linear, so the hold line runs at the
+ * pace of the wait). */
+static double hold_value(int64_t now, bool *more) {
+  if (!p.hold_at)
+    return p.hold;
+  return anim_progress(p.hold_at, p.cfg.expand_delay_ms, now, more);
+}
+
+/* Stop the hold line where it is. */
+static void stop_hold(void) {
+  bool more = false;
+  p.hold = hold_value(now_ms(), &more);
+  p.hold_at = 0;
+}
+
 static bool draw(cairo_t *cr, void *data) {
   int64_t now = now_ms();
   bool more = false;
@@ -187,7 +210,8 @@ static bool draw(cairo_t *cr, void *data) {
   double expand =
       p.expand_at ? tween(p.expand_at, p.cfg.expand_ms, now, &more) : 0;
   double media = media_value(now, &more);
-  popup_render(cr, &p.cfg, &p.info, pop, expand, media);
+  double hold = p.cfg.hold_h > 0 ? hold_value(now, &more) : 0;
+  popup_render(cr, &p.cfg, &p.info, pop, expand, media, hold);
   return more;
 }
 
@@ -261,13 +285,18 @@ static void set_shown(bool show) {
     if (p.sw->sway)
       sway_workspaces_invalidate();
     refresh_workspaces();
-    if (!p.expand_at)
+    if (!p.expand_at) {
       loop_timer_arm(p.expand, p.cfg.expand_delay_ms > 0
                                    ? p.cfg.expand_delay_ms
                                    : 1, 0);
+      p.hold_at = p.cfg.expand_delay_ms > 0 ? now_ms() : 0;
+      p.hold = 0;
+    }
   } else {
     retarget_pop(0, true);
     loop_timer_disarm(p.expand);
+    /* The line slides away as far as it got. */
+    stop_hold();
   }
   arm_tick(show);
   layer_surface_redraw(p.surf);
@@ -286,6 +315,9 @@ static void on_expand(struct loop_timer *t, void *data) {
   if (!visible())
     return;
   p.expand_at = now_ms();
+  /* Full, then faded out by the expand. */
+  p.hold_at = 0;
+  p.hold = 1;
   layer_surface_redraw(p.surf);
   bus_emit("popup.expand", NULL);
 }

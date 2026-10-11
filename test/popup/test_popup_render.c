@@ -17,7 +17,7 @@ static struct popup_config cfg;
 static int dump_media(const struct info *in, const char *dir, const char *name,
                       double pop, double expand, double media) {
   cairo_t *cr = canvas(cfg.width, popup_surface_height(&cfg));
-  popup_render(cr, &cfg, in, pop, expand, media);
+  popup_render(cr, &cfg, in, pop, expand, media, 0);
   save_png(cr, dir, name);
   /* Fully popped, the panel's bottom edge rests at y = height. */
   int bad = pop >= 1 && (pixel(cr, 0.5, cfg.height - 4) != cfg.border ||
@@ -33,6 +33,28 @@ static int dump_anim(const struct info *in, const char *dir, const char *name,
   return dump_media(in, dir, name, pop, expand, in->has_media);
 }
 
+/* The compact panel with the hold line run to hold. It traces the border
+ * from the bottom-left corner: along the bottom first, and down the left
+ * side last. */
+static int dump_hold(const struct info *in, const char *dir, const char *name,
+                     double expand, double hold) {
+  cairo_t *cr = canvas(cfg.width, popup_surface_height(&cfg));
+  popup_render(cr, &cfg, in, 1, expand, in->has_media, hold);
+  save_png(cr, dir, name);
+  double inset = 1 + cfg.hold_h / 2; /* the line's middle */
+  int bad = 0;
+  if (expand == 0) {
+    bool bottom =
+        pixel(cr, cfg.width / 2.0, cfg.height - inset) != cfg.background;
+    bool left = pixel(cr, inset, cfg.height - 10) != cfg.background;
+    bad = !bottom || left != (hold >= 1);
+  }
+  if (bad)
+    fprintf(stderr, "%s: hold line not drawn as expected\n", name);
+  cairo_destroy(cr);
+  return bad;
+}
+
 static int dump(const struct info *in, const char *dir, const char *name) {
   return dump_anim(in, dir, name, 1, 1);
 }
@@ -43,7 +65,7 @@ static int dump(const struct info *in, const char *dir, const char *name) {
 static double panel_top(const struct info *in, double pop, double expand,
                         double media) {
   cairo_t *cr = canvas(cfg.width, popup_surface_height(&cfg));
-  popup_render(cr, &cfg, in, pop, expand, media);
+  popup_render(cr, &cfg, in, pop, expand, media, 0);
   double top = -1;
   for (int py = 0; py < popup_surface_height(&cfg) * SCALE; ++py)
     if (pixel(cr, 0.5, (py + 0.5) / SCALE) == cfg.border) {
@@ -85,7 +107,7 @@ static int check_geometry(const struct info *with_media,
       check(panel_top(with_media, 0, 0, 1) < 0, "not popped, nothing is drawn");
 
   cairo_t *cr = canvas(cfg.width, popup_surface_height(&cfg));
-  popup_render(cr, &cfg, with_media, 1, 1, 1);
+  popup_render(cr, &cfg, with_media, 1, 1, 1, 0);
   double mid = (full + cfg.height) / 2;
   rc |= check(pixel(cr, cfg.width - 0.5, mid) == cfg.border,
               "the right border is at the surface's right edge");
@@ -139,6 +161,9 @@ int main(int argc, char **argv) {
   rc |= dump(&a, dir, "normal");
   rc |= dump_anim(&a, dir, "anim_pop_half", 0.5, 0);
   rc |= dump_anim(&a, dir, "anim_compact", 1, 0);
+  rc |= dump_hold(&a, dir, "anim_hold_half", 0, 0.5);
+  rc |= dump_hold(&a, dir, "anim_hold_full", 0, 1);
+  rc |= dump_hold(&a, dir, "anim_hold_expand_quarter", 0.25, 1);
   rc |= dump_anim(&a, dir, "anim_expand_quarter", 1, 0.25);
   rc |= dump_anim(&a, dir, "anim_expand_half", 1, 0.5);
   rc |= dump_media(&a, dir, "anim_media_quarter", 1, 1, 0.25);

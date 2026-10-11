@@ -633,9 +633,68 @@ static void draw_details(cairo_t *cr, const struct info *in, double y,
   draw_stats(cr, in, base + media * C->row_step);
 }
 
+/* The hold line's colour at a fraction f of its length so far. */
+static void hold_stop(cairo_pattern_t *g, double off, double f) {
+  uint32_t a = C->hold, b = C->border, c = 0;
+  for (int sh = 0; sh < 32; sh += 8) {
+    double ca = (a >> sh) & 0xff, cb = (b >> sh) & 0xff;
+    c |= (uint32_t)(ca + (cb - ca) * f + 0.5) << sh;
+  }
+  add_stop(g, off, c);
+}
+
+/* The hold line: traces the panel's border, just inside it, from the
+ * bottom-left corner along the bottom, up the right side, back across the
+ * top and down the left side, and closes the loop when the details start to
+ * reveal. Its growing end is the brightest part. Each side is a strip
+ * hold_h thick; the strips meet at the corners without overlapping. */
+static void draw_hold(cairo_t *cr, double h, double hold, double alpha) {
+  const double t = C->hold_h, W = C->width;
+  /* Each side's start point, direction and length. The bottom strip
+   * covers both bottom corners, the right one the top-right corner and the
+   * top one the top-left corner. */
+  const struct {
+    double x, y, dx, dy, len;
+  } side[] = {
+      {1, h - 1 - t, 1, 0, W - 2},             /* bottom, rightward */
+      {W - 1 - t, h - 1 - t, 0, -1, h - 2 - t}, /* right, upward */
+      {W - 1 - t, 1, -1, 0, W - 2 - t},        /* top, leftward */
+      {1, 1 + t, 0, 1, h - 2 - 2 * t},         /* left, downward */
+  };
+  double total = 0;
+  for (int i = 0; i < 4; i++)
+    total += side[i].len;
+  double fill = total * (hold > 1 ? 1 : hold);
+  if (fill <= 0)
+    return;
+
+  cairo_push_group(cr);
+  double s = 0;
+  for (int i = 0; i < 4 && s < fill; i++) {
+    double d = fill - s < side[i].len ? fill - s : side[i].len;
+    double x0 = side[i].x, y0 = side[i].y;
+    double x1 = x0 + side[i].dx * d, y1 = y0 + side[i].dy * d;
+    cairo_pattern_t *g = cairo_pattern_create_linear(x0, y0, x1, y1);
+    hold_stop(g, 0.0, s / fill);
+    hold_stop(g, 1.0, (s + d) / fill);
+    cairo_set_source(cr, g);
+    /* d along the side, t across it; across, the start point is on the
+     * strip's top or left edge */
+    if (side[i].dx)
+      cairo_rectangle(cr, x0 < x1 ? x0 : x1, y0, d, t);
+    else
+      cairo_rectangle(cr, x0, y0 < y1 ? y0 : y1, t, d);
+    cairo_fill(cr);
+    cairo_pattern_destroy(g);
+    s += d;
+  }
+  cairo_pop_group_to_source(cr);
+  cairo_paint_with_alpha(cr, alpha);
+}
+
 void popup_render(cairo_t *cr, const struct popup_config *cfg,
                   const struct info *in, double pop, double expand,
-                  double media) {
+                  double media, double hold) {
   C = cfg;
   cairo_save(cr);
 
@@ -689,6 +748,9 @@ void popup_render(cairo_t *cr, const struct popup_config *cfg,
     }
   }
   draw_workspaces(cr, in, expand, h);
+  /* Like the minis, it clears out in the first half of the expand. */
+  if (hold > 0 && C->hold_h > 0 && mini > 0)
+    draw_hold(cr, h, hold, mini);
 
   cairo_restore(cr);
 }
