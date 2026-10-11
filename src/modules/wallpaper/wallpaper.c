@@ -656,9 +656,10 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->shake_x = shake * sin(2 * M_PI * 11 * w.react.shake_t);
   f->shake_y = shake * sin(2 * M_PI * 14 * w.react.shake_t + 1.3);
   f->media_alpha = w.media_alpha;
-  f->progress = w.progress;
-  f->chase = w.chasing ? w.chase : -1;
-  f->art = w.cfg.media_art ? wp_media_art(&f->art_id) : NULL;
+  /* Idle, the hexagon (cover and progress) goes; the title stays. */
+  f->progress = w.animating ? w.progress : -1;
+  f->chase = w.animating && w.chasing ? w.chase : -1;
+  f->art = w.animating && w.cfg.media_art ? wp_media_art(&f->art_id) : NULL;
   f->title = w.title;
   f->artist = w.artist;
   f->over = over();
@@ -772,7 +773,7 @@ static void update_animating(void) {
   }
   /* A window open freezes the plain wallpaper, as before the details
    * existed: no title and no hexagon. Idle on an empty workspace keeps
-   * them. */
+   * the title only. */
   /* A show is only for the wallpaper; once it's covered, it's over. */
   if (!w.ws_empty)
     show_stop();
@@ -806,9 +807,9 @@ static void update_animating(void) {
   if (!doze)
     w.fps = 0;
   /* A window opened (or the user idled) mid-spin or mid-song: don't
-   * leave the brightened logo or the bars as the frozen frame. Dozing
-   * draws on for the bar. */
-  if (glowing || doze || cleared)
+   * leave the brightened logo, the bars or the hexagon as the frozen
+   * frame. Dozing draws on for the bar. */
+  if (glowing || doze || cleared || w.media_alpha > 0)
     wp_surfaces_draw(false);
   bus_emit("wallpaper.freeze", NULL);
 }
