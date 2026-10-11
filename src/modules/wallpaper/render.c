@@ -622,10 +622,139 @@ static void draw_text(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_restore(cr);
 }
 
+/* The snowflake's hexagonal hole: its corners sit at the lambdas' inner
+ * points, this far out (x the radius) and at this angle. */
+#define HOLE 0.39046
+#define HOLE_ANGLE 3.08629 /* atan2(0.02158, -0.38986) */
+
+/* The cover scaled to the hexagon at its resting size, made once per cover
+ * and size. */
+static struct {
+  cairo_surface_t *tile;
+  unsigned id;
+  int side;
+} art_cache;
+
+static void art_cache_free(void) {
+  if (art_cache.tile)
+    cairo_surface_destroy(art_cache.tile);
+  art_cache.tile = NULL;
+}
+
+static cairo_surface_t *art_tile(const struct wp_frame *f, int side) {
+  if (!f->art || side <= 0)
+    return NULL;
+  if (!art_cache.tile || art_cache.id != f->art_id || art_cache.side != side) {
+    art_cache_free();
+    art_cache.tile =
+        cairo_image_surface_create(CAIRO_FORMAT_RGB24, side, side);
+    cairo_t *tc = cairo_create(art_cache.tile);
+    double s = (double)side / cairo_image_surface_get_width(f->art);
+    cairo_scale(tc, s, s);
+    cairo_set_source_surface(tc, f->art, 0, 0);
+    cairo_pattern_set_filter(cairo_get_source(tc), CAIRO_FILTER_GOOD);
+    cairo_set_operator(tc, CAIRO_OPERATOR_SOURCE);
+    cairo_paint(tc);
+    cairo_destroy(tc);
+    art_cache.id = f->art_id;
+    art_cache.side = side;
+  }
+  return art_cache.tile;
+}
+
+static void hex_path(cairo_t *cr, double hr) {
+  for (int i = 0; i < 6; ++i) {
+    double a = HOLE_ANGLE + i * M_PI / 3;
+    cairo_line_to(cr, hr * cos(a), hr * sin(a));
+  }
+  cairo_close_path(cr);
+}
+
+/* The hexagon's source in its own (turning) frame: the cover filling it,
+ * or the plain fill without one. */
+static void hex_source(cairo_t *cr, const struct wallpaper_config *c,
+                       cairo_surface_t *art, double hr) {
+  if (!art) {
+    set_rgba(cr, c->media_fill, 1.0);
+    return;
+  }
+  int side = cairo_image_surface_get_width(art);
+  cairo_pattern_t *p = cairo_pattern_create_for_surface(art);
+  cairo_matrix_t m;
+  cairo_matrix_init_translate(&m, side / 2.0, side / 2.0);
+  cairo_matrix_scale(&m, side / (2 * hr), side / (2 * hr));
+  cairo_pattern_set_matrix(p, &m);
+  cairo_pattern_set_filter(p, CAIRO_FILTER_BILINEAR);
+  cairo_set_source(cr, p);
+  cairo_pattern_destroy(p);
+}
+
+/* What's playing, in the snowflake's hole (resting radius r, now rp): the
+ * cover in grey, dimmed except where the progress has swept clockwise from
+ * the top. Without a track length one wedge lights up and steps round. The
+ * hexagon and the cover turn with the snowflake; the sweep stays upright. */
+static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
+                     double cy, double r, double rp,
+                     const struct wp_frame *f) {
+  double alpha = fmin(f->media_alpha, 1);
+  if (alpha <= 0)
+    return;
+  double hr = HOLE * c->media_hex_size * rp;
+  cairo_surface_t *art =
+      c->media_art ? art_tile(f, (int)ceil(2 * HOLE * c->media_hex_size * r))
+                   : NULL;
+  if (!art && f->progress < 0 && f->chase < 0)
+    return;
+  cairo_save(cr);
+  cairo_translate(cr, cx, cy);
+  cairo_rotate(cr, f->angle);
+  hex_path(cr, hr);
+  cairo_clip(cr);
+  if (art && c->media_art_dim > 0) {
+    hex_source(cr, c, art, hr);
+    cairo_paint_with_alpha(cr, alpha * c->media_art_dim);
+  }
+  if (f->progress > 0) {
+    cairo_save(cr);
+    hex_source(cr, c, art, hr);
+    cairo_rotate(cr, -f->angle);
+    double a0 = -M_PI / 2;
+    cairo_move_to(cr, 0, 0);
+    cairo_arc(cr, 0, 0, 2 * hr, a0, a0 + 2 * M_PI * fmin(f->progress, 1));
+    cairo_close_path(cr);
+    cairo_clip(cr);
+    cairo_paint_with_alpha(cr, alpha);
+    cairo_restore(cr);
+  } else if (f->chase >= 0) {
+    /* The lit wedge eases over to the next in the last third of its step. */
+    int at = (int)f->chase % 6;
+    double t = fmin(fmax((f->chase - (int)f->chase - 2 / 3.0) * 3, 0), 1);
+    t = t * t * (3 - 2 * t);
+    for (int j = 0; j < 2; ++j) {
+      double lit = j ? t : 1 - t;
+      if (lit <= 0)
+        continue;
+      int i = (at + j) % 6;
+      cairo_save(cr);
+      hex_source(cr, c, art, hr);
+      double a = HOLE_ANGLE + i * M_PI / 3, b = a + M_PI / 3;
+      cairo_move_to(cr, 0, 0);
+      cairo_line_to(cr, 2 * hr * cos(a), 2 * hr * sin(a));
+      cairo_line_to(cr, 2 * hr * cos(b), 2 * hr * sin(b));
+      cairo_close_path(cr);
+      cairo_clip(cr);
+      cairo_paint_with_alpha(cr, alpha * lit);
+      cairo_restore(cr);
+    }
+  }
+  cairo_restore(cr);
+}
+
 void wp_render_finish(void) {
   bloom_cache_free();
   ring_cache_free();
   text_cache_free();
+  art_cache_free();
 }
 
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
@@ -662,13 +791,10 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
     draw_streaks(cr, c, cx, cy, r, k, f);
   /* The logo reacts to the music: it grows on bass hits and its lambdas
    * slide out (both 0 without music). */
-  uint32_t dark = mix(c->logo, c->logo_glow, f->glow),
-           light = mix(c->logo_alt, c->logo_glow_alt, f->glow), cols[6];
-  /* What's playing lights the lambdas (its progress, or a chase). */
-  for (int i = 0; i < 6; ++i)
-    cols[i] = i % 2 ? mix(light, c->media_lit_alt, f->lit[i])
-                    : mix(dark, c->media_lit, f->lit[i]);
-  nixlogo_draw_cols(cr, cx, cy, r * (1 + c->react_pulse_scale * f->pulse),
-                    f->angle, cols, 1.0, f->slide);
+  double rp = r * (1 + c->react_pulse_scale * f->pulse);
+  draw_hex(cr, c, cx, cy, r, rp, f);
+  nixlogo_draw_ex(cr, cx, cy, rp, f->angle,
+                  mix(c->logo, c->logo_glow, f->glow),
+                  mix(c->logo_alt, c->logo_glow_alt, f->glow), 1.0, f->slide);
   cairo_restore(cr);
 }

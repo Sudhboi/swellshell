@@ -16,9 +16,5 @@ void nixlogo_draw(cairo_t *cr, double cx, double cy, double r, double angle,
 void nixlogo_draw_ex(cairo_t *cr, double cx, double cy, double r,
                      double angle, uint32_t dark, uint32_t light, double alpha,
                      const double *slide);
-/* The same, with lambda k in cols[k] (k goes clockwise). */
-void nixlogo_draw_cols(cairo_t *cr, double cx, double cy, double r,
-                       double angle, const uint32_t cols[6], double alpha,
-                       const double *slide);
 
 #endif

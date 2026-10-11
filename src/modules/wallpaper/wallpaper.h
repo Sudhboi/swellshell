@@ -100,9 +100,12 @@ struct wallpaper_config {
   bool media;
   char media_player[128]; /* playerctl -p, "": playerctl's pick */
   int media_interval_ms;  /* playerctl poll while animating */
-  bool media_progress;    /* the lambdas show the progress */
-  int media_chase_ms;     /* no track length: a lit lambda steps round */
-  uint32_t media_lit, media_lit_alt; /* a lit lambda */
+  bool media_progress;    /* the hexagon shows the progress */
+  int media_chase_ms;     /* no track length: a lit wedge steps round */
+  bool media_art;         /* the cover, in grey, fills the hexagon */
+  double media_art_dim;   /* the cover outside the sweep, 0..1 */
+  uint32_t media_fill;    /* the sweep without a cover */
+  double media_hex_size;  /* of the snowflake's hole, 0..1 */
   char media_font[128];
   double media_title_size, media_artist_size; /* reference px */
   uint32_t media_text, media_dim;             /* title, artist */
@@ -123,9 +126,12 @@ struct wp_frame {
   double pulse;    /* logo growth, 0..1 of react_pulse_scale */
   double slide[6]; /* lambda k moved out by this x logo radius */
   double shake_x, shake_y; /* everything moved by this, reference px */
-  double lit[6];  /* lambda k towards media_lit, 0..1 */
-  double media_alpha; /* the title and artist, 0: none */
+  double media_alpha; /* the details (title, artist, hexagon), 0: none */
   const char *title, *artist;
+  double progress; /* 0..1 swept clockwise from the top, -1: none */
+  double chase;    /* -1, or the lit wedge going round, 0..6 */
+  cairo_surface_t *art; /* the cover in grey (RGB24, square), or NULL */
+  unsigned art_id;      /* changes with the cover */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
 };
@@ -233,9 +239,11 @@ struct wp_media {
   int64_t len_us, pos_us; /* length 0: unknown */
   int64_t at_ms;          /* when pos_us was read (monotonic) */
   char artist[256], title[256];
+  char art_url[1024];
 };
-/* Parse a playerctl line "status\tlength\tposition\tartist\ttitle" read at
- * now. Returns m->has (false, and m zeroed, without a track). */
+/* Parse a playerctl line "status\tlength\tposition\tart url\tartist\t
+ * title" read at now. Returns m->has (false, and m zeroed, without a
+ * track). */
 bool wp_media_parse(const char *line, int64_t now, struct wp_media *m);
 /* The track's progress at now, 0..1, or -1 if its length is unknown. */
 double wp_media_progress(const struct wp_media *m, int64_t now);
@@ -244,6 +252,11 @@ void wp_media_stop(void);
 /* Forget the track (media turned off). */
 void wp_media_clear(void);
 const struct wp_media *wp_media_get(void);
+/* The current track's cover in grey (RGB24, a centred square), or NULL;
+ * id changes whenever it does. */
+cairo_surface_t *wp_media_art(unsigned *id);
+/* Load an image file as a grey square (NULL if it can't be read). */
+cairo_surface_t *wp_media_load_art(const char *path);
 
 /* gl.c: the smooth edge visualiser on the GPU */
 struct wl_display;

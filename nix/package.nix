@@ -10,12 +10,14 @@
   wayland-protocols,
   cairo,
   pango,
+  libjpeg,
   libxkbcommon,
   pipewire,
   libGL,
   wireplumber,
   networkmanager,
   playerctl,
+  curl,
 }:
 
 stdenv.mkDerivation {
@@ -48,6 +50,7 @@ stdenv.mkDerivation {
     wayland-protocols
     cairo
     pango
+    libjpeg
     libxkbcommon
     pipewire
     libGL
@@ -55,7 +58,8 @@ stdenv.mkDerivation {
 
   doCheck = true;
 
-  # The popup reads volume, network and media through these. They are
+  # The popup reads volume, network and media through these (the wallpaper
+  # media too, and curl fetches its covers). They are
   # appended to PATH so the user's own versions win.
   postInstall = ''
     wrapProgram $out/bin/swell --suffix PATH : ${
@@ -63,6 +67,7 @@ stdenv.mkDerivation {
         wireplumber
         networkmanager
         playerctl
+        curl
       ]
     }
   '';

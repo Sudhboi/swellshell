@@ -455,14 +455,18 @@ media = true
 media_player = ""
 # how often playerctl is asked while the wallpaper animates
 media_interval_ms = 2000
-# the lambdas light up clockwise as the track plays, a sixth each; without a track length one lit lambda steps round
+# the snowflake's hexagonal hole fills clockwise from the top as the track plays; without a track length one lit wedge of it steps round
 media_progress = true
-# the lit lambda's step when the track length is unknown
+# the lit wedge's step when the track length is unknown
 media_chase_ms = 2000
-# a lit lambda
-media_lit = "#b4b4b4"
-# a lit lambda, every other one
-media_lit_alt = "#8c8c8c"
+# the track's cover, in grey, fills the hexagon (file:// covers are read directly, http(s) ones fetched with curl)
+media_art = true
+# the cover's opacity where the progress hasn't reached yet
+media_art_dim = 0.3
+# the progress in the hexagon without a cover
+media_fill = "#8c8c8c"
+# the hexagon's size, of the snowflake's hole
+media_hex_size = 0.9
 # font of the title and artist
 media_font = "IosevkaTerm Nerd Font"
 # title size, px
@@ -479,5 +483,5 @@ media_gap = 70.0
 media_max_width = 1400.0
 # how long the details take to fade in or out
 media_fade_ms = 400
-# opacity of the details and the lit lambdas while paused
+# opacity of the details and the hexagon while paused
 media_paused_alpha = 0.5

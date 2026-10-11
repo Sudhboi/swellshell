@@ -5,7 +5,10 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include <jpeglib.h>
 
 #include "module.h"
 #include "wallpaper/wallpaper.h"
@@ -20,6 +23,37 @@ static uint32_t px(cairo_surface_t *s, int x, int y) {
   const uint32_t *row = (const uint32_t *)(cairo_image_surface_get_data(s) +
                                            y * cairo_image_surface_get_stride(s));
   return row[x] & 0xffffff;
+}
+
+/* A w x h JPEG of one colour at path. */
+static void write_jpeg(const char *path, int w, int h, int r, int g, int b) {
+  FILE *f = fopen(path, "wb");
+  assert(f);
+  struct jpeg_compress_struct ci;
+  struct jpeg_error_mgr err;
+  ci.err = jpeg_std_error(&err);
+  jpeg_create_compress(&ci);
+  jpeg_stdio_dest(&ci, f);
+  ci.image_width = w;
+  ci.image_height = h;
+  ci.input_components = 3;
+  ci.in_color_space = JCS_RGB;
+  jpeg_set_defaults(&ci);
+  jpeg_set_quality(&ci, 95, TRUE);
+  jpeg_start_compress(&ci, TRUE);
+  JSAMPLE row[3 * 400];
+  for (int x = 0; x < w; ++x) {
+    row[3 * x] = r;
+    row[3 * x + 1] = g;
+    row[3 * x + 2] = b;
+  }
+  while (ci.next_scanline < ci.image_height) {
+    JSAMPROW rows[1] = {row};
+    jpeg_write_scanlines(&ci, rows, 1);
+  }
+  jpeg_finish_compress(&ci);
+  jpeg_destroy_compress(&ci);
+  fclose(f);
 }
 
 static cairo_surface_t *render(const struct wallpaper_config *c,
@@ -410,40 +444,107 @@ int main(int argc, char **argv) {
 
   /* What's playing: playerctl's line. */
   struct wp_media m;
-  assert(wp_media_parse("Playing\t240000000\t60000000\tArtist\tA\tsong\n",
+  assert(wp_media_parse("Playing\t240000000\t60000000\tfile:///a.png\tArtist"
+                        "\tA\tsong\n",
                         1000, &m));
   assert(m.playing && m.len_us == 240000000 && m.pos_us == 60000000);
+  assert(!strcmp(m.art_url, "file:///a.png"));
   assert(!strcmp(m.artist, "Artist") && !strcmp(m.title, "A\tsong"));
   assert(fabs(wp_media_progress(&m, 1000) - 0.25) < 1e-9);
   assert(fabs(wp_media_progress(&m, 13000) - 0.3) < 1e-9); /* playing on */
   assert(wp_media_progress(&m, 1000 + 400000) == 1);       /* clamped */
-  assert(wp_media_parse("Paused\t240000000\t60000000\t\tTitle", 0, &m));
-  assert(!m.playing && !m.artist[0]);
+  assert(wp_media_parse("Paused\t240000000\t60000000\t\t\tTitle", 0, &m));
+  assert(!m.playing && !m.artist[0] && !m.art_url[0]);
   assert(fabs(wp_media_progress(&m, 50000) - 0.25) < 1e-9); /* held */
-  assert(wp_media_parse("Playing\t\t32\timase\tNIGHT DANCER", 0, &m));
+  assert(wp_media_parse("Playing\t\t32\t\timase\tNIGHT DANCER", 0, &m));
   assert(m.len_us == 0 && wp_media_progress(&m, 0) == -1); /* unknown */
-  assert(!wp_media_parse("Playing\t1\t0\tArtist\t", 0, &m) && !m.has);
-  assert(!wp_media_parse("Stopped\t1\t0\tArtist\tTitle", 0, &m));
+  assert(!wp_media_parse("Playing\t1\t0\t\tArtist\t", 0, &m) && !m.has);
+  assert(!wp_media_parse("Stopped\t1\t0\t\tArtist\tTitle", 0, &m));
+  assert(!wp_media_parse("Playing\t1\t0\tArtist\tTitle", 0, &m)); /* old */
   assert(!wp_media_parse("", 0, &m) && !m.has);
   assert(!wp_media_parse("No players found", 0, &m));
 
+  /* A cover: cut to its centred square and turned grey (luminance). */
+  {
+    cairo_surface_t *in = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 300, 200);
+    cairo_t *ic = cairo_create(in);
+    cairo_set_source_rgb(ic, 1, 0, 0);
+    cairo_paint(ic);
+    cairo_rectangle(ic, 150, 0, 150, 200);
+    cairo_set_source_rgb(ic, 0, 0, 1);
+    cairo_fill(ic);
+    cairo_destroy(ic);
+    char path[1024];
+    snprintf(path, sizeof path, "%s/wallpaper_cover_in.png", dir);
+    assert(cairo_surface_write_to_png(in, path) == CAIRO_STATUS_SUCCESS);
+    cairo_surface_destroy(in);
+    cairo_surface_t *art = wp_media_load_art(path);
+    assert(art && cairo_image_surface_get_width(art) == 200 &&
+           cairo_image_surface_get_height(art) == 200);
+    assert(px(art, 10, 100) == 0x363636 && px(art, 190, 100) == 0x121212);
+    assert(px(art, 99, 100) == 0x363636 && px(art, 100, 100) == 0x121212);
+    cairo_surface_destroy(art);
+    snprintf(path, sizeof path, "%s/no-such-cover.png", dir);
+    assert(!wp_media_load_art(path));
+    /* A JPEG (a 400x250 one cut to 250x250), and broken files. */
+    snprintf(path, sizeof path, "%s/wallpaper_cover_in.jpg", dir);
+    write_jpeg(path, 400, 250, 200, 100, 50);
+    art = wp_media_load_art(path);
+    assert(art && cairo_image_surface_get_width(art) == 250);
+    int want = (int)lround(0.2126 * 200 + 0.7152 * 100 + 0.0722 * 50);
+    assert(abs((int)(px(art, 125, 125) & 0xff) - want) <= 3);
+    cairo_surface_destroy(art);
+    FILE *jf = fopen(path, "r+b");
+    assert(jf && fseek(jf, 20, SEEK_SET) == 0);
+    for (int i = 0; i < 200; ++i)
+      fputc(0, jf); /* the header's tables zeroed */
+    fclose(jf);
+    assert(!wp_media_load_art(path) || 1); /* no crash either way */
+    snprintf(path, sizeof path, "%s/wallpaper_cover_bad.png", dir);
+    jf = fopen(path, "wb");
+    fputs("\x89PNG\r\n\x1a\nnot really", jf);
+    fclose(jf);
+    assert(!wp_media_load_art(path));
+  }
+
   /* The details: under the logo inside their region, which is empty
-   * without them, and a partial repaint (over other details, shaken) equals
-   * a full one; clearing them leaves the plain frame. */
+   * without them, and the hexagon inside the logo tile. */
   struct wp_rect tr[WP_REGIONS];
   wp_regions(c, W, H, false, true, tr);
   assert(r[4].w == 0 && tr[4].w > 0);
   assert(tr[4].y > H / 2 + c->logo_radius * k && tr[4].y + tr[4].h < H);
   assert(tr[4].x > e[2].x + e[2].w && tr[4].x + tr[4].w < e[3].x);
+  /* A cover with something to see: rings and a diagonal. */
+  cairo_surface_t *cover = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 256, 256);
+  {
+    cairo_t *ic = cairo_create(cover);
+    cairo_set_source_rgb(ic, 0.9, 0.9, 0.9);
+    cairo_paint(ic);
+    cairo_set_source_rgb(ic, 0.3, 0.3, 0.3);
+    for (int i = 1; i < 6; i += 2) {
+      cairo_arc(ic, 128, 128, i * 22, 0, 2 * M_PI);
+      cairo_set_line_width(ic, 14);
+      cairo_stroke(ic);
+    }
+    cairo_destroy(ic);
+  }
+  cairo_surface_t *white = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 64, 64);
+  {
+    cairo_t *ic = cairo_create(white);
+    cairo_set_source_rgb(ic, 1, 1, 1);
+    cairo_paint(ic);
+    cairo_destroy(ic);
+  }
   f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0.3};
   a = render(c, f, dir, NULL);
   f.media_alpha = 1;
   f.title = "Dynasties and Dystopia (from the series Arcane League of "
             "Legends) and a much longer tail so that it has to be cut short";
   f.artist = "Release - Topic";
-  for (int i = 0; i < 3; ++i)
-    f.lit[i] = 1;
-  f.lit[3] = 0.5;
+  f.progress = 0.4;
+  f.chase = -1;
+  f.art = cover;
+  f.art_id = 1;
   t = render(c, f, dir, "wallpaper_media_progress");
   changed = 0;
   int texted = 0;
@@ -459,30 +560,74 @@ int main(int argc, char **argv) {
         changed++;
       }
   assert(changed > 0 && texted > 0);
-  /* Lit lambdas are brighter than the others. */
-  {
-    unsigned lit_max = 0, dim_max = 0;
-    for (int y = r[1].y; y < r[1].y + r[1].h; ++y)
-      for (int x = r[1].x; x < r[1].x + r[1].w; ++x) {
-        unsigned v = px(t, x, y) & 0xff;
-        if (y < tr[4].y)
-          lit_max = v > lit_max ? v : lit_max;
-        dim_max = fmax(dim_max, px(a, x, y) & 0xff);
-      }
-    assert(lit_max > dim_max + 50);
+  cairo_surface_destroy(t);
+  /* The sweep: from the top clockwise to 40% (144 degrees), upright
+   * however the snowflake turns; the cover is dimmed past it. */
+  double hd = 0.5 * 0.39 * c->media_hex_size * c->logo_radius * k;
+#define AT(deg)                                                               \
+  (int)(W / 2 + hd * sin((deg) * M_PI / 180)),                               \
+      (int)(H / 2 - hd * cos((deg) * M_PI / 180))
+  f.art = white;
+  f.art_id = 2;
+  for (double ang = 0; ang < 7; ang += 2.2) {
+    f.angle = ang;
+    t = render(c, f, dir, NULL);
+    assert(px(t, AT(30)) == 0xffffff && px(t, AT(120)) == 0xffffff);
+    unsigned dim = px(t, AT(200)) & 0xff;
+    assert(abs((int)dim - (int)lround(255 * c->media_art_dim)) <= 1);
+    assert((px(t, AT(170)) & 0xff) == dim && (px(t, AT(300)) & 0xff) == dim);
+    cairo_surface_destroy(t);
   }
+  /* Without a cover the sweep is the plain fill, the rest the hole. */
+  f.angle = 0.3;
+  f.art = NULL;
+  t = render(c, f, dir, NULL);
+  assert(px(t, AT(30)) == (c->media_fill >> 8) && px(t, AT(200)) == 0);
+  cairo_surface_destroy(t);
+  /* Half the cover off: only the dim part shows, and media_art off. */
+  struct wallpaper_config noart = *c;
+  noart.media_art = false;
+  f.art = white;
+  f.art_id = 2;
+  t = render(&noart, f, dir, NULL);
+  assert(px(t, AT(30)) == (c->media_fill >> 8) && px(t, AT(200)) == 0);
+  cairo_surface_destroy(t);
+  /* No length: one wedge lit, turning with the snowflake. Wedge 0 runs from
+   * the hole's corner at 176.8 degrees (screen, y down, at angle 0) on by
+   * 60. */
+  f.art = white;
+  f.progress = -1;
+  f.chase = 0.2;
+  f.angle = 0;
+  t = render(c, f, dir, NULL);
+  {
+    double wa = 176.8 + 30; /* the wedge's middle, cairo angle */
+    int wx = (int)(W / 2 + hd * cos(wa * M_PI / 180));
+    int wy = (int)(H / 2 + hd * sin(wa * M_PI / 180));
+    assert(px(t, wx, wy) == 0xffffff);
+    wx = (int)(W / 2 - hd * cos(wa * M_PI / 180));
+    wy = (int)(H / 2 - hd * sin(wa * M_PI / 180));
+    assert((px(t, wx, wy) & 0xff) < 0x80);
+  }
+  cairo_surface_destroy(t);
+  f.art = cover;
+  f.art_id = 1;
+  f.chase = 4.0;
+  f.angle = 0.3;
+  f.title = "NIGHT DANCER";
+  f.artist = "imase";
+  cairo_surface_destroy(render(c, f, dir, "wallpaper_media_chase"));
   struct wp_frame pf = f;
   pf.media_alpha = c->media_paused_alpha;
-  for (int i = 0; i < 6; ++i)
-    pf.lit[i] = f.lit[i] * c->media_paused_alpha;
+  pf.chase = -1;
+  pf.progress = 0.7;
   cairo_surface_destroy(render(c, pf, dir, "wallpaper_media_paused"));
+  /* A partial repaint over other details, shaken and pulsed, equals a full
+   * one; clearing them leaves the plain frame. */
+  t = render(c, pf, dir, NULL);
   struct wp_frame cf = f;
-  memset(cf.lit, 0, sizeof cf.lit);
-  cf.lit[4] = 1;
-  cf.title = "NIGHT DANCER";
-  cf.artist = "imase";
-  cairo_surface_destroy(render(c, cf, dir, "wallpaper_media_chase"));
   cf.shake_x = cf.shake_y = c->react_shake_px;
+  cf.pulse = 1;
   cr = cairo_create(t);
   wp_render(cr, c, W, H, &cf, false, false, false);
   cairo_destroy(cr);
@@ -500,6 +645,8 @@ int main(int argc, char **argv) {
       assert(px(t, x, y) == px(a, x, y));
   cairo_surface_destroy(a);
   cairo_surface_destroy(t);
+  cairo_surface_destroy(cover);
+  cairo_surface_destroy(white);
   wp_render_finish();
   return 0;
 }

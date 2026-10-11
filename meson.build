@@ -17,6 +17,7 @@ wayland_protos = dependency('wayland-protocols', version: '>=1.37')
 wayland_scanner_dep = dependency('wayland-scanner', native: true)
 cairo = dependency('cairo')
 pango = dependency('pangocairo')
+libjpeg = dependency('libjpeg')
 xkbcommon = dependency('xkbcommon')
 math = cc.find_library('m', required: false)
 pipewire = dependency('libpipewire-0.3')
@@ -78,7 +79,7 @@ core_src = files(
   'src/core/util.c',
   'src/core/wl.c',
 )
-deps = [wayland_client, cairo, pango, xkbcommon, math, pipewire, egl, glesv2,
+deps = [wayland_client, cairo, pango, libjpeg, xkbcommon, math, pipewire, egl, glesv2,
   wayland_egl, protocols_dep,
   i3ipc_dep, tomlc17_dep]
 core = static_library('swellcore', core_src,

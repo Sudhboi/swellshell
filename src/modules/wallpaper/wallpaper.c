@@ -113,8 +113,10 @@ static const struct wallpaper_config defaults = {
     .media_interval_ms = 2000,
     .media_progress = true,
     .media_chase_ms = 2000,
-    .media_lit = 0xb4b4b4ffu,
-    .media_lit_alt = 0x8c8c8cffu,
+    .media_art = true,
+    .media_art_dim = 0.3,
+    .media_fill = 0x8c8c8cffu,
+    .media_hex_size = 0.9,
     .media_font = "IosevkaTerm Nerd Font",
     .media_title_size = 44,
     .media_artist_size = 32,
@@ -303,12 +305,19 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, media_interval_ms, 100, 60000,
             "how often playerctl is asked while the wallpaper animates"),
     CFG_BOOL(S, media_progress,
-             "the lambdas light up clockwise as the track plays, a sixth "
-             "each; without a track length one lit lambda steps round"),
+             "the snowflake's hexagonal hole fills clockwise from the top as "
+             "the track plays; without a track length one lit wedge of it "
+             "steps round"),
     CFG_INT(S, media_chase_ms, 100, 60000,
-            "the lit lambda's step when the track length is unknown"),
-    CFG_COLOR(S, media_lit, "a lit lambda"),
-    CFG_COLOR(S, media_lit_alt, "a lit lambda, every other one"),
+            "the lit wedge's step when the track length is unknown"),
+    CFG_BOOL(S, media_art,
+             "the track's cover, in grey, fills the hexagon (file:// covers "
+             "are read directly, http(s) ones fetched with curl)"),
+    CFG_DOUBLE(S, media_art_dim, 0, 1,
+               "the cover's opacity where the progress hasn't reached yet"),
+    CFG_COLOR(S, media_fill, "the progress in the hexagon without a cover"),
+    CFG_DOUBLE(S, media_hex_size, 0, 1,
+               "the hexagon's size, of the snowflake's hole"),
     CFG_STRING(S, media_font, "font of the title and artist"),
     CFG_DOUBLE(S, media_title_size, 1, 1000, "title size, px"),
     CFG_DOUBLE(S, media_artist_size, 1, 1000, "artist size, px"),
@@ -322,7 +331,7 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, media_fade_ms, 0, 10000,
             "how long the details take to fade in or out"),
     CFG_DOUBLE(S, media_paused_alpha, 0, 1,
-               "opacity of the details and the lit lambdas while paused"),
+               "opacity of the details and the hexagon while paused"),
 };
 #undef S
 
@@ -357,8 +366,9 @@ static struct {
   /* what's playing: the details shown (kept through a fade-out) */
   char title[256], artist[256];
   double media_alpha; /* the details' opacity, following the player */
-  double lit[6];      /* the lambdas' lit state, following the progress */
-  double chase;       /* the chase's position, in lambdas */
+  double progress;    /* the track's, 0..1, -1: none */
+  double chase;       /* the lit wedge, 0..6, while the length is unknown */
+  bool chasing;
 
   /* measured frame rate */
   int64_t fps_start;
@@ -479,7 +489,7 @@ static void advance_viz(double dt) {
   w.viz_time = fmod(w.viz_time + dt, 3600);
 }
 
-/* Move the details and the lit lambdas on by dt towards the player. */
+/* Move the details and the hexagon on by dt towards the player. */
 static void advance_media(int64_t now, double dt) {
   const struct wp_media *m = wp_media_get();
   bool has = w.cfg.media && m->has;
@@ -492,25 +502,11 @@ static void advance_media(int64_t now, double dt) {
   w.media_alpha = target > w.media_alpha
                       ? fmin(w.media_alpha + step, target)
                       : fmax(w.media_alpha - step, target);
-  double lit[6] = {0};
-  double p = has && w.cfg.media_progress ? wp_media_progress(m, now) : -1;
-  if (has && w.cfg.media_progress && p >= 0) {
-    for (int k = 0; k < 6; ++k)
-      lit[k] = fmin(fmax(6 * p - k, 0), 1);
-  } else if (has && w.cfg.media_progress) {
-    /* No length: one lit lambda goes round, easing over to the next in
-     * the last third of its step. */
-    if (m->playing)
-      w.chase = fmod(w.chase + dt * 1000 / w.cfg.media_chase_ms, 6);
-    int at = (int)w.chase % 6;
-    double t = fmin(fmax((w.chase - at - 2 / 3.0) * 3, 0), 1);
-    t = t * t * (3 - 2 * t);
-    lit[at] = 1 - t;
-    lit[(at + 1) % 6] = t;
-  }
-  /* Lit lambdas fade with the details (dimmer while paused). */
-  for (int k = 0; k < 6; ++k)
-    w.lit[k] = lit[k] * w.media_alpha;
+  w.progress = has && w.cfg.media_progress ? wp_media_progress(m, now) : -1;
+  /* No length: a lit wedge goes round while it plays. */
+  w.chasing = has && w.cfg.media_progress && w.progress < 0;
+  if (w.chasing && m->playing)
+    w.chase = fmod(w.chase + dt * 1000 / w.cfg.media_chase_ms, 6);
 }
 
 /* The logo brightens with the pointer boost, fully at spin_max. */
@@ -562,9 +558,10 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   double shake = w.cfg.react_shake ? w.cfg.react_shake_px * w.react.shake : 0;
   f->shake_x = shake * sin(2 * M_PI * 11 * w.react.shake_t);
   f->shake_y = shake * sin(2 * M_PI * 14 * w.react.shake_t + 1.3);
-  for (int k = 0; k < 6; ++k)
-    f->lit[k] = w.lit[k];
   f->media_alpha = w.media_alpha;
+  f->progress = w.progress;
+  f->chase = w.chasing ? w.chase : -1;
+  f->art = w.cfg.media_art ? wp_media_art(&f->art_id) : NULL;
   f->title = w.title;
   f->artist = w.artist;
   f->over = over();
@@ -628,13 +625,11 @@ static void update_animating(void) {
     loop_timer_disarm(w.battery_timer);
   }
   /* A window open freezes the plain wallpaper, as before the details
-   * existed: no title and no lit lambdas. Idle on an empty workspace keeps
+   * existed: no title and no hexagon. Idle on an empty workspace keeps
    * them. */
   bool cleared = !w.ws_empty && w.media_alpha > 0;
-  if (cleared) {
+  if (cleared)
     w.media_alpha = 0;
-    memset(w.lit, 0, sizeof w.lit);
-  }
   if (want) {
     arm_idle_fallback();
     if (w.cfg.viz)
@@ -806,7 +801,8 @@ static void reconfigure(const void *cfg) {
     if (w.animating && w.cfg.viz)
       wp_audio_start(w.sw->loop, &w.cfg);
   }
-  if (old.media != w.cfg.media || old.media_interval_ms != w.cfg.media_interval_ms ||
+  if (old.media != w.cfg.media || old.media_art != w.cfg.media_art ||
+      old.media_interval_ms != w.cfg.media_interval_ms ||
       strcmp(old.media_player, w.cfg.media_player)) {
     wp_media_stop();
     wp_media_clear();
@@ -894,6 +890,11 @@ static int command(int argc, char **argv, struct reply *r) {
         reply_printf(r, "media: %s, \"%s\"%s%s, %s\n",
                      m->playing ? "playing" : "paused", m->title,
                      m->artist[0] ? " — " : "", m->artist, prog);
+        unsigned id;
+        reply_printf(r, "cover: %s\n",
+                     wp_media_art(&id) ? "yes"
+                     : m->art_url[0] && w.cfg.media_art ? "none (unreadable)"
+                                                         : "none");
       }
     }
     reply_printf(r, "outputs: %d\n", wp_surfaces_count());
