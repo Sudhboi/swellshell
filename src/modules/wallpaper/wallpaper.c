@@ -84,8 +84,9 @@ static const struct wallpaper_config defaults = {
     .react_glow = true,
     .react_glow_amount = 0.6,
     .react_spin = true,
-    .react_spin_gain = 3,
-    .react_spin_kick = 1,
+    .react_spin_gain = 6,
+    .react_spin_kick = 4,
+    .react_spin_kick_ms = 400,
 };
 
 #define S struct wallpaper_config
@@ -197,8 +198,9 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, react_spin_gain, 0, 100,
                "extra speed at full loudness (x spin_speed)"),
     CFG_DOUBLE(S, react_spin_kick, 0, 100,
-               "extra speed per beat, easing off over spin_decay_s (x "
-               "spin_speed)"),
+               "extra speed per beat (x spin_speed)"),
+    CFG_INT(S, react_spin_kick_ms, 1, 10000,
+            "how fast a beat's extra speed eases off"),
 };
 #undef S
 
@@ -300,7 +302,7 @@ static double advance(int64_t now) {
   if (dt > 0.1)
     dt = 0.1;
   double music =
-      w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.loud + w.react.kick
+      w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.energy + w.react.kick
                        : 0;
   double omega = w.cfg.spin_speed * (1 + w.boost + music);
   omega = copysign(fmin(fabs(omega), w.cfg.spin_visible_max), omega) * M_PI /
@@ -615,7 +617,7 @@ static int command(int argc, char **argv, struct reply *r) {
       reply_printf(r,
                    "react: loud %.2f, pulse %.2f, spin x%.2f (%s%s%s%s)\n",
                    w.react.loud, w.react.pulse,
-                   1 + (w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.loud +
+                   1 + (w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.energy +
                                                w.react.kick
                                          : 0),
                    w.cfg.react_slide ? " slide" : "",

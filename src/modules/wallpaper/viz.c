@@ -170,6 +170,7 @@ void wp_react_step(struct wp_react *r, const struct wp_viz *v,
   all /= n;
   bass /= nbass;
   r->loud = follow(r->loud, all, 0.08, 0.5, dt);
+  r->energy = follow(r->energy, all, 0.03, 0.15, dt);
 
   for (int g = 0; g < 6; ++g) {
     int i0 = g * n / 6, i1 = (g + 1) * n / 6;
@@ -182,7 +183,7 @@ void wp_react_step(struct wp_react *r, const struct wp_viz *v,
 
   r->since_kick += dt;
   r->pulse *= exp(-dt / fmax(c->react_pulse_ms / 1000.0, 1e-3));
-  r->kick *= exp(-dt / c->spin_decay_s);
+  r->kick *= exp(-dt / fmax(c->react_spin_kick_ms / 1000.0, 1e-3));
   if (r->held && bass < r->bass_avg + KICK_RISE / 2)
     r->held = false;
   if (!r->held && bass > KICK_LEVEL && bass - r->bass_avg > KICK_RISE &&

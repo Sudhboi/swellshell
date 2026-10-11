@@ -406,6 +406,8 @@ react_glow_amount = 0.6
 # loudness and beats speed the snowflake up (needs viz)
 react_spin = true
 # extra speed at full loudness (x spin_speed)
-react_spin_gain = 3.0
-# extra speed per beat, easing off over spin_decay_s (x spin_speed)
-react_spin_kick = 1.0
+react_spin_gain = 6.0
+# extra speed per beat (x spin_speed)
+react_spin_kick = 4.0
+# how fast a beat's extra speed eases off
+react_spin_kick_ms = 400

@@ -73,6 +73,7 @@ struct wallpaper_config {
   bool react_spin;          /* loudness and beats speed the spin up */
   double react_spin_gain;   /* x spin_speed extra at full loudness */
   double react_spin_kick;   /* x spin_speed extra per beat, decaying */
+  int react_spin_kick_ms;   /* the beat's extra speed decay time constant */
 };
 
 /* One frame's worth of animation state. */
@@ -126,7 +127,8 @@ void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
                  const float (*db)[WP_VIZ_MAX], double dt);
 /* What the logo reacts to, from the bars. */
 struct wp_react {
-  double loud;           /* smoothed mean bar level, 0..1 */
+  double loud;           /* smoothed mean bar level, 0..1 (for the glow) */
+  double energy;         /* the same, following quickly (for the spin) */
   double bass, bass_avg; /* the lowest bands now, and their slow average */
   double pulse;          /* 1 on a bass hit, easing back to 0 */
   double kick;           /* extra spin from beats (x spin_speed), decaying */
