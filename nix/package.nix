@@ -12,6 +12,7 @@
   pango,
   libxkbcommon,
   pipewire,
+  libGL,
   wireplumber,
   networkmanager,
   playerctl,
@@ -49,6 +50,7 @@ stdenv.mkDerivation {
     pango
     libxkbcommon
     pipewire
+    libGL
   ];
 
   doCheck = true;

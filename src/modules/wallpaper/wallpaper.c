@@ -75,6 +75,7 @@ static const struct wallpaper_config defaults = {
     .viz_edge_fade = 0.1,
     .viz_edge_rim = 0xa0a0a0ffu,
     .viz_edge_rim_width = 3,
+    .viz_gpu = true,
     .viz_radius = 1.6,
     .viz_length = 260,
     .viz_inward = 0.4,
@@ -208,6 +209,9 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, viz_edge_rim_width, 0, 100,
                "width of the line along the smooth curve, px (0 = none; needs "
                "viz_edge_smooth)"),
+    CFG_BOOL(S, viz_gpu,
+             "draw the smooth edge curve with the GPU (EGL); falls back to "
+             "the CPU if that fails (needs viz_edge_smooth)"),
     CFG_DOUBLE(S, viz_radius, 0, 10,
                "the line the ring's bars grow from, both ways (x "
                "logo_radius)"),
@@ -678,6 +682,7 @@ static void reconfigure(const void *cfg) {
 static void finish(void) {
   bus_unsubscribe(on_bus, NULL);
   wp_surfaces_finish();
+  wp_gl_finish();
   wp_render_finish();
   wp_audio_finish();
   memset(&w.viz, 0, sizeof(w.viz));
@@ -707,6 +712,8 @@ static int command(int argc, char **argv, struct reply *r) {
     reply_printf(r, "fps: %.1f\n", w.animating ? w.fps : 0.0);
     reply_printf(r, "spin: x%.2f\n", 1 + w.boost);
     reply_printf(r, "audio: %s\n", w.cfg.viz ? wp_audio_state() : "disabled");
+    if (w.cfg.viz && w.cfg.viz_edges && w.cfg.viz_edge_smooth)
+      reply_printf(r, "viz render: %s\n", wp_surfaces_viz_renderer());
     if (w.cfg.viz) {
       float top[2] = {0, 0};
       for (int s = 0; s < 2; ++s)

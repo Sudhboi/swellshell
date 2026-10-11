@@ -64,6 +64,7 @@ struct wallpaper_config {
   double viz_edge_fade;   /* the fill's opacity at full length, 0..1 */
   uint32_t viz_edge_rim;  /* the line along the curve */
   double viz_edge_rim_width; /* reference px, 0 = none */
+  bool viz_gpu; /* draw the smooth edges with the GPU (if EGL works) */
   double viz_radius;    /* the bars' centre line, x logo_radius */
   double viz_length;    /* reference px at full level, both ends together */
   double viz_inward;    /* the share of a bar that grows inwards, 0..1 */
@@ -130,6 +131,20 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
  * only the wp_regions() areas (with ring) are touched. */
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
                const struct wp_frame *f, bool full, bool ring);
+/* The smooth edge curve of side s (0 left, 1 right), as drawn by
+ * wp_render(): m points from the bottom up at levels pl (px in from the
+ * screen's side) and heights py, joined by Beziers whose control points
+ * (levels c1, c2 at heights cy1, cy2) lead from point i to i + 1. The strip
+ * spans x0..x1 (len wide), y0..y1 past the screen by the shake distance. */
+struct wp_edge_curve {
+  double x0, y0, x1, y1, len;
+  int m;
+  double py[WP_VIZ_MAX + 2], pl[WP_VIZ_MAX + 2];
+  double c1[WP_VIZ_MAX + 1], cy1[WP_VIZ_MAX + 1];
+  double c2[WP_VIZ_MAX + 1], cy2[WP_VIZ_MAX + 1];
+};
+void wp_edge_curve(const struct wallpaper_config *c, int pw, int ph,
+                   const struct wp_frame *f, int s, struct wp_edge_curve *e);
 /* Free wp_render()'s cache. */
 void wp_render_finish(void);
 
@@ -192,11 +207,38 @@ const char *wp_audio_state(void);
  * lately. */
 bool wp_audio_samples(float *left, float *right, int *rate);
 
+/* gl.c: the smooth edge visualiser on the GPU */
+struct wl_display;
+struct wl_surface;
+/* Set up EGL + GLES 3 once (display NULL: surfaceless, for tests). Later
+ * calls give the first one's result. */
+bool wp_gl_init(struct wl_display *display);
+void wp_gl_finish(void);
+/* Make the context current without a surface (tests). */
+bool wp_gl_current(void);
+struct wp_gl_win;
+struct wp_gl_win *wp_gl_win_create(struct wl_surface *surface, int bw, int bh);
+void wp_gl_win_resize(struct wp_gl_win *w, int bw, int bh);
+void wp_gl_win_destroy(struct wp_gl_win *w);
+/* Draw side s of the smooth edge visualiser of a pw x ph cairo buffer into
+ * the bound bw x bh framebuffer, premultiplied, transparent around it. Its
+ * top-left pixel's corner sits at (ox, oy) of the cairo buffer, and each
+ * pixel spans sx x sy of it. */
+void wp_gl_edge_draw(const struct wallpaper_config *c, int pw, int ph,
+                     const struct wp_frame *f, int s, double ox, double oy,
+                     double sx, double sy, int bw, int bh);
+/* The same into w, then swap (which commits w's surface). */
+bool wp_gl_edge(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
+                int ph, const struct wp_frame *f, int s, double ox, double oy,
+                double sx, double sy, int bw, int bh);
+
 /* surface.c: one background layer surface per output */
 void wp_surfaces_init(struct swell_wl *wl);
 void wp_surfaces_finish(void);
 /* Destroy and recreate every surface (namespace change). */
 void wp_surfaces_recreate(void);
+/* "gpu", "cpu" or "cpu (no EGL)": how the smooth edges are drawn. */
+const char *wp_surfaces_viz_renderer(void);
 /* Draw every output now. full: the geometry or colours changed. If the
  * module is animating, each draw also asks for the next frame. */
 void wp_surfaces_draw(bool full);

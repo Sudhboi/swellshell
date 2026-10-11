@@ -2,7 +2,9 @@
  * fractional scale (wp_fractional_scale_v1 + viewporter), double-buffered,
  * repainting and damaging only the bar and the logo after the first frame.
  * Frame callbacks pace the animation and are only requested while the
- * module animates, so a frozen wallpaper costs nothing. */
+ * module animates, so a frozen wallpaper costs nothing. While the smooth
+ * edge visualiser shows, the GPU draws it (gl.c) into two transparent
+ * subsurfaces over the strips; they exist only while bars show. */
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
@@ -14,6 +16,16 @@
 #include "viewporter-client-protocol.h"
 #include "wallpaper.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
+
+/* A GPU-drawn edge strip: a synchronised subsurface over the strip. */
+struct strip {
+  struct wl_surface *surface;
+  struct wl_subsurface *sub;
+  struct wp_viewport *viewport;
+  struct wp_gl_win *win;
+  int lx, ly, lw, lh; /* logical, in the parent */
+  int bw, bh;         /* buffer px */
+};
 
 struct output {
   struct wl_list link;
@@ -27,6 +39,7 @@ struct output {
   struct buffer *bufs[2];
   bool stale[2]; /* needs a full repaint before partial ones are valid */
   bool ringed[2]; /* holds visualiser bars, outside the small logo tile */
+  struct strip strips[2]; /* left, right; surface NULL unless shown */
   int width, height; /* logical, from configure */
   uint32_t scale120;  /* preferred fractional scale, 0 if unknown */
   bool configured;
@@ -36,6 +49,7 @@ struct output {
 
 static struct swell_wl *wl;
 static struct wl_list outputs; /* output.link */
+static bool gl_broken; /* a GPU draw failed: the CPU draws from now on */
 
 static void draw(struct output *out, bool full);
 
@@ -101,6 +115,103 @@ static int get_buffer(struct output *out, int pw, int ph) {
   return -1;
 }
 
+/* ---- GPU edge strips ---- */
+
+static bool gpu_edges(void) {
+  const struct wallpaper_config *c = wp_config();
+  return c->viz && c->viz_edges && c->viz_edge_smooth && c->viz_gpu &&
+         !gl_broken && wl->subcompositor && wp_gl_init(wl->display);
+}
+
+static void strip_destroy(struct strip *st) {
+  wp_gl_win_destroy(st->win);
+  if (st->viewport)
+    wp_viewport_destroy(st->viewport);
+  if (st->sub)
+    wl_subsurface_destroy(st->sub);
+  if (st->surface)
+    wl_surface_destroy(st->surface);
+  *st = (struct strip){0};
+}
+
+static void strips_destroy(struct output *out) {
+  for (int s = 0; s < 2; ++s)
+    strip_destroy(&out->strips[s]);
+}
+
+static long gcd(long a, long b) { return b ? gcd(b, a % b) : a; }
+
+/* Draw side s over buffer rect r of the pw x ph parent buffer. The strip
+ * covers r in whole logical px, widened so its corner lands on a whole
+ * buffer px where the scale allows. False if the GPU failed. */
+static bool strip_draw(struct output *out, int s, struct wp_rect r, int pw,
+                       int ph, const struct wp_frame *f) {
+  struct strip *st = &out->strips[s];
+  bool fractional = out->scale120 && out->viewport;
+  double k = (double)pw / out->width; /* buffer px per logical px */
+  int m = fractional ? (int)(120 / gcd(out->scale120, 120)) : 1;
+  int lx0 = (int)floor(r.x / k / m) * m, ly0 = (int)floor(r.y / k / m) * m;
+  int lx1 = (int)ceil((r.x + r.w) / k / m) * m;
+  int ly1 = (int)ceil((r.y + r.h) / k / m) * m;
+  lx1 = lx1 < out->width ? lx1 : out->width;
+  ly1 = ly1 < out->height ? ly1 : out->height;
+  int lw = lx1 - lx0, lh = ly1 - ly0;
+  if (lw <= 0 || lh <= 0)
+    return true;
+  int bw = fractional ? (int)lround(lw * k) : lw * (int)lround(k);
+  int bh = fractional ? (int)lround(lh * k) : lh * (int)lround(k);
+  if (!st->surface) {
+    st->surface = wl_compositor_create_surface(wl->compositor);
+    st->sub = wl_subcompositor_get_subsurface(wl->subcompositor, st->surface,
+                                              out->surface);
+    /* Pointer input goes through to the wallpaper. */
+    struct wl_region *none = wl_compositor_create_region(wl->compositor);
+    wl_surface_set_input_region(st->surface, none);
+    wl_region_destroy(none);
+    if (fractional)
+      st->viewport = wp_viewporter_get_viewport(wl->viewporter, st->surface);
+    st->win = wp_gl_win_create(st->surface, bw, bh);
+    if (!st->win)
+      return false;
+    st->lx = st->ly = -1;
+  } else if (bw != st->bw || bh != st->bh) {
+    wp_gl_win_resize(st->win, bw, bh);
+  }
+  st->bw = bw;
+  st->bh = bh;
+  if (lx0 != st->lx || ly0 != st->ly)
+    wl_subsurface_set_position(st->sub, lx0, ly0);
+  if (st->viewport)
+    wp_viewport_set_destination(st->viewport, lw, lh);
+  else
+    wl_surface_set_buffer_scale(st->surface, (int)lround(k));
+  st->lx = lx0;
+  st->ly = ly0;
+  st->lw = lw;
+  st->lh = lh;
+  return wp_gl_edge(st->win, wp_config(), pw, ph, f, s, lx0 * k, ly0 * k,
+                    lw * k / bw, lh * k / bh, bw, bh);
+}
+
+/* Show the frame's edge bars in the strips (false: the GPU failed). */
+static bool strips_draw(struct output *out, int pw, int ph,
+                        const struct wp_frame *f) {
+  struct wp_rect r[WP_REGIONS];
+  wp_regions(wp_config(), pw, ph, true, r);
+  for (int s = 0; s < 2; ++s)
+    if (!strip_draw(out, s, r[2 + s], pw, ph, f))
+      return false;
+  return true;
+}
+
+const char *wp_surfaces_viz_renderer(void) {
+  if (!wp_config()->viz_gpu)
+    return "cpu";
+  if (gl_broken || !wl->subcompositor || !wp_gl_init(wl->display))
+    return "cpu (no EGL)";
+  return "gpu";
+}
+
 static void draw(struct output *out, bool full) {
   if (!out->surface || !out->configured || out->width <= 0)
     return;
@@ -126,13 +237,25 @@ static void draw(struct output *out, bool full) {
   /* While either buffer holds visualiser bars, repaint and damage their
    * larger area (the ring's or the edge strips): that clears this buffer's
    * old bars and covers the difference from the other one. */
-  bool ring = f.nbars > 0 || out->ringed[0] || out->ringed[1];
+  /* The GPU's strips take the edge bars off the cairo buffer. */
+  bool gpu = f.nbars > 0 && gpu_edges();
+  if (gpu && !strips_draw(out, pw, ph, &f)) {
+    warn("wallpaper: GPU drawing failed; the visualiser is back on the CPU");
+    gl_broken = true;
+    gpu = false;
+  }
+  if (!gpu)
+    strips_destroy(out);
+  struct wp_frame cf = f;
+  if (gpu)
+    cf.nbars = 0;
+  bool ring = cf.nbars > 0 || out->ringed[0] || out->ringed[1];
   cairo_t *cr = cairo_create(b->cairo);
-  wp_render(cr, wp_config(), pw, ph, &f, whole, ring);
+  wp_render(cr, wp_config(), pw, ph, &cf, whole, ring);
   cairo_destroy(cr);
   cairo_surface_flush(b->cairo);
   out->stale[i] = false;
-  out->ringed[i] = f.nbars > 0;
+  out->ringed[i] = cf.nbars > 0;
 
   if (out->scale120 && out->viewport) {
     wl_surface_set_buffer_scale(out->surface, 1);
@@ -230,6 +353,7 @@ static void create_surface(struct output *out) {
 
 static void destroy_surface(struct output *out) {
   loop_timer_disarm(out->fps_timer);
+  strips_destroy(out);
   if (out->surface)
     wl_clear_input(wl, out->surface);
   if (out->frame_cb)

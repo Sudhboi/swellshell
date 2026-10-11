@@ -387,6 +387,8 @@ viz_edge_fade = 0.1
 viz_edge_rim = "#a0a0a0"
 # width of the line along the smooth curve, px (0 = none; needs viz_edge_smooth)
 viz_edge_rim_width = 3.0
+# draw the smooth edge curve with the GPU (EGL); falls back to the CPU if that fails (needs viz_edge_smooth)
+viz_gpu = true
 # the line the ring's bars grow from, both ways (x logo_radius)
 viz_radius = 1.6
 # ring bar length at full level, both ends together, px

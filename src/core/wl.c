@@ -355,6 +355,9 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
   if (strcmp(iface, wl_compositor_interface.name) == 0) {
     wl->compositor = wl_registry_bind(reg, name, &wl_compositor_interface,
                                       min_u32(version, 4));
+  } else if (strcmp(iface, wl_subcompositor_interface.name) == 0) {
+    wl->subcompositor =
+        wl_registry_bind(reg, name, &wl_subcompositor_interface, 1);
   } else if (strcmp(iface, wl_shm_interface.name) == 0) {
     wl->shm = wl_registry_bind(reg, name, &wl_shm_interface, 1);
   } else if (strcmp(iface, zwlr_layer_shell_v1_interface.name) == 0) {
@@ -523,6 +526,8 @@ void wl_destroy(struct swell_wl *wl) {
     zwlr_layer_shell_v1_destroy(wl->layer_shell);
   if (wl->shm)
     wl_shm_destroy(wl->shm);
+  if (wl->subcompositor)
+    wl_subcompositor_destroy(wl->subcompositor);
   if (wl->compositor)
     wl_compositor_destroy(wl->compositor);
   xkb_state_unref(wl->xkb_state);

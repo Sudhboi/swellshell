@@ -401,10 +401,6 @@ static void draw_edges(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_restore(cr);
 }
 
-/* The same levels as one smooth shape per side: a curve through each
- * bar's level at its slot's centre (Catmull-Rom as Beziers), closed along
- * the screen's side, filled with a fade and traced with a line. The control points are clamped to the strip,
- * so the curve (inside their hull) never leaves it. */
 /* Levels (capped at 1) blurred over their neighbours by a gaussian of
  * sigma bars, weights renormalised at the ends; sigma 0 copies them. */
 static void blur_levels(const float *in, int n, double sigma, double *out) {
@@ -423,46 +419,59 @@ static void blur_levels(const float *in, int n, double sigma, double *out) {
   }
 }
 
+void wp_edge_curve(const struct wallpaper_config *c, int pw, int ph,
+                   const struct wp_frame *f, int s, struct wp_edge_curve *e) {
+  int n = f->nbars;
+  edge_box(c, pw, ph, s, &e->x0, &e->y0, &e->x1, &e->y1);
+  double slot = (e->y1 - e->y0) / n, len = e->len = e->x1 - e->x0;
+  /* Without a margin the shape runs off the top and bottom by the shake
+   * distance, so a shake never shows its ends. */
+  double ext = c->viz_edge_margin <= 0 && c->react_shake
+                   ? ceil(c->react_shake_px * pw / WP_REF_WIDTH)
+                   : 0;
+  e->y0 -= ext;
+  e->y1 += ext;
+  /* Bass first, from the bottom: both ends held flat to the margins. */
+  double lv[WP_VIZ_MAX] = {0};
+  blur_levels(f->bars[s], n, c->viz_edge_blur, lv);
+  double *py = e->py, *pl = e->pl;
+  int m = 0;
+  py[m] = e->y1;
+  pl[m++] = lv[0] * len;
+  for (int i = 0; i < n; ++i) {
+    py[m] = e->y1 - ext - slot * (i + 0.5);
+    pl[m++] = lv[i] * len;
+  }
+  py[m] = e->y0;
+  pl[m++] = lv[n - 1] * len;
+  e->m = m;
+  for (int i = 0; i + 1 < m; ++i) {
+    int a = i > 0 ? i - 1 : i, d = i + 2 < m ? i + 2 : i + 1;
+    e->c1[i] = fmin(fmax(pl[i] + (pl[i + 1] - pl[a]) / 6, 0), len);
+    e->c2[i] = fmin(fmax(pl[i + 1] - (pl[d] - pl[i]) / 6, 0), len);
+    e->cy1[i] = py[i] + (py[i + 1] - py[a]) / 6;
+    e->cy2[i] = py[i + 1] - (py[d] - py[i]) / 6;
+  }
+}
+
+/* The same levels as one smooth shape per side: a curve through each
+ * bar's level at its slot's centre (Catmull-Rom as Beziers), closed along
+ * the screen's side, filled with a fade and traced with a line. The control points are clamped to the strip,
+ * so the curve (inside their hull) never leaves it. */
 static void draw_edges_smooth(cairo_t *cr, const struct wallpaper_config *c,
                               int pw, int ph, const struct wp_frame *f) {
-  int n = f->nbars;
   for (int s = 0; s < 2; ++s) {
-    double x0, y0, x1, y1;
-    edge_box(c, pw, ph, s, &x0, &y0, &x1, &y1);
-    double slot = (y1 - y0) / n, len = x1 - x0;
-    /* Without a margin the shape runs off the top and bottom by the shake
-     * distance, so a shake never shows its ends. */
-    double ext = c->viz_edge_margin <= 0 && c->react_shake
-                     ? ceil(c->react_shake_px * pw / WP_REF_WIDTH)
-                     : 0;
-    y0 -= ext;
-    y1 += ext;
-    /* Bass first, from the bottom: both ends held flat to the margins. */
-    double lv[WP_VIZ_MAX] = {0};
-    blur_levels(f->bars[s], n, c->viz_edge_blur, lv);
-    double py[WP_VIZ_MAX + 2], pl[WP_VIZ_MAX + 2];
-    int m = 0;
-    py[m] = y1;
-    pl[m++] = lv[0] * len;
-    for (int i = 0; i < n; ++i) {
-      py[m] = y1 - ext - slot * (i + 0.5);
-      pl[m++] = lv[i] * len;
-    }
-    py[m] = y0;
-    pl[m++] = lv[n - 1] * len;
+    struct wp_edge_curve e;
+    wp_edge_curve(c, pw, ph, f, s, &e);
+    double x0 = e.x0, x1 = e.x1, y0 = e.y0, y1 = e.y1, len = e.len;
+    const double *py = e.py, *pl = e.pl;
     /* x of a level: in from the side the strip is on. */
 #define EDGE_X(l) (s ? x1 - (l) : x0 + (l))
     cairo_new_path(cr);
     cairo_move_to(cr, EDGE_X(pl[0]), py[0]);
-    for (int i = 0; i + 1 < m; ++i) {
-      int a = i > 0 ? i - 1 : i, d = i + 2 < m ? i + 2 : i + 1;
-      double c1 = fmin(fmax(pl[i] + (pl[i + 1] - pl[a]) / 6, 0), len);
-      double c2 = fmin(fmax(pl[i + 1] - (pl[d] - pl[i]) / 6, 0), len);
-      double cy1 = py[i] + (py[i + 1] - py[a]) / 6;
-      double cy2 = py[i + 1] - (py[d] - py[i]) / 6;
-      cairo_curve_to(cr, EDGE_X(c1), cy1, EDGE_X(c2), cy2, EDGE_X(pl[i + 1]),
-                     py[i + 1]);
-    }
+    for (int i = 0; i + 1 < e.m; ++i)
+      cairo_curve_to(cr, EDGE_X(e.c1[i]), e.cy1[i], EDGE_X(e.c2[i]), e.cy2[i],
+                     EDGE_X(pl[i + 1]), py[i + 1]);
     cairo_path_t *curve = cairo_copy_path(cr);
     cairo_line_to(cr, EDGE_X(0), y0);
     cairo_line_to(cr, EDGE_X(0), y1);
