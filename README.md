@@ -120,7 +120,7 @@ This installs swell and writes `settings` to `~/.config/swell/config.toml`, whic
 
 ## Development
 
-See `handoff.md` for the architecture, the core interfaces and how to add a module. Live tests run in a nested headless sway, so they never touch the real session:
+See `HANDOFF.md` for the architecture, the core interfaces and how to add a module. Live tests run in a nested headless sway, so they never touch the real session:
 
 ```
 eval "$(test/live/nested-sway.sh start)"
