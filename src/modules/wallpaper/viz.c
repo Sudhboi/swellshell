@@ -209,7 +209,7 @@ void wp_react_step(struct wp_react *r, const struct wp_viz *v,
   if (!r->held && bass - low > KICK_RISE_DB &&
       bass > v->peak - KICK_BELOW_PEAK_DB && r->since_kick >= KICK_GAP_S) {
     r->pulse = 1;
-    r->kick += c->react_spin_kick;
+    r->kick = fmax(r->kick, c->react_spin_kick); /* quick hits don't stack */
     r->since_kick = 0;
     r->held = true;
     r->bass_peak = bass;

@@ -86,7 +86,7 @@ static const struct wallpaper_config defaults = {
     .react_glow_spin = 1.0,
     .react_spin = true,
     .react_spin_gain = 6,
-    .react_spin_kick = 4,
+    .react_spin_kick = 2,
     .react_spin_kick_ms = 400,
 };
 
@@ -233,6 +233,7 @@ static struct {
   struct wp_viz viz;
   double viz_time; /* s, drives the bars' wobble */
   struct wp_react react;
+  double spin_glow; /* spin_glow(), smoothed so beats swell, not flash */
 
   /* measured frame rate */
   int64_t fps_start;
@@ -254,7 +255,8 @@ static bool viz_showing(void) {
 
 /* The logo still shows the music (it lingers a little after the bars). */
 static bool reacting(void) {
-  if (w.react.loud > 1e-3 || w.react.pulse > 0 || w.react.kick > 0)
+  if (w.react.loud > 1e-3 || w.react.pulse > 0 || w.react.kick > 0 ||
+      w.spin_glow > 1e-3)
     return true;
   for (int k = 0; k < 6; ++k)
     if (w.react.slices[k] > 1e-3)
@@ -322,6 +324,8 @@ static double advance(int64_t now) {
   return dt;
 }
 
+static double spin_glow(void);
+
 /* Move the bars on by dt towards the latest audio (silence without any). */
 static void advance_viz(double dt) {
   if (dt <= 0)
@@ -336,6 +340,9 @@ static void advance_viz(double dt) {
   wp_viz_step(&w.viz, &w.cfg, fresh ? (const float (*)[WP_VIZ_MAX])db : NULL,
               dt);
   wp_react_step(&w.react, &w.viz, &w.cfg, dt);
+  double target = spin_glow();
+  double tau = target > w.spin_glow ? 0.3 : 0.8;
+  w.spin_glow = target + (w.spin_glow - target) * exp(-dt / tau);
   w.viz_time = fmod(w.viz_time + dt, 3600);
 }
 
@@ -372,7 +379,7 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   if (w.cfg.react_glow)
     f->glow = fmax(f->glow, fmax(fmin(w.cfg.react_glow_amount * w.react.loud,
                                       1),
-                                 w.cfg.react_glow_spin * spin_glow()));
+                                 w.cfg.react_glow_spin * w.spin_glow));
   f->pulse = w.cfg.react_pulse ? w.react.pulse : 0;
   for (int k = 0; k < 6; ++k)
     f->slide[k] =
@@ -442,6 +449,7 @@ static void update_animating(void) {
     w.boost = 0;
     memset(&w.viz, 0, sizeof(w.viz));
     memset(&w.react, 0, sizeof(w.react));
+    w.spin_glow = 0;
     w.fps = 0;
     /* A window opened (or the user idled) mid-spin or mid-song: don't
      * leave the brightened logo or the bars as the frozen frame. */
