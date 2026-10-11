@@ -1,5 +1,5 @@
 /* The visualiser's analysis: a windowed FFT of the latest audio, grouped into
- * log-spaced bands, then cava-style bars (auto sensitivity, instant rise,
+ * log-spaced bands, then cava-style bars (auto sensitivity, eased rise,
  * gravity fall), plus the irregularity that keeps the ring from looking
  * machine-made. */
 #include <math.h>
@@ -160,7 +160,12 @@ void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
     for (int i = 0; i < n; ++i) {
       float *bar = &v->bars[s][i], *vel = &v->vel[s][i];
       if (target[s][i] >= *bar) {
-        *bar = target[s][i];
+        /* Eased, not instant: new audio comes every ~21 ms but frames
+         * faster, so a jump per chunk would step unevenly. */
+        *bar = c->viz_rise_ms > 0
+                   ? target[s][i] + (*bar - target[s][i]) *
+                                        (float)exp(-dt * 1000 / c->viz_rise_ms)
+                   : target[s][i];
         *vel = 0;
       } else {
         *vel += (float)(c->viz_fall * dt);

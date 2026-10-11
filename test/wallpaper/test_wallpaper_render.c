@@ -274,6 +274,33 @@ int main(int argc, char **argv) {
     }
     assert(ripple[0] > 0.8 && ripple[1] < 0.2);
   }
+  /* The fill fades in from the side, and a brighter line traces the curve
+   * at the level (left 0.5, the bass bar), but never down the side. */
+  {
+    int tip = (int)(gx + elen * 0.5);
+    unsigned near = px(t, gx + 4, ey) & 0xff, far = px(t, tip - 8, ey) & 0xff;
+    unsigned rim = 0;
+    for (int x = tip - 3; x <= tip + 3; ++x)
+      rim = fmax(rim, px(t, x, ey) & 0xff);
+    assert(near > far && far > 0 && rim > near);
+    struct wp_frame qf = f;
+    for (int i = 0; i < qf.nbars; ++i)
+      qf.bars[0][i] = qf.bars[1][i] = 0;
+    cairo_surface_t *qt = render(c, qf, dir, NULL);
+    for (int y = 0; y < H; ++y)
+      for (int x = 0; x < 4; ++x)
+        assert(px(qt, gx + x, y) == px(a, gx + x, y) &&
+               px(qt, W - 1 - gx - x, y) == px(a, W - 1 - gx - x, y));
+    cairo_surface_destroy(qt);
+    /* Something music-like, to judge the look by. */
+    struct wp_frame mf = f;
+    for (int i = 0; i < mf.nbars; ++i) {
+      double base = 0.85 - 0.6 * i / mf.nbars;
+      mf.bars[0][i] = (float)(base + 0.15 * sin(i * 0.9));
+      mf.bars[1][i] = (float)(base * 0.9 + 0.15 * sin(i * 1.3 + 1));
+    }
+    cairo_surface_destroy(render(c, mf, dir, "wallpaper_viz_edges_music"));
+  }
   changed = 0;
   for (int y = 0; y < H; y += 3)
     for (int x = 0; x < W; x += 3)

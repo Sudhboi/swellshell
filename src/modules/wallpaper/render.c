@@ -82,6 +82,13 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
     if (ring && c->viz_edges) {
       double x0, y0, x1, y1;
       edge_box(c, pw, ph, s, &x0, &y0, &x1, &y1);
+      /* The smooth curve's line reaches past a full level by half its
+       * width. */
+      double rim = c->viz_edge_smooth ? c->viz_edge_rim_width * k / 2 : 0;
+      if (s)
+        x0 -= rim;
+      else
+        x1 += rim;
       out[2 + s] = clamp_rect(x0 - sh, y0 - sh, x1 + sh, y1 + sh, pw, ph);
     }
   }
@@ -394,9 +401,9 @@ static void draw_edges(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_restore(cr);
 }
 
-/* The same levels as one smooth filled shape per side: a curve through
- * each bar's level at its slot's centre (Catmull-Rom as Beziers), closed
- * along the screen's side. The control points are clamped to the strip,
+/* The same levels as one smooth shape per side: a curve through each
+ * bar's level at its slot's centre (Catmull-Rom as Beziers), closed along
+ * the screen's side, filled with a fade and traced with a line. The control points are clamped to the strip,
  * so the curve (inside their hull) never leaves it. */
 /* Levels (capped at 1) blurred over their neighbours by a gaussian of
  * sigma bars, weights renormalised at the ends; sigma 0 copies them. */
@@ -446,8 +453,7 @@ static void draw_edges_smooth(cairo_t *cr, const struct wallpaper_config *c,
     /* x of a level: in from the side the strip is on. */
 #define EDGE_X(l) (s ? x1 - (l) : x0 + (l))
     cairo_new_path(cr);
-    cairo_move_to(cr, EDGE_X(0), y1);
-    cairo_line_to(cr, EDGE_X(pl[0]), py[0]);
+    cairo_move_to(cr, EDGE_X(pl[0]), py[0]);
     for (int i = 0; i + 1 < m; ++i) {
       int a = i > 0 ? i - 1 : i, d = i + 2 < m ? i + 2 : i + 1;
       double c1 = fmin(fmax(pl[i] + (pl[i + 1] - pl[a]) / 6, 0), len);
@@ -457,11 +463,41 @@ static void draw_edges_smooth(cairo_t *cr, const struct wallpaper_config *c,
       cairo_curve_to(cr, EDGE_X(c1), cy1, EDGE_X(c2), cy2, EDGE_X(pl[i + 1]),
                      py[i + 1]);
     }
+    cairo_path_t *curve = cairo_copy_path(cr);
     cairo_line_to(cr, EDGE_X(0), y0);
+    cairo_line_to(cr, EDGE_X(0), y1);
     cairo_close_path(cr);
-#undef EDGE_X
-    set_rgba(cr, c->viz_color, c->viz_alpha);
+    /* The fill fades from the screen's side towards a full level, so it
+     * glows in from the edge rather than standing as a solid shape. */
+    cairo_pattern_t *p =
+        cairo_pattern_create_linear(EDGE_X(0), 0, EDGE_X(len), 0);
+    uint32_t vc = c->viz_color;
+    double va = col_a(vc) * c->viz_alpha;
+    cairo_pattern_add_color_stop_rgba(p, 0, col_r(vc), col_g(vc), col_b(vc),
+                                      va);
+    cairo_pattern_add_color_stop_rgba(p, 1, col_r(vc), col_g(vc), col_b(vc),
+                                      va * c->viz_edge_fade);
+    cairo_set_source(cr, p);
     cairo_fill(cr);
+    cairo_pattern_destroy(p);
+    /* A brighter line along the curve, kept off the screen's side so
+     * silent stretches don't draw one down the edge. */
+    double rw = c->viz_edge_rim_width * pw / WP_REF_WIDTH;
+    if (rw > 0) {
+      cairo_save(cr);
+      double cx0 = s ? x0 - rw : x0 + rw;
+      cairo_rectangle(cr, cx0, y0 - rw, len, y1 - y0 + 2 * rw);
+      cairo_clip(cr);
+      cairo_append_path(cr, curve);
+      cairo_set_line_width(cr, rw);
+      cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+      cairo_set_line_cap(cr, CAIRO_LINE_CAP_BUTT);
+      set_rgba(cr, c->viz_edge_rim, c->viz_alpha);
+      cairo_stroke(cr);
+      cairo_restore(cr);
+    }
+    cairo_path_destroy(curve);
+#undef EDGE_X
   }
 }
 

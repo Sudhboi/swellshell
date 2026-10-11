@@ -51,8 +51,9 @@ int main(void) {
   wp_viz_analyse(s, RATE, c, db);
   assert(fabs(db[loudest(db, n)]) < 3);
 
-  /* Bars: a tone shows at once, at full height after auto-sensitivity,
-   * on the side of the channel that carries it. */
+  /* Bars: a tone eases in over a few frames (not in one jump), to full
+   * height after auto-sensitivity, on the side of the channel that carries
+   * it. */
   struct wp_viz v;
   memset(&v, 0, sizeof(v));
   float st[2][WP_VIZ_MAX];
@@ -62,7 +63,19 @@ int main(void) {
   wp_viz_analyse(s, RATE, c, st[1]);
   wp_viz_step(&v, c, (const float(*)[WP_VIZ_MAX])st, 1 / 60.0);
   int b = band_of(c, 440);
+  float first = v.bars[0][b];
+  assert(first > 0 && first < 0.5f);
+  for (int i = 0; i < 11; ++i)
+    wp_viz_step(&v, c, (const float(*)[WP_VIZ_MAX])st, 1 / 60.0);
   assert(v.bars[0][b] > 0.6f);
+  {
+    struct wallpaper_config snap = *c;
+    snap.viz_rise_ms = 0;
+    struct wp_viz sv;
+    memset(&sv, 0, sizeof(sv));
+    wp_viz_step(&sv, &snap, (const float(*)[WP_VIZ_MAX])st, 1 / 60.0);
+    assert(sv.bars[0][b] > 0.6f); /* 0: at once, as before */
+  }
   assert(v.bars[0][0] < 0.2f); /* the far bass stays low */
   for (int i = 0; i < n; ++i)
     assert(v.bars[1][i] == 0); /* the silent right channel */

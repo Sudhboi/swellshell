@@ -61,6 +61,9 @@ struct wallpaper_config {
   double viz_edge_margin; /* kept free at the top and bottom, reference px */
   bool viz_edge_smooth;   /* one smooth filled curve per side, not bars */
   double viz_edge_blur;   /* the curve's spread over neighbours, in bars */
+  double viz_edge_fade;   /* the fill's opacity at full length, 0..1 */
+  uint32_t viz_edge_rim;  /* the line along the curve */
+  double viz_edge_rim_width; /* reference px, 0 = none */
   double viz_radius;    /* the bars' centre line, x logo_radius */
   double viz_length;    /* reference px at full level, both ends together */
   double viz_inward;    /* the share of a bar that grows inwards, 0..1 */
@@ -69,6 +72,7 @@ struct wallpaper_config {
   double viz_alpha;
   double viz_low_hz, viz_high_hz;
   double viz_fall;   /* gravity, levels per s^2 */
+  double viz_rise_ms; /* time constant of a rise, 0 = instant */
   double viz_jitter; /* 0: a perfect ring .. 1: the most irregular */
   /* the logo reacting to the music (needs viz), each part on its own */
   bool react_slide;         /* lambdas slide out by their slice of bands */

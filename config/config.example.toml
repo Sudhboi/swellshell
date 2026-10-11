@@ -381,6 +381,12 @@ viz_edge_margin = 0.0
 viz_edge_smooth = true
 # how far each level spreads over its neighbours in the smooth curve, in bars (0 = through every level exactly; needs viz_edge_smooth)
 viz_edge_blur = 1.5
+# the smooth curve's fill opacity at full length, as a share of its opacity at the screen's side (1 = flat; needs viz_edge_smooth)
+viz_edge_fade = 0.1
+# the line along the smooth curve (needs viz_edge_smooth)
+viz_edge_rim = "#a0a0a0"
+# width of the line along the smooth curve, px (0 = none; needs viz_edge_smooth)
+viz_edge_rim_width = 3.0
 # the line the ring's bars grow from, both ways (x logo_radius)
 viz_radius = 1.6
 # ring bar length at full level, both ends together, px
@@ -399,6 +405,8 @@ viz_low_hz = 50.0
 viz_high_hz = 10000.0
 # how fast the bars fall (gravity, full heights per s^2)
 viz_fall = 4.0
+# how smoothly the bars rise: the time to cover ~63% of a jump, ms (0 = at once)
+viz_rise_ms = 40.0
 # irregularity: each bar's angle, width, length and gain vary a little (0 = a perfect ring)
 viz_jitter = 0.0
 # the snowflake's lambdas slide outwards with the music, each by its own slice of the spectrum (needs viz)

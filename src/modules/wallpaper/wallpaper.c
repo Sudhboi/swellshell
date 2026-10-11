@@ -72,6 +72,9 @@ static const struct wallpaper_config defaults = {
     .viz_edge_margin = 0,
     .viz_edge_smooth = true,
     .viz_edge_blur = 1.5,
+    .viz_edge_fade = 0.1,
+    .viz_edge_rim = 0xa0a0a0ffu,
+    .viz_edge_rim_width = 3,
     .viz_radius = 1.6,
     .viz_length = 260,
     .viz_inward = 0.4,
@@ -81,6 +84,7 @@ static const struct wallpaper_config defaults = {
     .viz_low_hz = 50,
     .viz_high_hz = 10000,
     .viz_fall = 4,
+    .viz_rise_ms = 40,
     .viz_jitter = 0,
     .react_slide = false,
     .react_slide_dist = 0.1,
@@ -195,6 +199,15 @@ static const struct cfg_field fields[] = {
                "how far each level spreads over its neighbours in the smooth "
                "curve, in bars (0 = through every level exactly; needs "
                "viz_edge_smooth)"),
+    CFG_DOUBLE(S, viz_edge_fade, 0, 1,
+               "the smooth curve's fill opacity at full length, as a share of "
+               "its opacity at the screen's side (1 = flat; needs "
+               "viz_edge_smooth)"),
+    CFG_COLOR(S, viz_edge_rim,
+              "the line along the smooth curve (needs viz_edge_smooth)"),
+    CFG_DOUBLE(S, viz_edge_rim_width, 0, 100,
+               "width of the line along the smooth curve, px (0 = none; needs "
+               "viz_edge_smooth)"),
     CFG_DOUBLE(S, viz_radius, 0, 10,
                "the line the ring's bars grow from, both ways (x "
                "logo_radius)"),
@@ -210,6 +223,9 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, viz_high_hz, 1, 100000, "highest frequency (the top bars)"),
     CFG_DOUBLE(S, viz_fall, 0.01, 1000,
                "how fast the bars fall (gravity, full heights per s^2)"),
+    CFG_DOUBLE(S, viz_rise_ms, 0, 1000,
+               "how smoothly the bars rise: the time to cover ~63% of a jump, "
+               "ms (0 = at once)"),
     CFG_DOUBLE(S, viz_jitter, 0, 1,
                "irregularity: each bar's angle, width, length and gain vary "
                "a little (0 = a perfect ring)"),
