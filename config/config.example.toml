@@ -293,6 +293,8 @@ namespace = "swell-wallpaper"
 fps = 30
 # frame rate cap while the pointer spins the logo faster (0 = the display rate)
 fps_spin = 0
+# frame rate cap while the visualiser shows (0 = the display rate)
+fps_audio = 60
 # freeze after this long without input (0 = never)
 idle_timeout_s = 300
 # battery re-read period while animating
@@ -361,3 +363,25 @@ streak_length = 70.0
 streak_width = 5.0
 # speed line opacity at the fastest spin
 streak_alpha = 0.7
+# audio visualiser around the snowflake (PipeWire; only while the wallpaper animates and something plays)
+viz = true
+# PipeWire sink to visualise (node name or serial; "" = the default sink)
+viz_target = ""
+# visualiser bars per side (the ring is mirrored left/right)
+viz_bars = 48
+# where the bars start (x logo_radius)
+viz_inner = 1.32
+# bar length at full level, px
+viz_length = 260.0
+# bar thickness, as a fraction of its slot
+viz_width = 0.55
+# visualiser bars
+viz_color = "#5a5a5a"
+# visualiser opacity
+viz_alpha = 1.0
+# lowest frequency (the bottom bars)
+viz_low_hz = 50.0
+# highest frequency (the top bars)
+viz_high_hz = 10000.0
+# how fast the bars fall (gravity, full heights per s^2)
+viz_fall = 4.0

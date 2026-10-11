@@ -26,6 +26,7 @@ struct output {
   struct loop_timer *fps_timer; /* fps cap: the delayed next frame */
   struct buffer *bufs[2];
   bool stale[2]; /* needs a full repaint before partial ones are valid */
+  bool ringed[2]; /* holds visualiser bars, outside the small logo tile */
   int width, height; /* logical, from configure */
   uint32_t scale120;  /* preferred fractional scale, 0 if unknown */
   bool configured;
@@ -93,6 +94,7 @@ static int get_buffer(struct output *out, int pw, int ph) {
       if (!b)
         return -1;
       out->stale[i] = true;
+      out->ringed[i] = false;
     }
     return i;
   }
@@ -121,11 +123,16 @@ static void draw(struct output *out, bool full) {
   int64_t now = now_ms();
   struct wp_frame f;
   wp_frame_at(now, &f);
+  /* While either buffer holds visualiser bars, repaint and damage the
+   * ring's larger area: that clears this buffer's old bars and covers the
+   * difference from the other one. */
+  bool ring = f.nbars > 0 || out->ringed[0] || out->ringed[1];
   cairo_t *cr = cairo_create(b->cairo);
-  wp_render(cr, wp_config(), pw, ph, &f, whole);
+  wp_render(cr, wp_config(), pw, ph, &f, whole, ring);
   cairo_destroy(cr);
   cairo_surface_flush(b->cairo);
   out->stale[i] = false;
+  out->ringed[i] = f.nbars > 0;
 
   if (out->scale120 && out->viewport) {
     wl_surface_set_buffer_scale(out->surface, 1);
@@ -137,7 +144,7 @@ static void draw(struct output *out, bool full) {
   /* The other buffer was last painted with the same background, so only
    * the bar and the logo can differ from what the compositor has. */
   struct wp_rect r[2];
-  wp_regions(wp_config(), pw, ph, r);
+  wp_regions(wp_config(), pw, ph, ring, r);
   if (whole)
     wl_surface_damage_buffer(out->surface, 0, 0, pw, ph);
   else

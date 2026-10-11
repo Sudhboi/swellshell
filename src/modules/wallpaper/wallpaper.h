@@ -1,6 +1,6 @@
 /* wallpaper: a live black wallpaper with a pulsing battery bar at the top
  * and a slowly turning Nix snowflake in the middle (formerly pre-rendered
- * GIFs played by awww). It only animates while the focused workspace is
+ * GIFs played by awww), ringed by an audio visualiser while sound plays. It only animates while the focused workspace is
  * empty and the user is not idle; otherwise it keeps its last frame and
  * does no work at all. Shared declarations of the module's files. */
 #ifndef SWELL_WALLPAPER_H
@@ -17,10 +17,14 @@
  * the GIFs were made for) and scaled to each output's buffer width. */
 #define WP_REF_WIDTH 2880.0
 
+/* Most visualiser bars per side of the ring. */
+#define WP_VIZ_MAX 128
+
 struct wallpaper_config {
   char namespace[64]; /* layer-shell namespace */
   int fps;            /* cap at the resting spin; 0: the display rate */
   int fps_spin;       /* cap while the pointer speeds the logo up */
+  int fps_audio;      /* cap while the visualiser shows */
   int idle_timeout_s; /* 0: never freeze for idleness */
   int battery_interval_s;
   /* colours */
@@ -44,6 +48,19 @@ struct wallpaper_config {
   double bloom_radius, bloom_alpha; /* x logo_radius, at full speed */
   int streak_count;
   double streak_length, streak_width, streak_alpha; /* deg, px, at full */
+  /* visualiser: a ring of bars around the logo, mirrored left/right, bass
+   * at the bottom */
+  bool viz;
+  char viz_target[128]; /* PipeWire sink to listen to, "": the default */
+  int viz_bars;         /* per side */
+  double viz_inner;     /* x logo_radius */
+  double viz_length;    /* reference px at full level */
+  double viz_width;     /* of each bar's slot, 0..1 */
+  uint32_t viz_color;
+  double viz_alpha;
+  double viz_low_hz, viz_high_hz;
+  double viz_fall; /* gravity, levels per s^2 */
+  int viz_linger_ms; /* keep capturing this long after playback stops */
 };
 
 /* One frame's worth of animation state. */
@@ -54,6 +71,8 @@ struct wp_frame {
   double glow;    /* logo brightness, 0 (logo) .. 1 (logo_glow) */
   double over;    /* speed past spin_visible_max, 0..1 of the most */
   int dir;        /* spin direction, 1 clockwise, -1 counter-clockwise */
+  int nbars;      /* visualiser bars per side, 0: no ring */
+  float bars[WP_VIZ_MAX]; /* 0..1, bass first */
 };
 
 struct wp_rect {
@@ -66,15 +85,44 @@ double wp_pulse_period(const struct wallpaper_config *c, double percent);
 /* Bar brightness at phase 0..1 of a pulse (peak at 0.5). */
 double wp_bar_level(const struct wallpaper_config *c, double phase);
 /* The two buffer areas that change between frames (bar, logo) of a pw x ph
- * buffer. */
-void wp_regions(const struct wallpaper_config *c, int pw, int ph,
+ * buffer. ring: the logo area also covers the visualiser ring. */
+void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
                 struct wp_rect out[2]);
 /* Draw a frame into a pw x ph buffer. full repaints everything, otherwise
- * only the wp_regions() areas are touched. */
+ * only the wp_regions() areas (with ring) are touched. */
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
-               const struct wp_frame *f, bool full);
+               const struct wp_frame *f, bool full, bool ring);
 /* Free wp_render()'s cache. */
 void wp_render_finish(void);
+
+/* viz.c: the visualiser's analysis, cava-style */
+#define WP_VIZ_FFT 2048 /* samples per analysis */
+/* Band levels in dB (viz_bars of them, bass first) of the last WP_VIZ_FFT
+ * samples (oldest first) at rate Hz. */
+void wp_viz_analyse(const float *samples, int rate,
+                    const struct wallpaper_config *c, float *db);
+struct wp_viz {
+  float bars[WP_VIZ_MAX]; /* 0..1 */
+  float vel[WP_VIZ_MAX];  /* fall speed, levels/s */
+  float peak;             /* auto-sensitivity: the loudest recent band, dB */
+};
+/* Advance the shown bars by dt seconds towards the band levels db (NULL:
+ * silence). */
+void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
+                 const float *db, double dt);
+
+/* audio.c: PipeWire capture of the sink, only while the module animates and
+ * something plays */
+struct loop;
+void wp_audio_init(void);
+void wp_audio_finish(void);
+void wp_audio_start(struct loop *loop, const struct wallpaper_config *c);
+void wp_audio_stop(void);
+/* "off", "waiting" (connected, nothing plays) or "capturing". */
+const char *wp_audio_state(void);
+/* Copy the last WP_VIZ_FFT samples (oldest first) and give the rate.
+ * Returns false if no fresh audio arrived lately. */
+bool wp_audio_samples(float *out, int *rate);
 
 /* surface.c: one background layer surface per output */
 void wp_surfaces_init(struct swell_wl *wl);

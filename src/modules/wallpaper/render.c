@@ -42,15 +42,18 @@ static struct wp_rect clamp_rect(double x0, double y0, double x1, double y1,
 static const double streak_rings[] = {1.08, 1.16, 1.24};
 #define STREAK_OUTER 1.24
 
-void wp_regions(const struct wallpaper_config *c, int pw, int ph,
+void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
                 struct wp_rect out[2]) {
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
   out[0] = clamp_rect(x, y, x + w, y + h, pw, ph);
-  /* The bloom and the speed lines reach past the logo. */
+  /* The bloom and the speed lines reach past the logo, the visualiser
+   * further still. */
   double k = pw / WP_REF_WIDTH;
   double r = c->logo_radius * k * fmax(c->bloom_radius, STREAK_OUTER) +
              c->streak_width * k + 1;
+  if (ring)
+    r = fmax(r, c->logo_radius * k * c->viz_inner + c->viz_length * k + 1);
   out[1] = clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r,
                       pw, ph);
 }
@@ -110,7 +113,7 @@ static struct {
   double logo_radius, bloom_radius, bloom_alpha;
 } bloom_cache;
 
-void wp_render_finish(void) {
+static void bloom_cache_free(void) {
   if (bloom_cache.tile)
     cairo_surface_destroy(bloom_cache.tile);
   bloom_cache.tile = NULL;
@@ -128,7 +131,7 @@ static void paint_bloom(cairo_t *cr, const struct wallpaper_config *c,
       bloom_cache.logo_radius != c->logo_radius ||
       bloom_cache.bloom_radius != c->bloom_radius ||
       bloom_cache.bloom_alpha != c->bloom_alpha) {
-    wp_render_finish();
+    bloom_cache_free();
     double outer = r * (1 + (c->bloom_radius - 1) * step / BLOOM_STEPS);
     int x0 = (int)floor(cx - outer) - 1, y0 = (int)floor(cy - outer) - 1;
     int size = (int)ceil(cx + outer) + 1 - x0;
@@ -195,6 +198,92 @@ static void draw_streaks(cairo_t *cr, const struct wallpaper_config *c,
   }
 }
 
+/* The visualiser: radial bars just outside the speed lines, bass at the
+ * bottom, climbing both sides to the treble at the top. The bars never turn,
+ * so all of them are drawn once at full length (antialiasing them is the
+ * costly part) into an alpha sprite, and each frame paints the colour
+ * through it, clipped to one cheap aliased quad per bar cut to its length:
+ * 3x faster. */
+static struct {
+  cairo_surface_t *sprite; /* A8 */
+  int x, y;                /* buffer position */
+  int pw, ph, bars;
+  double logo_radius, inner, length, width;
+} ring_cache;
+
+static void ring_cache_free(void) {
+  if (ring_cache.sprite)
+    cairo_surface_destroy(ring_cache.sprite);
+  ring_cache.sprite = NULL;
+}
+
+/* The quad of bar i on side (-1 left, 1 right) from r0 to r1, hw wide on
+ * either side of its centre line. */
+static void bar_quad(cairo_t *cr, double cx, double cy, int i, int n,
+                     int side, double r0, double r1, double hw) {
+  double a = M_PI / 2 + side * M_PI * (i + 0.5) / n;
+  double ca = cos(a), sa = sin(a);
+  double nx = -sa * hw, ny = ca * hw; /* across the bar */
+  cairo_move_to(cr, cx + ca * r0 + nx, cy + sa * r0 + ny);
+  cairo_line_to(cr, cx + ca * r1 + nx, cy + sa * r1 + ny);
+  cairo_line_to(cr, cx + ca * r1 - nx, cy + sa * r1 - ny);
+  cairo_line_to(cr, cx + ca * r0 - nx, cy + sa * r0 - ny);
+  cairo_close_path(cr);
+}
+
+static void draw_ring(cairo_t *cr, const struct wallpaper_config *c, int pw,
+                      int ph, double r, double k, const struct wp_frame *f) {
+  int n = f->nbars;
+  double cx = pw / 2.0, cy = ph / 2.0;
+  double r0 = r * c->viz_inner, len = c->viz_length * k;
+  double slot = M_PI * r0 / n;            /* each bar's share at r0 */
+  double hw = c->viz_width * slot / 2;    /* half a bar's width */
+  if (!ring_cache.sprite || ring_cache.pw != pw || ring_cache.ph != ph ||
+      ring_cache.bars != n || ring_cache.logo_radius != c->logo_radius ||
+      ring_cache.inner != c->viz_inner || ring_cache.length != c->viz_length ||
+      ring_cache.width != c->viz_width) {
+    ring_cache_free();
+    double outer = r0 + len + hw;
+    int x0 = (int)floor(cx - outer) - 1, y0 = (int)floor(cy - outer) - 1;
+    int size = (int)ceil(cx + outer) + 1 - x0;
+    ring_cache.sprite =
+        cairo_image_surface_create(CAIRO_FORMAT_A8, size, size);
+    cairo_t *sc = cairo_create(ring_cache.sprite);
+    for (int i = 0; i < n; ++i)
+      for (int side = -1; side <= 1; side += 2)
+        bar_quad(sc, cx - x0, cy - y0, i, n, side, r0, r0 + len, hw);
+    cairo_fill(sc); /* the default source is opaque black: full alpha */
+    cairo_destroy(sc);
+    ring_cache.x = x0;
+    ring_cache.y = y0;
+    ring_cache.pw = pw;
+    ring_cache.ph = ph;
+    ring_cache.bars = n;
+    ring_cache.logo_radius = c->logo_radius;
+    ring_cache.inner = c->viz_inner;
+    ring_cache.length = c->viz_length;
+    ring_cache.width = c->viz_width;
+  }
+  /* The cut keeps the sprite's antialiased sides: a little wider than the
+   * bar, without reaching the next one. */
+  double cut = hw + fmax(fmin(1.5, slot / 2 - hw), 0);
+  cairo_save(cr);
+  cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+  cairo_new_path(cr);
+  for (int i = 0; i < n; ++i) {
+    if (f->bars[i] < 1e-3)
+      continue;
+    double r1 = r0 + len * fmin(f->bars[i], 1);
+    for (int side = -1; side <= 1; side += 2)
+      bar_quad(cr, cx, cy, i, n, side, r0 - 1, r1, cut);
+  }
+  cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
+  cairo_clip(cr);
+  set_rgba(cr, c->viz_color, c->viz_alpha);
+  cairo_mask_surface(cr, ring_cache.sprite, ring_cache.x, ring_cache.y);
+  cairo_restore(cr);
+}
+
 /* render_bar_mask(): a pill outline around the whole bar and, inside the
  * gap, a pill filled to percent, all at the pulse brightness. */
 static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
@@ -213,12 +302,17 @@ static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_fill(cr);
 }
 
+void wp_render_finish(void) {
+  bloom_cache_free();
+  ring_cache_free();
+}
+
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
-               const struct wp_frame *f, bool full) {
+               const struct wp_frame *f, bool full, bool ring) {
   cairo_save(cr);
   if (!full) {
     struct wp_rect r[2];
-    wp_regions(c, pw, ph, r);
+    wp_regions(c, pw, ph, ring || f->nbars > 0, r);
     for (int i = 0; i < 2; ++i)
       cairo_rectangle(cr, r[i].x, r[i].y, r[i].w, r[i].h);
     cairo_clip(cr);
@@ -230,6 +324,8 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   double k = pw / WP_REF_WIDTH, r = c->logo_radius * k;
   double cx = pw / 2.0, cy = ph / 2.0;
   paint_bloom(cr, c, pw, ph, r, f->over); /* over the background, first */
+  if (f->nbars > 0)
+    draw_ring(cr, c, pw, ph, r, k, f);
 
   draw_bar(cr, c, pw, f);
   if (f->over > 0)

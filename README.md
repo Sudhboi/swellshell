@@ -9,7 +9,7 @@ A small shell for sway in one daemon. It merges five earlier tools and adds a li
 | `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav |
 | `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n |
 | `runner` | awww-kill | runs shell commands on events (none by default) |
-| `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar and a turning Nix snowflake; animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
+| `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar, a turning Nix snowflake and a cava-like ring of audio bars around it (PipeWire); animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
 
 Every module runs in a single event loop. They share one Wayland connection and one sway IPC connection, and are controlled through one socket:
 

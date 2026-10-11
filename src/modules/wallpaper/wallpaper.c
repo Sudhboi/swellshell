@@ -1,10 +1,12 @@
-/* wallpaper: the battery bar + Nix snowflake wallpaper, rendered live.
+/* wallpaper: the battery bar + Nix snowflake wallpaper, rendered live,
+ * with an audio visualiser ringing the snowflake while sound plays.
  *
  * It animates only while the focused workspace is empty (workspace.empty /
  * workspace.occupied on the bus) and the user is not idle
  * (ext-idle-notify-v1). Otherwise no frame callbacks are requested and no
  * timer is armed: the last frame stays on screen and the module costs
- * nothing. Moving the pointer over the wallpaper spins the logo faster. */
+ * nothing; that includes the PipeWire capture, which is torn down. Moving
+ * the pointer over the wallpaper spins the logo faster. */
 #include "wallpaper.h"
 
 #include <math.h>
@@ -26,6 +28,7 @@ static const struct wallpaper_config defaults = {
     .namespace = "swell-wallpaper",
     .fps = 30,
     .fps_spin = 0,
+    .fps_audio = 60,
     .idle_timeout_s = 300,
     .battery_interval_s = 30,
     .background = 0x000000ffu,
@@ -60,6 +63,17 @@ static const struct wallpaper_config defaults = {
     .streak_length = 70,
     .streak_width = 5,
     .streak_alpha = 0.7,
+    .viz = true,
+    .viz_target = "",
+    .viz_bars = 48,
+    .viz_inner = 1.32,
+    .viz_length = 260,
+    .viz_width = 0.55,
+    .viz_color = 0x5a5a5affu,
+    .viz_alpha = 1.0,
+    .viz_low_hz = 50,
+    .viz_high_hz = 10000,
+    .viz_fall = 4,
 };
 
 #define S struct wallpaper_config
@@ -70,6 +84,9 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, fps_spin, 0, 1000,
             "frame rate cap while the pointer spins the logo faster (0 = "
             "the display rate)"),
+    CFG_INT(S, fps_audio, 0, 1000,
+            "frame rate cap while the visualiser shows (0 = the display "
+            "rate)"),
     CFG_INT(S, idle_timeout_s, 0, 86400,
             "freeze after this long without input (0 = never)"),
     CFG_INT(S, battery_interval_s, 1, 3600,
@@ -124,6 +141,24 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, streak_width, 0, 100, "speed line thickness, px"),
     CFG_DOUBLE(S, streak_alpha, 0, 1,
                "speed line opacity at the fastest spin"),
+    CFG_BOOL(S, viz,
+             "audio visualiser around the snowflake (PipeWire; only while "
+             "the wallpaper animates and something plays)"),
+    CFG_STRING(S, viz_target,
+               "PipeWire sink to visualise (node name or serial; \"\" = the "
+               "default sink)"),
+    CFG_INT(S, viz_bars, 1, WP_VIZ_MAX,
+            "visualiser bars per side (the ring is mirrored left/right)"),
+    CFG_DOUBLE(S, viz_inner, 0, 10,
+               "where the bars start (x logo_radius)"),
+    CFG_DOUBLE(S, viz_length, 0, 10000, "bar length at full level, px"),
+    CFG_DOUBLE(S, viz_width, 0, 1, "bar thickness, as a fraction of its slot"),
+    CFG_COLOR(S, viz_color, "visualiser bars"),
+    CFG_DOUBLE(S, viz_alpha, 0, 1, "visualiser opacity"),
+    CFG_DOUBLE(S, viz_low_hz, 1, 100000, "lowest frequency (the bottom bars)"),
+    CFG_DOUBLE(S, viz_high_hz, 1, 100000, "highest frequency (the top bars)"),
+    CFG_DOUBLE(S, viz_fall, 0.01, 1000,
+               "how fast the bars fall (gravity, full heights per s^2)"),
 };
 #undef S
 
@@ -148,6 +183,7 @@ static struct {
   bool have_pointer;
   double px, py;
   int64_t last_motion; /* ms of the last boosting pointer motion */
+  struct wp_viz viz;
 
   /* measured frame rate */
   int64_t fps_start;
@@ -158,9 +194,21 @@ static struct {
 const struct wallpaper_config *wp_config(void) { return &w.cfg; }
 bool wp_animating(void) { return w.animating; }
 
+static bool viz_showing(void) {
+  int n = w.cfg.viz_bars;
+  for (int i = 0; i < n; ++i)
+    if (w.viz.bars[i] >= 1e-3)
+      return true;
+  return false;
+}
+
 /* The resting spin is slow enough for a low rate; a pointer-boosted one
- * needs more frames to look smooth. */
-int wp_fps_cap(void) { return w.boost > 0.05 ? w.cfg.fps_spin : w.cfg.fps; }
+ * and moving bars need more frames to look smooth. */
+int wp_fps_cap(void) {
+  if (w.boost > 0.05)
+    return w.cfg.fps_spin;
+  return viz_showing() ? w.cfg.fps_audio : w.cfg.fps;
+}
 
 /* ---- animation ---- */
 
@@ -189,12 +237,13 @@ static void set_target(double pct) {
     wp_surfaces_draw(false);
 }
 
-static void advance(int64_t now) {
+/* Returns the time advanced, in seconds. */
+static double advance(int64_t now) {
   /* Clamped, so a stall (or a freeze) doesn't make anything jump. */
   double dt = (now - w.last) / 1000.0;
   w.last = now;
   if (dt <= 0)
-    return;
+    return 0;
   if (dt > 0.1)
     dt = 0.1;
   double omega = w.cfg.spin_speed * (1 + w.boost);
@@ -207,6 +256,20 @@ static void advance(int64_t now) {
     w.boost = 0;
   w.tween_elapsed += dt * 1000;
   w.phase = fmod(w.phase + dt / wp_pulse_period(&w.cfg, shown_percent()), 1);
+  return dt;
+}
+
+/* Move the bars on by dt towards the latest audio (silence without any). */
+static void advance_viz(double dt) {
+  if (dt <= 0)
+    return;
+  static float samples[WP_VIZ_FFT];
+  float db[WP_VIZ_MAX];
+  int rate;
+  bool fresh = w.cfg.viz && wp_audio_samples(samples, &rate);
+  if (fresh)
+    wp_viz_analyse(samples, rate, &w.cfg, db);
+  wp_viz_step(&w.viz, &w.cfg, fresh ? db : NULL, dt);
 }
 
 /* The logo brightens with the pointer boost, fully at spin_max. */
@@ -224,13 +287,15 @@ static double over(void) {
 
 void wp_frame_at(int64_t now, struct wp_frame *f) {
   if (w.animating)
-    advance(now);
+    advance_viz(advance(now));
   f->percent = shown_percent();
   f->level = wp_bar_level(&w.cfg, w.phase);
   f->angle = w.angle;
   f->glow = glow();
   f->over = over();
   f->dir = w.cfg.spin_speed < 0 ? -1 : 1;
+  f->nbars = viz_showing() ? w.cfg.viz_bars : 0;
+  memcpy(f->bars, w.viz.bars, sizeof(f->bars));
 }
 
 void wp_count_frame(int64_t now) {
@@ -277,16 +342,20 @@ static void update_animating(void) {
     loop_timer_arm(w.battery_timer, ms, ms);
     arm_idle_fallback();
     read_battery();
+    if (w.cfg.viz)
+      wp_audio_start(w.sw->loop, &w.cfg);
     wp_surfaces_draw(false); /* and every draw asks for the next frame */
     bus_emit("wallpaper.animate", NULL);
   } else {
     loop_timer_disarm(w.battery_timer);
     loop_timer_disarm(w.idle_timer);
-    bool glowing = w.boost > 0;
+    wp_audio_stop();
+    bool glowing = w.boost > 0 || viz_showing();
     w.boost = 0;
+    memset(&w.viz, 0, sizeof(w.viz));
     w.fps = 0;
-    /* A window opened (or the user idled) mid-spin: don't leave the
-     * brightened logo as the frozen frame. */
+    /* A window opened (or the user idled) mid-spin or mid-song: don't
+     * leave the brightened logo or the bars as the frozen frame. */
     if (glowing)
       wp_surfaces_draw(false);
     bus_emit("wallpaper.freeze", NULL);
@@ -390,6 +459,7 @@ static bool init(struct swell *sw, const void *cfg) {
   w.sw = sw;
   w.cfg = *(const struct wallpaper_config *)cfg;
   w.override = -1;
+  wp_audio_init();
   w.battery_timer =
       loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_battery_timer, NULL);
   w.idle_timer = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_idle_timer, NULL);
@@ -422,6 +492,11 @@ static void reconfigure(const void *cfg) {
     int64_t ms = w.cfg.battery_interval_s * 1000LL;
     loop_timer_arm(w.battery_timer, ms, ms);
   }
+  if (old.viz != w.cfg.viz || strcmp(old.viz_target, w.cfg.viz_target)) {
+    wp_audio_stop();
+    if (w.animating && w.cfg.viz)
+      wp_audio_start(w.sw->loop, &w.cfg);
+  }
   if (strcmp(old.namespace, w.cfg.namespace) != 0)
     wp_surfaces_recreate();
   else
@@ -432,6 +507,8 @@ static void finish(void) {
   bus_unsubscribe(on_bus, NULL);
   wp_surfaces_finish();
   wp_render_finish();
+  wp_audio_finish();
+  memset(&w.viz, 0, sizeof(w.viz));
   if (w.idle_note)
     ext_idle_notification_v1_destroy(w.idle_note);
   w.idle_note = NULL;
@@ -457,6 +534,7 @@ static int command(int argc, char **argv, struct reply *r) {
                  w.override >= 0 ? " (override)" : "", shown_percent());
     reply_printf(r, "fps: %.1f\n", w.animating ? w.fps : 0.0);
     reply_printf(r, "spin: x%.2f\n", 1 + w.boost);
+    reply_printf(r, "audio: %s\n", w.cfg.viz ? wp_audio_state() : "disabled");
     reply_printf(r, "outputs: %d\n", wp_surfaces_count());
     return 0;
   }

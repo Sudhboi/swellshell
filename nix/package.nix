@@ -11,6 +11,7 @@
   cairo,
   pango,
   libxkbcommon,
+  pipewire,
   wireplumber,
   networkmanager,
   playerctl,
@@ -47,6 +48,7 @@ stdenv.mkDerivation {
     cairo
     pango
     libxkbcommon
+    pipewire
   ];
 
   doCheck = true;

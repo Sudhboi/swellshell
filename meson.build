@@ -19,6 +19,7 @@ cairo = dependency('cairo')
 pango = dependency('pangocairo')
 xkbcommon = dependency('xkbcommon')
 math = cc.find_library('m', required: false)
+pipewire = dependency('libpipewire-0.3')
 
 # ---- protocols ----
 wl_scanner = find_program(wayland_scanner_dep.get_variable('wayland_scanner'), native: true)
@@ -74,7 +75,7 @@ core_src = files(
   'src/core/util.c',
   'src/core/wl.c',
 )
-deps = [wayland_client, cairo, pango, xkbcommon, math, protocols_dep,
+deps = [wayland_client, cairo, pango, xkbcommon, math, pipewire, protocols_dep,
   i3ipc_dep, tomlc17_dep]
 core = static_library('swellcore', core_src,
   include_directories: core_inc, dependencies: deps)
