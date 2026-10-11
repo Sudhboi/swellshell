@@ -294,7 +294,7 @@ fps = 30
 # frame rate cap while the pointer spins the logo faster (0 = the display rate)
 fps_spin = 0
 # frame rate cap while the visualiser shows (0 = the display rate)
-fps_audio = 60
+fps_audio = 0
 # freeze after this long without input (0 = never)
 idle_timeout_s = 300
 # battery re-read period while animating
