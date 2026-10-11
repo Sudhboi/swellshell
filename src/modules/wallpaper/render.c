@@ -45,12 +45,31 @@ static double ring_outer(const struct wallpaper_config *c, double r,
 static const double streak_rings[] = {1.08, 1.16, 1.24};
 #define STREAK_OUTER 1.24
 
+/* The strip side s (0 left, 1 right) of the edge bars fills at full. */
+static void edge_box(const struct wallpaper_config *c, int pw, int ph, int s,
+                     double *x0, double *y0, double *x1, double *y1) {
+  double k = pw / WP_REF_WIDTH;
+  double gap = c->viz_edge_gap * k, len = c->viz_edge_length * k;
+  *x0 = s ? pw - gap - len : gap;
+  *x1 = *x0 + len;
+  *y0 = c->viz_edge_margin * k;
+  *y1 = ph - *y0;
+}
+
 void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
-                struct wp_rect out[2]) {
+                struct wp_rect out[WP_REGIONS]) {
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
   /* A shake moves everything by up to this much. */
   double sh = c->react_shake ? ceil(c->react_shake_px * pw / WP_REF_WIDTH) : 0;
+  /* Pulsed, the bar grows about its centre. */
+  if (c->bar_pulse) {
+    double gx = w * c->react_pulse_scale / 2, gy = h * c->react_pulse_scale / 2;
+    x -= gx;
+    y -= gy;
+    w += 2 * gx;
+    h += 2 * gy;
+  }
   out[0] = clamp_rect(x - sh, y - sh, x + w + sh, y + h + sh, pw, ph);
   /* The bloom and the speed lines reach past the logo, the visualiser
    * further still. */
@@ -61,11 +80,19 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
   r = fmax(r, c->logo_radius * k * (1 + c->react_pulse_scale) *
                       (1 + c->react_slide_dist) +
                   2);
-  if (ring)
+  if (ring && !c->viz_edges)
     r = fmax(r, ring_outer(c, c->logo_radius * k, k) + 1);
   r += sh;
   out[1] = clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r,
                       pw, ph);
+  for (int s = 0; s < 2; ++s) {
+    out[2 + s] = (struct wp_rect){0, 0, 0, 0};
+    if (ring && c->viz_edges) {
+      double x0, y0, x1, y1;
+      edge_box(c, pw, ph, s, &x0, &y0, &x1, &y1);
+      out[2 + s] = clamp_rect(x0 - sh, y0 - sh, x1 + sh, y1 + sh, pw, ph);
+    }
+  }
 }
 
 static void pill(cairo_t *cr, double x, double y, double w, double h) {
@@ -341,6 +368,111 @@ static void draw_ring(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_restore(cr);
 }
 
+/* The visualiser along the screen's sides: the left channel on the left,
+ * the right on the right, bass at the bottom climbing to the treble at the
+ * top, each bar growing in from the edge. Bars are axis-aligned and on
+ * whole pixels (their ends too: a pixel step is invisible at this size), so
+ * they are crisp and cheap without antialiasing or the ring's sprite. */
+static void draw_edges(cairo_t *cr, const struct wallpaper_config *c, int pw,
+                       int ph, const struct wp_frame *f) {
+  int n = f->nbars;
+  cairo_save(cr);
+  cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+  cairo_new_path(cr);
+  for (int s = 0; s < 2; ++s) {
+    double x0, y0, x1, y1;
+    edge_box(c, pw, ph, s, &x0, &y0, &x1, &y1);
+    x0 = round(x0);
+    x1 = round(x1);
+    double slot = (y1 - y0) / n, len = x1 - x0;
+    for (int i = 0; i < n; ++i) {
+      double lv = fmin(f->bars[s][i], 1);
+      if (lv < 1e-3)
+        continue;
+      double yc = y1 - slot * (i + 0.5);
+      double top = round(yc - c->viz_width * slot / 2);
+      double bot = fmax(round(yc + c->viz_width * slot / 2), top + 1);
+      double l = round(len * lv);
+      if (l >= 1)
+        cairo_rectangle(cr, s ? x1 - l : x0, top, l, bot - top);
+    }
+  }
+  set_rgba(cr, c->viz_color, c->viz_alpha);
+  cairo_fill(cr);
+  cairo_restore(cr);
+}
+
+/* The same levels as one smooth filled shape per side: a curve through
+ * each bar's level at its slot's centre (Catmull-Rom as Beziers), closed
+ * along the screen's side. The control points are clamped to the strip,
+ * so the curve (inside their hull) never leaves it. */
+/* Levels (capped at 1) blurred over their neighbours by a gaussian of
+ * sigma bars, weights renormalised at the ends; sigma 0 copies them. */
+static void blur_levels(const float *in, int n, double sigma, double *out) {
+  int rad = sigma > 0 ? (int)ceil(3 * sigma) : 0;
+  for (int i = 0; i < n; ++i) {
+    double sum = 0, wsum = 0;
+    for (int j = i - rad; j <= i + rad; ++j) {
+      if (j < 0 || j >= n)
+        continue;
+      double d = (j - i) / (sigma > 0 ? sigma : 1);
+      double wt = exp(-0.5 * d * d);
+      sum += wt * fmin(in[j], 1);
+      wsum += wt;
+    }
+    out[i] = sum / wsum;
+  }
+}
+
+static void draw_edges_smooth(cairo_t *cr, const struct wallpaper_config *c,
+                              int pw, int ph, const struct wp_frame *f) {
+  int n = f->nbars;
+  for (int s = 0; s < 2; ++s) {
+    double x0, y0, x1, y1;
+    edge_box(c, pw, ph, s, &x0, &y0, &x1, &y1);
+    double slot = (y1 - y0) / n, len = x1 - x0;
+    /* Without a margin the shape runs off the top and bottom by the shake
+     * distance, so a shake never shows its ends. */
+    double ext = c->viz_edge_margin <= 0 && c->react_shake
+                     ? ceil(c->react_shake_px * pw / WP_REF_WIDTH)
+                     : 0;
+    y0 -= ext;
+    y1 += ext;
+    /* Bass first, from the bottom: both ends held flat to the margins. */
+    double lv[WP_VIZ_MAX] = {0};
+    blur_levels(f->bars[s], n, c->viz_edge_blur, lv);
+    double py[WP_VIZ_MAX + 2], pl[WP_VIZ_MAX + 2];
+    int m = 0;
+    py[m] = y1;
+    pl[m++] = lv[0] * len;
+    for (int i = 0; i < n; ++i) {
+      py[m] = y1 - ext - slot * (i + 0.5);
+      pl[m++] = lv[i] * len;
+    }
+    py[m] = y0;
+    pl[m++] = lv[n - 1] * len;
+    /* x of a level: in from the side the strip is on. */
+#define EDGE_X(l) (s ? x1 - (l) : x0 + (l))
+    cairo_new_path(cr);
+    cairo_move_to(cr, EDGE_X(0), y1);
+    cairo_line_to(cr, EDGE_X(pl[0]), py[0]);
+    for (int i = 0; i + 1 < m; ++i) {
+      int a = i > 0 ? i - 1 : i, d = i + 2 < m ? i + 2 : i + 1;
+      double c1 = fmin(fmax(pl[i] + (pl[i + 1] - pl[a]) / 6, 0), len);
+      double c2 = fmin(fmax(pl[i + 1] - (pl[d] - pl[i]) / 6, 0), len);
+      double cy1 = py[i] + (py[i + 1] - py[a]) / 6;
+      double cy2 = py[i + 1] - (py[d] - py[i]) / 6;
+      cairo_curve_to(cr, EDGE_X(c1), cy1, EDGE_X(c2), cy2, EDGE_X(pl[i + 1]),
+                     py[i + 1]);
+    }
+    cairo_line_to(cr, EDGE_X(0), y0);
+    cairo_close_path(cr);
+#undef EDGE_X
+    set_rgba(cr, c->viz_color, c->viz_alpha);
+    cairo_fill(cr);
+  }
+}
+
 /* render_bar_mask(): a pill outline around the whole bar and, inside the
  * gap, a pill filled to percent, all at the pulse brightness. */
 static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
@@ -349,6 +481,14 @@ static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
   double b = c->bar_border * k, pad = (c->bar_gap + c->bar_border) * k;
+  /* It grows with the logo's pulse, about its centre. */
+  double s = c->bar_pulse ? 1 + c->react_pulse_scale * f->pulse : 1;
+  cairo_save(cr);
+  if (s != 1) {
+    cairo_translate(cr, x + w / 2, y + h / 2);
+    cairo_scale(cr, s, s);
+    cairo_translate(cr, -(x + w / 2), -(y + h / 2));
+  }
   pill(cr, x, y, w, h);
   pill(cr, x + b, y + b, w - 2 * b, h - 2 * b);
   double fw = c->bar_width * k * fmin(fmax(f->percent, 0), 100) / 100.0;
@@ -357,6 +497,7 @@ static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
   set_rgba(cr, c->bar, f->level);
   cairo_fill(cr);
+  cairo_restore(cr);
 }
 
 void wp_render_finish(void) {
@@ -368,10 +509,11 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
                const struct wp_frame *f, bool full, bool ring) {
   cairo_save(cr);
   if (!full) {
-    struct wp_rect r[2];
+    struct wp_rect r[WP_REGIONS];
     wp_regions(c, pw, ph, ring || f->nbars > 0, r);
-    for (int i = 0; i < 2; ++i)
-      cairo_rectangle(cr, r[i].x, r[i].y, r[i].w, r[i].h);
+    for (int i = 0; i < WP_REGIONS; ++i)
+      if (r[i].w > 0 && r[i].h > 0)
+        cairo_rectangle(cr, r[i].x, r[i].y, r[i].w, r[i].h);
     cairo_clip(cr);
   }
   cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
@@ -384,7 +526,11 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   cairo_translate(cr, round(f->shake_x * k), round(f->shake_y * k));
   double cx = pw / 2.0, cy = ph / 2.0;
   paint_bloom(cr, c, pw, ph, r, f->over); /* over the background, first */
-  if (f->nbars > 0)
+  if (f->nbars > 0 && c->viz_edges && c->viz_edge_smooth)
+    draw_edges_smooth(cr, c, pw, ph, f);
+  else if (f->nbars > 0 && c->viz_edges)
+    draw_edges(cr, c, pw, ph, f);
+  else if (f->nbars > 0)
     draw_ring(cr, c, pw, ph, r, k, f);
 
   draw_bar(cr, c, pw, f);

@@ -333,6 +333,8 @@ pulse_sigma_s = 0.4
 pulse_hold_s = 1.0
 # fill change animation
 tween_ms = 600
+# the bar grows with the snowflake on bass hits, about its centre (by react_pulse_scale)
+bar_pulse = true
 # snowflake radius, px
 logo_radius = 225.0
 # snowflake rotation, degrees/s clockwise
@@ -363,17 +365,29 @@ streak_length = 70.0
 streak_width = 5.0
 # speed line opacity at the fastest spin
 streak_alpha = 0.7
-# audio visualiser around the snowflake (PipeWire; only while the wallpaper animates and something plays)
+# audio visualiser, along the screen's sides or around the snowflake (PipeWire; only while the wallpaper animates and something plays)
 viz = true
 # PipeWire sink to visualise (node name or serial; "" = the default sink)
 viz_target = ""
 # visualiser bars per side (left channel on the left, right on the right)
 viz_bars = 48
-# the line the bars grow from, both ways (x logo_radius)
+# bars along the screen's left and right edges, growing inwards; false: a ring around the snowflake
+viz_edges = true
+# edge bar length at full level, px (needs viz_edges)
+viz_edge_length = 600.0
+# edge bars' distance from the screen's side, px (needs viz_edges)
+viz_edge_gap = 0.0
+# space left free above and below the edge bars, px (needs viz_edges)
+viz_edge_margin = 0.0
+# one smooth filled curve through the levels on each side instead of separate bars (needs viz_edges)
+viz_edge_smooth = true
+# how far each level spreads over its neighbours in the smooth curve, in bars (0 = through every level exactly; needs viz_edge_smooth)
+viz_edge_blur = 1.5
+# the line the ring's bars grow from, both ways (x logo_radius)
 viz_radius = 1.6
-# bar length at full level, both ends together, px
+# ring bar length at full level, both ends together, px
 viz_length = 260.0
-# share of a bar's length that grows inwards (0 = all outwards from viz_radius)
+# share of a ring bar's length that grows inwards (0 = all outwards from viz_radius)
 viz_inward = 0.4
 # bar thickness, as a fraction of its slot
 viz_width = 0.55
@@ -388,7 +402,7 @@ viz_high_hz = 10000.0
 # how fast the bars fall (gravity, full heights per s^2)
 viz_fall = 4.0
 # irregularity: each bar's angle, width, length and gain vary a little (0 = a perfect ring)
-viz_jitter = 1.0
+viz_jitter = 0.0
 # the snowflake's lambdas slide outwards with the music, each by its own slice of the spectrum (needs viz)
 react_slide = false
 # lambda slide at full level (x logo_radius)

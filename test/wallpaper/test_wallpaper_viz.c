@@ -97,14 +97,16 @@ int main(void) {
     hi = fmax(hi, h);
   }
   assert(lo < -0.8 && hi > 0.8);
-  struct wallpaper_config still = *c;
+  struct wallpaper_config still = *c, jit = *c;
   still.viz_jitter = 0;
+  jit.viz_jitter = 1;
   for (double t = 0; t < 10; t += 0.37) {
-    double g = wp_viz_wobble(c, 0, 5, t);
+    double g = wp_viz_wobble(&jit, 0, 5, t);
     assert(g > 0.75 && g < 1.25);
     assert(wp_viz_wobble(&still, 0, 5, t) == 1);
   }
-  assert(wp_viz_wobble(c, 0, 5, 1) != wp_viz_wobble(c, 1, 5, 1));
+  assert(wp_viz_wobble(&jit, 0, 5, 1) != wp_viz_wobble(&jit, 1, 5, 1));
+  assert(c->viz_jitter == 0); /* the default: a uniform ring */
 
   /* React: steady bars settle the loudness at their mean, and a steady
    * bass never kicks. */

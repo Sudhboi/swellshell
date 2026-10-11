@@ -48,6 +48,7 @@ static const struct wallpaper_config defaults = {
     .pulse_sigma_s = 0.4,
     .pulse_hold_s = 1.0,
     .tween_ms = 600,
+    .bar_pulse = true,
     .logo_radius = 225,
     .spin_speed = 15,
     .spin_gain = 0.008,
@@ -66,6 +67,12 @@ static const struct wallpaper_config defaults = {
     .viz = true,
     .viz_target = "",
     .viz_bars = 48,
+    .viz_edges = true,
+    .viz_edge_length = 600,
+    .viz_edge_gap = 0,
+    .viz_edge_margin = 0,
+    .viz_edge_smooth = true,
+    .viz_edge_blur = 1.5,
     .viz_radius = 1.6,
     .viz_length = 260,
     .viz_inward = 0.4,
@@ -75,7 +82,7 @@ static const struct wallpaper_config defaults = {
     .viz_low_hz = 50,
     .viz_high_hz = 10000,
     .viz_fall = 4,
-    .viz_jitter = 1,
+    .viz_jitter = 0,
     .react_slide = false,
     .react_slide_dist = 0.1,
     .react_pulse = true,
@@ -136,6 +143,9 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, pulse_hold_s, 0, 3600,
                "time at full brightness per pulse at 50%"),
     CFG_INT(S, tween_ms, 0, 60000, "fill change animation"),
+    CFG_BOOL(S, bar_pulse,
+             "the bar grows with the snowflake on bass hits, about its "
+             "centre (by react_pulse_scale)"),
     CFG_DOUBLE(S, logo_radius, 0, 10000, "snowflake radius, px"),
     CFG_DOUBLE(S, spin_speed, -3600, 3600,
                "snowflake rotation, degrees/s clockwise"),
@@ -162,7 +172,8 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, streak_alpha, 0, 1,
                "speed line opacity at the fastest spin"),
     CFG_BOOL(S, viz,
-             "audio visualiser around the snowflake (PipeWire; only while "
+             "audio visualiser, along the screen's sides or around the "
+             "snowflake (PipeWire; only while "
              "the wallpaper animates and something plays)"),
     CFG_STRING(S, viz_target,
                "PipeWire sink to visualise (node name or serial; \"\" = the "
@@ -170,12 +181,31 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, viz_bars, 1, WP_VIZ_MAX,
             "visualiser bars per side (left channel on the left, right on "
             "the right)"),
+    CFG_BOOL(S, viz_edges,
+             "bars along the screen's left and right edges, growing inwards; "
+             "false: a ring around the snowflake"),
+    CFG_DOUBLE(S, viz_edge_length, 0, 10000,
+               "edge bar length at full level, px (needs viz_edges)"),
+    CFG_DOUBLE(S, viz_edge_gap, 0, 10000,
+               "edge bars' distance from the screen's side, px (needs "
+               "viz_edges)"),
+    CFG_DOUBLE(S, viz_edge_margin, 0, 10000,
+               "space left free above and below the edge bars, px (needs "
+               "viz_edges)"),
+    CFG_BOOL(S, viz_edge_smooth,
+             "one smooth filled curve through the levels on each side "
+             "instead of separate bars (needs viz_edges)"),
+    CFG_DOUBLE(S, viz_edge_blur, 0, 32,
+               "how far each level spreads over its neighbours in the smooth "
+               "curve, in bars (0 = through every level exactly; needs "
+               "viz_edge_smooth)"),
     CFG_DOUBLE(S, viz_radius, 0, 10,
-               "the line the bars grow from, both ways (x logo_radius)"),
+               "the line the ring's bars grow from, both ways (x "
+               "logo_radius)"),
     CFG_DOUBLE(S, viz_length, 0, 10000,
-               "bar length at full level, both ends together, px"),
+               "ring bar length at full level, both ends together, px"),
     CFG_DOUBLE(S, viz_inward, 0, 1,
-               "share of a bar's length that grows inwards (0 = all "
+               "share of a ring bar's length that grows inwards (0 = all "
                "outwards from viz_radius)"),
     CFG_DOUBLE(S, viz_width, 0, 1, "bar thickness, as a fraction of its slot"),
     CFG_COLOR(S, viz_color, "visualiser bars"),

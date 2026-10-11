@@ -123,9 +123,9 @@ static void draw(struct output *out, bool full) {
   int64_t now = now_ms();
   struct wp_frame f;
   wp_frame_at(now, &f);
-  /* While either buffer holds visualiser bars, repaint and damage the
-   * ring's larger area: that clears this buffer's old bars and covers the
-   * difference from the other one. */
+  /* While either buffer holds visualiser bars, repaint and damage their
+   * larger area (the ring's or the edge strips): that clears this buffer's
+   * old bars and covers the difference from the other one. */
   bool ring = f.nbars > 0 || out->ringed[0] || out->ringed[1];
   cairo_t *cr = cairo_create(b->cairo);
   wp_render(cr, wp_config(), pw, ph, &f, whole, ring);
@@ -143,13 +143,15 @@ static void draw(struct output *out, bool full) {
   wl_surface_attach(out->surface, b->wl_buffer, 0, 0);
   /* The other buffer was last painted with the same background, so only
    * the bar and the logo can differ from what the compositor has. */
-  struct wp_rect r[2];
+  struct wp_rect r[WP_REGIONS];
   wp_regions(wp_config(), pw, ph, ring, r);
   if (whole)
     wl_surface_damage_buffer(out->surface, 0, 0, pw, ph);
   else
-    for (int k = 0; k < 2; ++k)
-      wl_surface_damage_buffer(out->surface, r[k].x, r[k].y, r[k].w, r[k].h);
+    for (int k = 0; k < WP_REGIONS; ++k)
+      if (r[k].w > 0 && r[k].h > 0)
+        wl_surface_damage_buffer(out->surface, r[k].x, r[k].y, r[k].w,
+                                 r[k].h);
   if (wp_animating())
     request_frame(out);
   wl_surface_commit(out->surface);

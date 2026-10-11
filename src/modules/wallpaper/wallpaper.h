@@ -36,6 +36,7 @@ struct wallpaper_config {
   double bar_min, pulse_period_s, pulse_period_min_s, pulse_sigma_s,
       pulse_hold_s;
   int tween_ms; /* fill change */
+  bool bar_pulse; /* the bar grows with the logo on bass hits */
   /* logo */
   double logo_radius; /* reference px */
   double spin_speed;  /* deg/s, clockwise */
@@ -53,6 +54,14 @@ struct wallpaper_config {
   bool viz;
   char viz_target[128]; /* PipeWire sink to listen to, "": the default */
   int viz_bars;         /* per side */
+  /* along the screen's left and right edges, growing inwards (otherwise
+   * the ring around the logo) */
+  bool viz_edges;
+  double viz_edge_length; /* reference px at full level */
+  double viz_edge_gap;    /* from the screen's side, reference px */
+  double viz_edge_margin; /* kept free at the top and bottom, reference px */
+  bool viz_edge_smooth;   /* one smooth filled curve per side, not bars */
+  double viz_edge_blur;   /* the curve's spread over neighbours, in bars */
   double viz_radius;    /* the bars' centre line, x logo_radius */
   double viz_length;    /* reference px at full level, both ends together */
   double viz_inward;    /* the share of a bar that grows inwards, 0..1 */
@@ -107,10 +116,13 @@ struct wp_rect {
 double wp_pulse_period(const struct wallpaper_config *c, double percent);
 /* Bar brightness at phase 0..1 of a pulse (peak at 0.5). */
 double wp_bar_level(const struct wallpaper_config *c, double phase);
-/* The two buffer areas that change between frames (bar, logo) of a pw x ph
- * buffer. ring: the logo area also covers the visualiser ring. */
+/* The buffer areas that change between frames of a pw x ph buffer: the bar,
+ * the logo, and the left and right edge strips (empty unless ring and
+ * viz_edges). ring: they also cover the visualiser, the ring in the logo
+ * area or the edge strips. */
+#define WP_REGIONS 4
 void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
-                struct wp_rect out[2]);
+                struct wp_rect out[WP_REGIONS]);
 /* Draw a frame into a pw x ph buffer. full repaints everything, otherwise
  * only the wp_regions() areas (with ring) are touched. */
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
