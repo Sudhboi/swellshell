@@ -390,7 +390,7 @@ viz_fall = 4.0
 # irregularity: each bar's angle, width, length and gain vary a little (0 = a perfect ring)
 viz_jitter = 1.0
 # the snowflake's lambdas slide outwards with the music, each by its own slice of the spectrum (needs viz)
-react_slide = true
+react_slide = false
 # lambda slide at full level (x logo_radius)
 react_slide_dist = 0.1
 # the snowflake grows on bass hits (needs viz)
