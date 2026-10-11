@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "module.h"
 #include "wallpaper/wallpaper.h"
@@ -26,7 +27,7 @@ static cairo_surface_t *render(const struct wallpaper_config *c,
                                const char *name) {
   cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_RGB24, W, H);
   cairo_t *cr = cairo_create(s);
-  wp_render(cr, c, W, H, &f, true, false);
+  wp_render(cr, c, W, H, &f, true, false, false);
   cairo_destroy(cr);
   if (name) {
     char path[1024];
@@ -53,7 +54,7 @@ int main(int argc, char **argv) {
 
   /* Regions: the bar's outline box and the logo tile, inside the buffer. */
   struct wp_rect r[WP_REGIONS];
-  wp_regions(c, W, H, false, r);
+  wp_regions(c, W, H, false, false, r);
   assert(r[0].x <= 1136 && r[0].x + r[0].w >= 1744);
   assert(r[0].y <= 6 && r[0].y + r[0].h >= 24);
   assert(r[1].x <= 1440 - 225 && r[1].x + r[1].w >= 1440 + 225);
@@ -94,7 +95,7 @@ int main(int argc, char **argv) {
   a = render(c, (struct wp_frame){80, 0.4, 1.0}, dir, NULL);
   cairo_t *cr = cairo_create(a);
   struct wp_frame g = {20, 0.9, 2.0, .glow = 0.5, .over = 0.7, .dir = 1};
-  wp_render(cr, c, W, H, &g, false, false);
+  wp_render(cr, c, W, H, &g, false, false, false);
   cairo_destroy(cr);
   cairo_surface_t *b = render(c, g, dir, NULL);
   for (int y = 0; y < H; y += 3)
@@ -109,7 +110,7 @@ int main(int argc, char **argv) {
   ring_cfg.viz_edges = false;
   const struct wallpaper_config *rg = &ring_cfg;
   struct wp_rect big[WP_REGIONS];
-  wp_regions(rg, W, H, true, big);
+  wp_regions(rg, W, H, true, false, big);
   assert(big[1].w > r[1].w && big[1].h > r[1].h);
   assert(big[1].y >= 0 && big[1].y + big[1].h <= H);
   f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0};
@@ -172,7 +173,7 @@ int main(int argc, char **argv) {
     f.bars[1][i] = 0.3f;
   }
   cr = cairo_create(a);
-  wp_render(cr, rg, W, H, &f, false, false);
+  wp_render(cr, rg, W, H, &f, false, false, false);
   cairo_destroy(cr);
   b = render(rg, f, dir, NULL);
   for (int y = 0; y < H; y += 3)
@@ -181,7 +182,7 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(b);
   f.nbars = 0;
   cr = cairo_create(a);
-  wp_render(cr, rg, W, H, &f, false, true);
+  wp_render(cr, rg, W, H, &f, false, true, false);
   cairo_destroy(cr);
   b = render(rg, f, dir, NULL);
   for (int y = 0; y < H; y += 3)
@@ -196,7 +197,7 @@ int main(int argc, char **argv) {
    * the bottom; all inside the edge strips, none near the logo. */
   assert(c->viz_edges);
   struct wp_rect e[WP_REGIONS];
-  wp_regions(c, W, H, true, e);
+  wp_regions(c, W, H, true, false, e);
   assert(e[1].x == r[1].x && e[1].w == r[1].w); /* no ring around the logo */
   assert(e[2].x == 0 && e[2].w > 0 && e[3].x + e[3].w == W);
   assert(r[2].w == 0 && r[3].w == 0); /* no strips without bars */
@@ -317,7 +318,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < f.nbars; ++i)
     f.bars[0][i] = f.bars[1][i] = 0.5f + 0.5f * (float)sin(i * 0.37);
   cr = cairo_create(t);
-  wp_render(cr, c, W, H, &f, false, false);
+  wp_render(cr, c, W, H, &f, false, false, false);
   cairo_destroy(cr);
   b = render(c, f, dir, NULL);
   for (int y = 0; y < H; y += 3)
@@ -326,7 +327,7 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(b);
   f.nbars = 0;
   cr = cairo_create(t);
-  wp_render(cr, c, W, H, &f, false, true);
+  wp_render(cr, c, W, H, &f, false, true, false);
   cairo_destroy(cr);
   for (int y = 0; y < H; y += 3)
     for (int x = 0; x < W; x += 3)
@@ -363,7 +364,7 @@ int main(int argc, char **argv) {
   }
   assert(lit > 0);
   cr = cairo_create(a);
-  wp_render(cr, c, W, H, &f, false, false);
+  wp_render(cr, c, W, H, &f, false, false, false);
   cairo_destroy(cr);
   for (int y = 0; y < H; y += 3)
     for (int x = 0; x < W; x += 3)
@@ -398,7 +399,7 @@ int main(int argc, char **argv) {
         }
     assert(changed > 0);
     cr = cairo_create(a);
-    wp_render(cr, c, W, H, &f, false, false);
+    wp_render(cr, c, W, H, &f, false, false, false);
     cairo_destroy(cr);
     for (int y = 0; y < H; y += 3)
       for (int x = 0; x < W; x += 3)
@@ -406,5 +407,99 @@ int main(int argc, char **argv) {
     cairo_surface_destroy(a);
     cairo_surface_destroy(t);
   }
+
+  /* What's playing: playerctl's line. */
+  struct wp_media m;
+  assert(wp_media_parse("Playing\t240000000\t60000000\tArtist\tA\tsong\n",
+                        1000, &m));
+  assert(m.playing && m.len_us == 240000000 && m.pos_us == 60000000);
+  assert(!strcmp(m.artist, "Artist") && !strcmp(m.title, "A\tsong"));
+  assert(fabs(wp_media_progress(&m, 1000) - 0.25) < 1e-9);
+  assert(fabs(wp_media_progress(&m, 13000) - 0.3) < 1e-9); /* playing on */
+  assert(wp_media_progress(&m, 1000 + 400000) == 1);       /* clamped */
+  assert(wp_media_parse("Paused\t240000000\t60000000\t\tTitle", 0, &m));
+  assert(!m.playing && !m.artist[0]);
+  assert(fabs(wp_media_progress(&m, 50000) - 0.25) < 1e-9); /* held */
+  assert(wp_media_parse("Playing\t\t32\timase\tNIGHT DANCER", 0, &m));
+  assert(m.len_us == 0 && wp_media_progress(&m, 0) == -1); /* unknown */
+  assert(!wp_media_parse("Playing\t1\t0\tArtist\t", 0, &m) && !m.has);
+  assert(!wp_media_parse("Stopped\t1\t0\tArtist\tTitle", 0, &m));
+  assert(!wp_media_parse("", 0, &m) && !m.has);
+  assert(!wp_media_parse("No players found", 0, &m));
+
+  /* The details: under the logo inside their region, which is empty
+   * without them, and a partial repaint (over other details, shaken) equals
+   * a full one; clearing them leaves the plain frame. */
+  struct wp_rect tr[WP_REGIONS];
+  wp_regions(c, W, H, false, true, tr);
+  assert(r[4].w == 0 && tr[4].w > 0);
+  assert(tr[4].y > H / 2 + c->logo_radius * k && tr[4].y + tr[4].h < H);
+  assert(tr[4].x > e[2].x + e[2].w && tr[4].x + tr[4].w < e[3].x);
+  f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0.3};
+  a = render(c, f, dir, NULL);
+  f.media_alpha = 1;
+  f.title = "Dynasties and Dystopia (from the series Arcane League of "
+            "Legends) and a much longer tail so that it has to be cut short";
+  f.artist = "Release - Topic";
+  for (int i = 0; i < 3; ++i)
+    f.lit[i] = 1;
+  f.lit[3] = 0.5;
+  t = render(c, f, dir, "wallpaper_media_progress");
+  changed = 0;
+  int texted = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      if (px(a, x, y) != px(t, x, y)) {
+        bool in_logo = x >= r[1].x && x < r[1].x + r[1].w && y >= r[1].y &&
+                       y < r[1].y + r[1].h;
+        bool in_text = x >= tr[4].x && x < tr[4].x + tr[4].w &&
+                       y >= tr[4].y && y < tr[4].y + tr[4].h;
+        assert(in_logo || in_text);
+        texted += in_text && !in_logo;
+        changed++;
+      }
+  assert(changed > 0 && texted > 0);
+  /* Lit lambdas are brighter than the others. */
+  {
+    unsigned lit_max = 0, dim_max = 0;
+    for (int y = r[1].y; y < r[1].y + r[1].h; ++y)
+      for (int x = r[1].x; x < r[1].x + r[1].w; ++x) {
+        unsigned v = px(t, x, y) & 0xff;
+        if (y < tr[4].y)
+          lit_max = v > lit_max ? v : lit_max;
+        dim_max = fmax(dim_max, px(a, x, y) & 0xff);
+      }
+    assert(lit_max > dim_max + 50);
+  }
+  struct wp_frame pf = f;
+  pf.media_alpha = c->media_paused_alpha;
+  for (int i = 0; i < 6; ++i)
+    pf.lit[i] = f.lit[i] * c->media_paused_alpha;
+  cairo_surface_destroy(render(c, pf, dir, "wallpaper_media_paused"));
+  struct wp_frame cf = f;
+  memset(cf.lit, 0, sizeof cf.lit);
+  cf.lit[4] = 1;
+  cf.title = "NIGHT DANCER";
+  cf.artist = "imase";
+  cairo_surface_destroy(render(c, cf, dir, "wallpaper_media_chase"));
+  cf.shake_x = cf.shake_y = c->react_shake_px;
+  cr = cairo_create(t);
+  wp_render(cr, c, W, H, &cf, false, false, false);
+  cairo_destroy(cr);
+  b = render(c, cf, dir, NULL);
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      assert(px(t, x, y) == px(b, x, y));
+  cairo_surface_destroy(b);
+  f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0.3};
+  cr = cairo_create(t);
+  wp_render(cr, c, W, H, &f, false, false, true);
+  cairo_destroy(cr);
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      assert(px(t, x, y) == px(a, x, y));
+  cairo_surface_destroy(a);
+  cairo_surface_destroy(t);
+  wp_render_finish();
   return 0;
 }

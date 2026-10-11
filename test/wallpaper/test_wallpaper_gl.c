@@ -89,7 +89,7 @@ static cairo_surface_t *render(const struct wallpaper_config *c,
                                const struct wp_frame *f) {
   cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_RGB24, W, H);
   cairo_t *cr = cairo_create(s);
-  wp_render(cr, c, W, H, f, true, false);
+  wp_render(cr, c, W, H, f, true, false, false);
   cairo_destroy(cr);
   return s;
 }
@@ -99,7 +99,7 @@ static void check(const struct wallpaper_config *c, const struct wp_frame *f,
                   const char *dir, const char *name) {
   cairo_surface_t *ref = render(c, f);
   struct wp_rect r[WP_REGIONS];
-  wp_regions(c, W, H, true, r);
+  wp_regions(c, W, H, true, false, r);
   for (int s = 0; s < 2; ++s) {
     char n[128];
     snprintf(n, sizeof(n), "%s_%s", name, s ? "right" : "left");

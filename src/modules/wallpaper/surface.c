@@ -41,6 +41,7 @@ struct output {
   bool stale[2]; /* needs a full repaint before partial ones are valid */
   bool ringed[2]; /* holds visualiser bars, outside the small logo tile */
   bool still[2];  /* holds the frozen frame outside the bar (dozing) */
+  bool texted[2]; /* holds the title and artist */
   double bar_level, bar_percent; /* of the last commit */
   struct strip strips[2]; /* left, right; surface NULL unless shown */
   int width, height; /* logical, from configure */
@@ -112,6 +113,7 @@ static int get_buffer(struct output *out, int pw, int ph) {
         return -1;
       out->stale[i] = true;
       out->ringed[i] = false;
+      out->texted[i] = false;
       out->still[i] = false;
     }
     return i;
@@ -201,7 +203,7 @@ static bool strip_draw(struct output *out, int s, struct wp_rect r, int pw,
 static bool strips_draw(struct output *out, int pw, int ph,
                         const struct wp_frame *f) {
   struct wp_rect r[WP_REGIONS];
-  wp_regions(wp_config(), pw, ph, true, r);
+  wp_regions(wp_config(), pw, ph, true, false, r);
   for (int s = 0; s < 2; ++s)
     if (!strip_draw(out, s, r[2 + s], pw, ph, f))
       return false;
@@ -264,18 +266,22 @@ static void draw(struct output *out, bool full) {
   if (gpu)
     cf.nbars = 0;
   bool ring = cf.nbars > 0 || out->ringed[0] || out->ringed[1];
+  /* The same for the title and artist: a buffer still holding them is
+   * cleared once they're gone. */
+  bool text = f.media_alpha > 0 || out->texted[0] || out->texted[1];
   struct wp_rect r[WP_REGIONS];
-  wp_regions(wp_config(), pw, ph, ring, r);
+  wp_regions(wp_config(), pw, ph, ring, text, r);
   cairo_t *cr = cairo_create(b->cairo);
   if (bar_only) {
     cairo_rectangle(cr, r[0].x, r[0].y, r[0].w, r[0].h);
     cairo_clip(cr);
   }
-  wp_render(cr, wp_config(), pw, ph, &cf, whole, ring);
+  wp_render(cr, wp_config(), pw, ph, &cf, whole, ring, text);
   cairo_destroy(cr);
   cairo_surface_flush(b->cairo);
   out->stale[i] = false;
   out->ringed[i] = cf.nbars > 0;
+  out->texted[i] = f.media_alpha > 0;
   out->still[i] = wp_dozing();
   out->bar_level = f.level;
   out->bar_percent = f.percent;

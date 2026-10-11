@@ -1,5 +1,9 @@
 /* Cairo drawing of the wallpaper: a port of make_black_bar_nixos.py. */
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <pango/pangocairo.h>
 
 #include "config.h"
 #include "nixlogo.h"
@@ -41,6 +45,17 @@ static struct wp_rect clamp_rect(double x0, double y0, double x1, double y1,
 static double ring_outer(const struct wallpaper_config *c, double r,
                          double k);
 
+/* The title and artist's box under the logo, in buffer px. */
+static void text_box(const struct wallpaper_config *c, int pw, int ph,
+                     double *x, double *y, double *w, double *h) {
+  double k = pw / WP_REF_WIDTH;
+  *w = c->media_max_width * k;
+  *h = ceil(1.3 * (c->media_title_size + c->media_artist_size) * k) + 2;
+  *x = round(pw / 2.0 - *w / 2.0);
+  *y = round(ph / 2.0 + c->logo_radius * k * (1 + c->react_pulse_scale) +
+             c->media_gap * k);
+}
+
 /* Speed lines sit on rings this far out (x logo radius). */
 static const double streak_rings[] = {1.08, 1.16, 1.24};
 #define STREAK_OUTER 1.24
@@ -57,7 +72,7 @@ static void edge_box(const struct wallpaper_config *c, int pw, int ph, int s,
 }
 
 void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
-                struct wp_rect out[WP_REGIONS]) {
+                bool text, struct wp_rect out[WP_REGIONS]) {
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
   /* A shake moves everything by up to this much. */
@@ -91,6 +106,11 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
         x1 += rim;
       out[2 + s] = clamp_rect(x0 - sh, y0 - sh, x1 + sh, y1 + sh, pw, ph);
     }
+  }
+  out[4] = (struct wp_rect){0, 0, 0, 0};
+  if (text) {
+    text_box(c, pw, ph, &x, &y, &w, &h);
+    out[4] = clamp_rect(x - sh, y - sh, x + w + sh, y + h + sh, pw, ph);
   }
 }
 
@@ -528,17 +548,92 @@ static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_fill(cr);
 }
 
+/* The title and artist, drawn once per track (and size and config) into a
+ * transparent tile that each frame paints at the fade's alpha. */
+static struct {
+  cairo_surface_t *tile;
+  int pw, ph;
+  char title[256], artist[256];
+  struct wallpaper_config cfg;
+} text_cache;
+
+static void text_cache_free(void) {
+  if (text_cache.tile)
+    cairo_surface_destroy(text_cache.tile);
+  text_cache.tile = NULL;
+}
+
+/* One centred line of text in colour col at the top of y, ellipsised to w. */
+static double text_line(cairo_t *cr, PangoLayout *l,
+                        PangoFontDescription *fd, double size, uint32_t col,
+                        const char *s, double w, double y) {
+  pango_font_description_set_absolute_size(fd, size * PANGO_SCALE);
+  pango_layout_set_font_description(l, fd);
+  pango_layout_set_width(l, (int)(w * PANGO_SCALE));
+  pango_layout_set_ellipsize(l, PANGO_ELLIPSIZE_END);
+  pango_layout_set_alignment(l, PANGO_ALIGN_CENTER);
+  pango_layout_set_single_paragraph_mode(l, TRUE);
+  pango_layout_set_text(l, s, -1);
+  set_rgba(cr, col, 1.0);
+  cairo_move_to(cr, 0, y);
+  pango_cairo_show_layout(cr, l);
+  int lh;
+  pango_layout_get_pixel_size(l, NULL, &lh);
+  return y + lh;
+}
+
+static void draw_text(cairo_t *cr, const struct wallpaper_config *c, int pw,
+                      int ph, const struct wp_frame *f) {
+  if (f->media_alpha <= 0 || !f->title)
+    return;
+  const char *artist = f->artist ? f->artist : "";
+  double x, y, w, h;
+  text_box(c, pw, ph, &x, &y, &w, &h);
+  if (!text_cache.tile || text_cache.pw != pw || text_cache.ph != ph ||
+      strcmp(text_cache.title, f->title) ||
+      strcmp(text_cache.artist, artist) ||
+      memcmp(&text_cache.cfg, c, sizeof *c)) {
+    text_cache_free();
+    text_cache.tile = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+                                                 (int)ceil(w), (int)h);
+    cairo_t *tc = cairo_create(text_cache.tile);
+    double k = pw / WP_REF_WIDTH;
+    PangoLayout *l = pango_cairo_create_layout(tc);
+    PangoFontDescription *fd = pango_font_description_from_string(c->media_font);
+    double ty = text_line(tc, l, fd, c->media_title_size * k, c->media_text,
+                          f->title, w, 0);
+    if (artist[0])
+      text_line(tc, l, fd, c->media_artist_size * k, c->media_dim, artist, w,
+                ty + 0.1 * c->media_artist_size * k);
+    pango_font_description_free(fd);
+    g_object_unref(l);
+    cairo_destroy(tc);
+    text_cache.pw = pw;
+    text_cache.ph = ph;
+    snprintf(text_cache.title, sizeof text_cache.title, "%s", f->title);
+    snprintf(text_cache.artist, sizeof text_cache.artist, "%s", artist);
+    text_cache.cfg = *c;
+  }
+  cairo_save(cr);
+  cairo_set_source_surface(cr, text_cache.tile, x, y);
+  cairo_rectangle(cr, x, y, ceil(w), h);
+  cairo_clip(cr);
+  cairo_paint_with_alpha(cr, fmin(f->media_alpha, 1));
+  cairo_restore(cr);
+}
+
 void wp_render_finish(void) {
   bloom_cache_free();
   ring_cache_free();
+  text_cache_free();
 }
 
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
-               const struct wp_frame *f, bool full, bool ring) {
+               const struct wp_frame *f, bool full, bool ring, bool text) {
   cairo_save(cr);
   if (!full) {
     struct wp_rect r[WP_REGIONS];
-    wp_regions(c, pw, ph, ring || f->nbars > 0, r);
+    wp_regions(c, pw, ph, ring || f->nbars > 0, text || f->media_alpha > 0, r);
     for (int i = 0; i < WP_REGIONS; ++i)
       if (r[i].w > 0 && r[i].h > 0)
         cairo_rectangle(cr, r[i].x, r[i].y, r[i].w, r[i].h);
@@ -561,13 +656,19 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   else if (f->nbars > 0)
     draw_ring(cr, c, pw, ph, r, k, f);
 
+  draw_text(cr, c, pw, ph, f);
   draw_bar(cr, c, pw, f);
   if (f->over > 0)
     draw_streaks(cr, c, cx, cy, r, k, f);
   /* The logo reacts to the music: it grows on bass hits and its lambdas
    * slide out (both 0 without music). */
-  nixlogo_draw_ex(cr, cx, cy, r * (1 + c->react_pulse_scale * f->pulse),
-                  f->angle, mix(c->logo, c->logo_glow, f->glow),
-                  mix(c->logo_alt, c->logo_glow_alt, f->glow), 1.0, f->slide);
+  uint32_t dark = mix(c->logo, c->logo_glow, f->glow),
+           light = mix(c->logo_alt, c->logo_glow_alt, f->glow), cols[6];
+  /* What's playing lights the lambdas (its progress, or a chase). */
+  for (int i = 0; i < 6; ++i)
+    cols[i] = i % 2 ? mix(light, c->media_lit_alt, f->lit[i])
+                    : mix(dark, c->media_lit, f->lit[i]);
+  nixlogo_draw_cols(cr, cx, cy, r * (1 + c->react_pulse_scale * f->pulse),
+                    f->angle, cols, 1.0, f->slide);
   cairo_restore(cr);
 }

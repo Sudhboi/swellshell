@@ -42,6 +42,14 @@ void nixlogo_draw(cairo_t *cr, double cx, double cy, double r, double angle,
 void nixlogo_draw_ex(cairo_t *cr, double cx, double cy, double r,
                      double angle, uint32_t dark, uint32_t light, double alpha,
                      const double *slide) {
+  /* Even k is dark in the SVG, odd k light. */
+  const uint32_t cols[6] = {dark, light, dark, light, dark, light};
+  nixlogo_draw_cols(cr, cx, cy, r, angle, cols, alpha, slide);
+}
+
+void nixlogo_draw_cols(cairo_t *cr, double cx, double cy, double r,
+                       double angle, const uint32_t cols[6], double alpha,
+                       const double *slide) {
   double dx = 0, dy = 0;
   if (slide)
     lambda_dir(&dx, &dy);
@@ -52,8 +60,7 @@ void nixlogo_draw_ex(cairo_t *cr, double cx, double cy, double r,
   cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
 
   for (int k = 0; k < 6; k++) {
-    /* Even k is dark in the SVG, odd k light. */
-    set_rgba(cr, k % 2 ? light : dark, alpha);
+    set_rgba(cr, cols[k], alpha);
 
     cairo_save(cr);
     cairo_rotate(cr, k * PI / 3.0);

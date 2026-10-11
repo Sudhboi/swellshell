@@ -108,6 +108,22 @@ static const struct wallpaper_config defaults = {
     .react_shake_rise = 20,
     .react_shake_px = 14,
     .react_shake_ms = 200,
+    .media = true,
+    .media_player = "",
+    .media_interval_ms = 2000,
+    .media_progress = true,
+    .media_chase_ms = 2000,
+    .media_lit = 0xb4b4b4ffu,
+    .media_lit_alt = 0x8c8c8cffu,
+    .media_font = "IosevkaTerm Nerd Font",
+    .media_title_size = 44,
+    .media_artist_size = 32,
+    .media_text = 0x8a8a8affu,
+    .media_dim = 0x5a5a5affu,
+    .media_gap = 70,
+    .media_max_width = 1400,
+    .media_fade_ms = 400,
+    .media_paused_alpha = 0.5,
 };
 
 #define S struct wallpaper_config
@@ -278,6 +294,35 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, react_shake_px, 0, 200,
                "shake distance at its start (reference px)"),
     CFG_INT(S, react_shake_ms, 1, 10000, "how fast a shake dies down"),
+    CFG_BOOL(S, media,
+             "show what's playing (playerctl): the title and artist under "
+             "the snowflake, its progress on the lambdas"),
+    CFG_STRING(S, media_player,
+               "playerctl player to follow (its -p; \"\" = playerctl's "
+               "pick)"),
+    CFG_INT(S, media_interval_ms, 100, 60000,
+            "how often playerctl is asked while the wallpaper animates"),
+    CFG_BOOL(S, media_progress,
+             "the lambdas light up clockwise as the track plays, a sixth "
+             "each; without a track length one lit lambda steps round"),
+    CFG_INT(S, media_chase_ms, 100, 60000,
+            "the lit lambda's step when the track length is unknown"),
+    CFG_COLOR(S, media_lit, "a lit lambda"),
+    CFG_COLOR(S, media_lit_alt, "a lit lambda, every other one"),
+    CFG_STRING(S, media_font, "font of the title and artist"),
+    CFG_DOUBLE(S, media_title_size, 1, 1000, "title size, px"),
+    CFG_DOUBLE(S, media_artist_size, 1, 1000, "artist size, px"),
+    CFG_COLOR(S, media_text, "title"),
+    CFG_COLOR(S, media_dim, "artist"),
+    CFG_DOUBLE(S, media_gap, -10000, 10000,
+               "space between the snowflake (at its biggest pulse) and the "
+               "title, px"),
+    CFG_DOUBLE(S, media_max_width, 1, 10000,
+               "widest title or artist, px (longer ones end in an ellipsis)"),
+    CFG_INT(S, media_fade_ms, 0, 10000,
+            "how long the details take to fade in or out"),
+    CFG_DOUBLE(S, media_paused_alpha, 0, 1,
+               "opacity of the details and the lit lambdas while paused"),
 };
 #undef S
 
@@ -308,6 +353,12 @@ static struct {
   struct wp_react react;
   double spin_glow; /* spin_glow(), smoothed so beats swell, not flash */
   double playing;   /* 0..1: music is playing, faded in and out */
+
+  /* what's playing: the details shown (kept through a fade-out) */
+  char title[256], artist[256];
+  double media_alpha; /* the details' opacity, following the player */
+  double lit[6];      /* the lambdas' lit state, following the progress */
+  double chase;       /* the chase's position, in lambdas */
 
   /* measured frame rate */
   int64_t fps_start;
@@ -428,6 +479,40 @@ static void advance_viz(double dt) {
   w.viz_time = fmod(w.viz_time + dt, 3600);
 }
 
+/* Move the details and the lit lambdas on by dt towards the player. */
+static void advance_media(int64_t now, double dt) {
+  const struct wp_media *m = wp_media_get();
+  bool has = w.cfg.media && m->has;
+  if (has) {
+    snprintf(w.title, sizeof w.title, "%s", m->title);
+    snprintf(w.artist, sizeof w.artist, "%s", m->artist);
+  }
+  double target = has ? (m->playing ? 1 : w.cfg.media_paused_alpha) : 0;
+  double step = w.cfg.media_fade_ms > 0 ? dt * 1000 / w.cfg.media_fade_ms : 1;
+  w.media_alpha = target > w.media_alpha
+                      ? fmin(w.media_alpha + step, target)
+                      : fmax(w.media_alpha - step, target);
+  double lit[6] = {0};
+  double p = has && w.cfg.media_progress ? wp_media_progress(m, now) : -1;
+  if (has && w.cfg.media_progress && p >= 0) {
+    for (int k = 0; k < 6; ++k)
+      lit[k] = fmin(fmax(6 * p - k, 0), 1);
+  } else if (has && w.cfg.media_progress) {
+    /* No length: one lit lambda goes round, easing over to the next in
+     * the last third of its step. */
+    if (m->playing)
+      w.chase = fmod(w.chase + dt * 1000 / w.cfg.media_chase_ms, 6);
+    int at = (int)w.chase % 6;
+    double t = fmin(fmax((w.chase - at - 2 / 3.0) * 3, 0), 1);
+    t = t * t * (3 - 2 * t);
+    lit[at] = 1 - t;
+    lit[(at + 1) % 6] = t;
+  }
+  /* Lit lambdas fade with the details (dimmer while paused). */
+  for (int k = 0; k < 6; ++k)
+    w.lit[k] = lit[k] * w.media_alpha;
+}
+
 /* The logo brightens with the pointer boost, fully at spin_max. */
 static double glow(void) {
   return w.cfg.spin_max > 0 ? fmin(w.boost / w.cfg.spin_max, 1) : 0;
@@ -452,9 +537,11 @@ static double over(void) {
 }
 
 void wp_frame_at(int64_t now, struct wp_frame *f) {
-  if (w.animating)
-    advance_viz(advance(now, false));
-  else if (w.dozing)
+  if (w.animating) {
+    double dt = advance(now, false);
+    advance_viz(dt);
+    advance_media(now, dt);
+  } else if (w.dozing)
     advance(now, true);
   f->percent = shown_percent();
   f->level = wp_bar_level(&w.cfg, w.phase);
@@ -475,6 +562,11 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   double shake = w.cfg.react_shake ? w.cfg.react_shake_px * w.react.shake : 0;
   f->shake_x = shake * sin(2 * M_PI * 11 * w.react.shake_t);
   f->shake_y = shake * sin(2 * M_PI * 14 * w.react.shake_t + 1.3);
+  for (int k = 0; k < 6; ++k)
+    f->lit[k] = w.lit[k];
+  f->media_alpha = w.media_alpha;
+  f->title = w.title;
+  f->artist = w.artist;
   f->over = over();
   f->dir = w.cfg.spin_speed < 0 ? -1 : 1;
   f->nbars = viz_showing() ? w.cfg.viz_bars : 0;
@@ -539,6 +631,8 @@ static void update_animating(void) {
     arm_idle_fallback();
     if (w.cfg.viz)
       wp_audio_start(w.sw->loop, &w.cfg);
+    if (w.cfg.media)
+      wp_media_start(w.sw->loop, &w.cfg);
     wp_surfaces_draw(false); /* and every draw asks for the next frame */
     bus_emit("wallpaper.animate", NULL);
     return;
@@ -550,6 +644,7 @@ static void update_animating(void) {
   }
   loop_timer_disarm(w.idle_timer);
   wp_audio_stop();
+  wp_media_stop(); /* the frozen frame keeps the details it shows */
   bool glowing = w.boost > 0 || viz_showing() || reacting();
   w.boost = 0;
   memset(&w.viz, 0, sizeof(w.viz));
@@ -703,6 +798,13 @@ static void reconfigure(const void *cfg) {
     if (w.animating && w.cfg.viz)
       wp_audio_start(w.sw->loop, &w.cfg);
   }
+  if (old.media != w.cfg.media || old.media_interval_ms != w.cfg.media_interval_ms ||
+      strcmp(old.media_player, w.cfg.media_player)) {
+    wp_media_stop();
+    wp_media_clear();
+    if (w.animating && w.cfg.media)
+      wp_media_start(w.sw->loop, &w.cfg);
+  }
   if (strcmp(old.namespace, w.cfg.namespace) != 0)
     wp_surfaces_recreate();
   else
@@ -715,6 +817,8 @@ static void finish(void) {
   wp_gl_finish();
   wp_render_finish();
   wp_audio_finish();
+  wp_media_stop();
+  wp_media_clear();
   memset(&w.viz, 0, sizeof(w.viz));
   if (w.idle_note)
     ext_idle_notification_v1_destroy(w.idle_note);
@@ -767,6 +871,22 @@ static int command(int argc, char **argv, struct reply *r) {
                    w.cfg.react_glow ? " glow" : "",
                    w.cfg.react_spin ? " spin" : "",
                    w.cfg.react_shake ? " shake" : "");
+    }
+    if (w.cfg.media) {
+      const struct wp_media *m = wp_media_get();
+      if (!m->has) {
+        reply_printf(r, "media: none\n");
+      } else {
+        double p = wp_media_progress(m, now_ms());
+        char prog[16];
+        if (p >= 0)
+          snprintf(prog, sizeof prog, "%.0f%%", p * 100);
+        else
+          snprintf(prog, sizeof prog, "chase");
+        reply_printf(r, "media: %s, \"%s\"%s%s, %s\n",
+                     m->playing ? "playing" : "paused", m->title,
+                     m->artist[0] ? " — " : "", m->artist, prog);
+      }
     }
     reply_printf(r, "outputs: %d\n", wp_surfaces_count());
     return 0;
