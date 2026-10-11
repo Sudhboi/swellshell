@@ -84,6 +84,7 @@ static const struct wallpaper_config defaults = {
     .react_glow = true,
     .react_glow_amount = 0.6,
     .react_glow_spin = 1.0,
+    .react_glow_base = 0.5,
     .react_spin = true,
     .react_spin_gain = 6,
     .react_spin_kick = 2,
@@ -192,6 +193,9 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, react_pulse_ms, 1, 10000, "how fast a bass hit eases back"),
     CFG_BOOL(S, react_glow,
              "the snowflake brightens with loudness (needs viz)"),
+    CFG_DOUBLE(S, react_glow_base, 0, 1,
+               "brightness whenever music plays, of the way to logo_glow; "
+               "the loudness and spin glow build on top (needs react_glow)"),
     CFG_DOUBLE(S, react_glow_spin, 0, 1,
                "brightness as the music spins the snowflake: this much of "
                "the way to logo_glow at spin_visible_max (needs react_glow and "
@@ -234,6 +238,7 @@ static struct {
   double viz_time; /* s, drives the bars' wobble */
   struct wp_react react;
   double spin_glow; /* spin_glow(), smoothed so beats swell, not flash */
+  double playing;   /* 0..1: music is playing, faded in and out */
 
   /* measured frame rate */
   int64_t fps_start;
@@ -256,7 +261,7 @@ static bool viz_showing(void) {
 /* The logo still shows the music (it lingers a little after the bars). */
 static bool reacting(void) {
   if (w.react.loud > 1e-3 || w.react.pulse > 0 || w.react.kick > 0 ||
-      w.spin_glow > 1e-3)
+      w.spin_glow > 1e-3 || w.playing > 1e-3)
     return true;
   for (int k = 0; k < 6; ++k)
     if (w.react.slices[k] > 1e-3)
@@ -343,6 +348,9 @@ static void advance_viz(double dt) {
   double target = spin_glow();
   double tau = target > w.spin_glow ? 0.3 : 0.8;
   w.spin_glow = target + (w.spin_glow - target) * exp(-dt / tau);
+  target = viz_showing() ? 1 : 0;
+  tau = target > w.playing ? 0.4 : 1.5;
+  w.playing = target + (w.playing - target) * exp(-dt / tau);
   w.viz_time = fmod(w.viz_time + dt, 3600);
 }
 
@@ -376,10 +384,13 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->level = wp_bar_level(&w.cfg, w.phase);
   f->angle = w.angle;
   f->glow = glow();
-  if (w.cfg.react_glow)
-    f->glow = fmax(f->glow, fmax(fmin(w.cfg.react_glow_amount * w.react.loud,
-                                      1),
-                                 w.cfg.react_glow_spin * w.spin_glow));
+  if (w.cfg.react_glow) {
+    /* A base brightness while music plays, the reactions on top of it. */
+    double base = w.cfg.react_glow_base * w.playing;
+    double react = fmax(fmin(w.cfg.react_glow_amount * w.react.loud, 1),
+                        w.cfg.react_glow_spin * w.spin_glow);
+    f->glow = fmax(f->glow, base + (1 - base) * react);
+  }
   f->pulse = w.cfg.react_pulse ? w.react.pulse : 0;
   for (int k = 0; k < 6; ++k)
     f->slide[k] =
@@ -450,6 +461,7 @@ static void update_animating(void) {
     memset(&w.viz, 0, sizeof(w.viz));
     memset(&w.react, 0, sizeof(w.react));
     w.spin_glow = 0;
+    w.playing = 0;
     w.fps = 0;
     /* A window opened (or the user idled) mid-spin or mid-song: don't
      * leave the brightened logo or the bars as the frozen frame. */
