@@ -367,7 +367,7 @@ streak_alpha = 0.7
 viz = true
 # PipeWire sink to visualise (node name or serial; "" = the default sink)
 viz_target = ""
-# visualiser bars per side (the ring is mirrored left/right)
+# visualiser bars per side (left channel on the left, right on the right)
 viz_bars = 48
 # where the bars start (x logo_radius)
 viz_inner = 1.32
@@ -385,3 +385,5 @@ viz_low_hz = 50.0
 viz_high_hz = 10000.0
 # how fast the bars fall (gravity, full heights per s^2)
 viz_fall = 4.0
+# irregularity: each bar's start, angle, width and gain vary a little (0 = a perfect ring)
+viz_jitter = 1.0

@@ -74,6 +74,7 @@ static const struct wallpaper_config defaults = {
     .viz_low_hz = 50,
     .viz_high_hz = 10000,
     .viz_fall = 4,
+    .viz_jitter = 1,
 };
 
 #define S struct wallpaper_config
@@ -148,7 +149,8 @@ static const struct cfg_field fields[] = {
                "PipeWire sink to visualise (node name or serial; \"\" = the "
                "default sink)"),
     CFG_INT(S, viz_bars, 1, WP_VIZ_MAX,
-            "visualiser bars per side (the ring is mirrored left/right)"),
+            "visualiser bars per side (left channel on the left, right on "
+            "the right)"),
     CFG_DOUBLE(S, viz_inner, 0, 10,
                "where the bars start (x logo_radius)"),
     CFG_DOUBLE(S, viz_length, 0, 10000, "bar length at full level, px"),
@@ -159,6 +161,9 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, viz_high_hz, 1, 100000, "highest frequency (the top bars)"),
     CFG_DOUBLE(S, viz_fall, 0.01, 1000,
                "how fast the bars fall (gravity, full heights per s^2)"),
+    CFG_DOUBLE(S, viz_jitter, 0, 1,
+               "irregularity: each bar's start, angle, width and gain vary "
+               "a little (0 = a perfect ring)"),
 };
 #undef S
 
@@ -184,6 +189,7 @@ static struct {
   double px, py;
   int64_t last_motion; /* ms of the last boosting pointer motion */
   struct wp_viz viz;
+  double viz_time; /* s, drives the bars' wobble */
 
   /* measured frame rate */
   int64_t fps_start;
@@ -196,9 +202,10 @@ bool wp_animating(void) { return w.animating; }
 
 static bool viz_showing(void) {
   int n = w.cfg.viz_bars;
-  for (int i = 0; i < n; ++i)
-    if (w.viz.bars[i] >= 1e-3)
-      return true;
+  for (int s = 0; s < 2; ++s)
+    for (int i = 0; i < n; ++i)
+      if (w.viz.bars[s][i] >= 1e-3)
+        return true;
   return false;
 }
 
@@ -263,13 +270,16 @@ static double advance(int64_t now) {
 static void advance_viz(double dt) {
   if (dt <= 0)
     return;
-  static float samples[WP_VIZ_FFT];
-  float db[WP_VIZ_MAX];
+  static float samples[2][WP_VIZ_FFT];
+  float db[2][WP_VIZ_MAX];
   int rate;
-  bool fresh = w.cfg.viz && wp_audio_samples(samples, &rate);
+  bool fresh = w.cfg.viz && wp_audio_samples(samples[0], samples[1], &rate);
   if (fresh)
-    wp_viz_analyse(samples, rate, &w.cfg, db);
-  wp_viz_step(&w.viz, &w.cfg, fresh ? db : NULL, dt);
+    for (int s = 0; s < 2; ++s)
+      wp_viz_analyse(samples[s], rate, &w.cfg, db[s]);
+  wp_viz_step(&w.viz, &w.cfg, fresh ? (const float (*)[WP_VIZ_MAX])db : NULL,
+              dt);
+  w.viz_time = fmod(w.viz_time + dt, 3600);
 }
 
 /* The logo brightens with the pointer boost, fully at spin_max. */
@@ -295,7 +305,10 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->over = over();
   f->dir = w.cfg.spin_speed < 0 ? -1 : 1;
   f->nbars = viz_showing() ? w.cfg.viz_bars : 0;
-  memcpy(f->bars, w.viz.bars, sizeof(f->bars));
+  for (int s = 0; s < 2; ++s)
+    for (int i = 0; i < f->nbars; ++i)
+      f->bars[s][i] = (float)fmin(
+          w.viz.bars[s][i] * wp_viz_wobble(&w.cfg, s, i, w.viz_time), 1);
 }
 
 void wp_count_frame(int64_t now) {
@@ -535,6 +548,14 @@ static int command(int argc, char **argv, struct reply *r) {
     reply_printf(r, "fps: %.1f\n", w.animating ? w.fps : 0.0);
     reply_printf(r, "spin: x%.2f\n", 1 + w.boost);
     reply_printf(r, "audio: %s\n", w.cfg.viz ? wp_audio_state() : "disabled");
+    if (w.cfg.viz) {
+      float top[2] = {0, 0};
+      for (int s = 0; s < 2; ++s)
+        for (int i = 0; i < w.cfg.viz_bars; ++i)
+          top[s] = fmaxf(top[s], w.viz.bars[s][i]);
+      reply_printf(r, "viz: left %.2f, right %.2f (peak %.0f dB)\n", top[0],
+                   top[1], w.viz.peak);
+    }
     reply_printf(r, "outputs: %d\n", wp_surfaces_count());
     return 0;
   }

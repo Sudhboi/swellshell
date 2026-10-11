@@ -38,6 +38,9 @@ static struct wp_rect clamp_rect(double x0, double y0, double x1, double y1,
                           iy1 > iy0 ? iy1 - iy0 : 0};
 }
 
+static double ring_outer(const struct wallpaper_config *c, double r,
+                         double k);
+
 /* Speed lines sit on rings this far out (x logo radius). */
 static const double streak_rings[] = {1.08, 1.16, 1.24};
 #define STREAK_OUTER 1.24
@@ -53,7 +56,7 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
   double r = c->logo_radius * k * fmax(c->bloom_radius, STREAK_OUTER) +
              c->streak_width * k + 1;
   if (ring)
-    r = fmax(r, c->logo_radius * k * c->viz_inner + c->viz_length * k + 1);
+    r = fmax(r, ring_outer(c, c->logo_radius * k, k) + 1);
   out[1] = clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r,
                       pw, ph);
 }
@@ -199,16 +202,17 @@ static void draw_streaks(cairo_t *cr, const struct wallpaper_config *c,
 }
 
 /* The visualiser: radial bars just outside the speed lines, bass at the
- * bottom, climbing both sides to the treble at the top. The bars never turn,
- * so all of them are drawn once at full length (antialiasing them is the
- * costly part) into an alpha sprite, and each frame paints the colour
- * through it, clipped to one cheap aliased quad per bar cut to its length:
- * 3x faster. */
+ * bottom, climbing both sides to the treble at the top. viz_jitter moves
+ * each bar's start, angle, width and length a little, so the ring isn't a
+ * perfect circle. The bars never turn, so all of them are drawn once at full
+ * length (antialiasing them is the costly part) into an alpha sprite, and
+ * each frame paints the colour through it, clipped to one cheap aliased quad
+ * per bar cut to its length: 3x faster. */
 static struct {
   cairo_surface_t *sprite; /* A8 */
   int x, y;                /* buffer position */
   int pw, ph, bars;
-  double logo_radius, inner, length, width;
+  double logo_radius, inner, length, width, jitter;
 } ring_cache;
 
 static void ring_cache_free(void) {
@@ -217,11 +221,38 @@ static void ring_cache_free(void) {
   ring_cache.sprite = NULL;
 }
 
-/* The quad of bar i on side (-1 left, 1 right) from r0 to r1, hw wide on
- * either side of its centre line. */
-static void bar_quad(cairo_t *cr, double cx, double cy, int i, int n,
-                     int side, double r0, double r1, double hw) {
-  double a = M_PI / 2 + side * M_PI * (i + 0.5) / n;
+/* How far viz_jitter = 1 moves a bar: its angle (x its slot), start (x the
+ * inner radius), width and full length (x their own). Angle and width stay
+ * small enough that neighbours never touch at the default viz_width. */
+#define JIT_ANGLE 0.12
+#define JIT_START 0.05
+#define JIT_WIDTH 0.2
+#define JIT_LENGTH 0.08
+
+/* Where bar i on side s (0 left, 1 right) of n sits. */
+struct bar_geo {
+  double a;   /* angle, radians clockwise from +x (y down) */
+  double r0;  /* start radius, px */
+  double len; /* full length, px */
+  double hw;  /* half width, px */
+};
+
+static struct bar_geo bar_geo(const struct wallpaper_config *c, double r0,
+                              double len, double hw, int n, int s, int i) {
+  double j = c->viz_jitter, side = s ? 1 : -1;
+  double slot = M_PI / n;
+  return (struct bar_geo){
+      .a = M_PI / 2 +
+           side * slot * (i + 0.5 + JIT_ANGLE * j * wp_viz_hash(s, i, 0)),
+      .r0 = r0 * (1 + JIT_START * j * wp_viz_hash(s, i, 1)),
+      .len = len * (1 + JIT_LENGTH * j * wp_viz_hash(s, i, 2)),
+      .hw = hw * (1 + JIT_WIDTH * j * wp_viz_hash(s, i, 3)),
+  };
+}
+
+/* The quad along angle a from r0 to r1, hw wide on either side. */
+static void bar_quad(cairo_t *cr, double cx, double cy, double a, double r0,
+                     double r1, double hw) {
   double ca = cos(a), sa = sin(a);
   double nx = -sa * hw, ny = ca * hw; /* across the bar */
   cairo_move_to(cr, cx + ca * r0 + nx, cy + sa * r0 + ny);
@@ -231,27 +262,37 @@ static void bar_quad(cairo_t *cr, double cx, double cy, int i, int n,
   cairo_close_path(cr);
 }
 
+/* The farthest any bar reaches, px. */
+static double ring_outer(const struct wallpaper_config *c, double r,
+                         double k) {
+  double j = c->viz_jitter;
+  return r * c->viz_inner * (1 + JIT_START * j) +
+         c->viz_length * k * (1 + JIT_LENGTH * j);
+}
+
 static void draw_ring(cairo_t *cr, const struct wallpaper_config *c, int pw,
                       int ph, double r, double k, const struct wp_frame *f) {
   int n = f->nbars;
   double cx = pw / 2.0, cy = ph / 2.0;
   double r0 = r * c->viz_inner, len = c->viz_length * k;
-  double slot = M_PI * r0 / n;            /* each bar's share at r0 */
-  double hw = c->viz_width * slot / 2;    /* half a bar's width */
+  double slot = M_PI * r0 / n;         /* each bar's share at r0 */
+  double hw = c->viz_width * slot / 2; /* half a bar's width */
   if (!ring_cache.sprite || ring_cache.pw != pw || ring_cache.ph != ph ||
       ring_cache.bars != n || ring_cache.logo_radius != c->logo_radius ||
       ring_cache.inner != c->viz_inner || ring_cache.length != c->viz_length ||
-      ring_cache.width != c->viz_width) {
+      ring_cache.width != c->viz_width || ring_cache.jitter != c->viz_jitter) {
     ring_cache_free();
-    double outer = r0 + len + hw;
+    double outer = ring_outer(c, r, k) + 2 * hw;
     int x0 = (int)floor(cx - outer) - 1, y0 = (int)floor(cy - outer) - 1;
     int size = (int)ceil(cx + outer) + 1 - x0;
     ring_cache.sprite =
         cairo_image_surface_create(CAIRO_FORMAT_A8, size, size);
     cairo_t *sc = cairo_create(ring_cache.sprite);
-    for (int i = 0; i < n; ++i)
-      for (int side = -1; side <= 1; side += 2)
-        bar_quad(sc, cx - x0, cy - y0, i, n, side, r0, r0 + len, hw);
+    for (int s = 0; s < 2; ++s)
+      for (int i = 0; i < n; ++i) {
+        struct bar_geo g = bar_geo(c, r0, len, hw, n, s, i);
+        bar_quad(sc, cx - x0, cy - y0, g.a, g.r0, g.r0 + g.len, g.hw);
+      }
     cairo_fill(sc); /* the default source is opaque black: full alpha */
     cairo_destroy(sc);
     ring_cache.x = x0;
@@ -263,20 +304,24 @@ static void draw_ring(cairo_t *cr, const struct wallpaper_config *c, int pw,
     ring_cache.inner = c->viz_inner;
     ring_cache.length = c->viz_length;
     ring_cache.width = c->viz_width;
+    ring_cache.jitter = c->viz_jitter;
   }
   /* The cut keeps the sprite's antialiased sides: a little wider than the
-   * bar, without reaching the next one. */
-  double cut = hw + fmax(fmin(1.5, slot / 2 - hw), 0);
+   * bar, but short of where the next bar can be. */
+  double j = c->viz_jitter;
+  double gap = slot * (1 - 2 * JIT_ANGLE * j) - 2 * hw * (1 + JIT_WIDTH * j);
+  double margin = fmax(fmin(1.5, gap / 2), 0);
   cairo_save(cr);
   cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
   cairo_new_path(cr);
-  for (int i = 0; i < n; ++i) {
-    if (f->bars[i] < 1e-3)
-      continue;
-    double r1 = r0 + len * fmin(f->bars[i], 1);
-    for (int side = -1; side <= 1; side += 2)
-      bar_quad(cr, cx, cy, i, n, side, r0 - 1, r1, cut);
-  }
+  for (int s = 0; s < 2; ++s)
+    for (int i = 0; i < n; ++i) {
+      if (f->bars[s][i] < 1e-3)
+        continue;
+      struct bar_geo g = bar_geo(c, r0, len, hw, n, s, i);
+      double r1 = g.r0 + g.len * fmin(f->bars[s][i], 1);
+      bar_quad(cr, cx, cy, g.a, g.r0 - 1, r1, g.hw + margin);
+    }
   cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
   cairo_clip(cr);
   set_rgba(cr, c->viz_color, c->viz_alpha);

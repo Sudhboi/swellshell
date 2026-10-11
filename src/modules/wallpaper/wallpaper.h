@@ -48,8 +48,8 @@ struct wallpaper_config {
   double bloom_radius, bloom_alpha; /* x logo_radius, at full speed */
   int streak_count;
   double streak_length, streak_width, streak_alpha; /* deg, px, at full */
-  /* visualiser: a ring of bars around the logo, mirrored left/right, bass
-   * at the bottom */
+  /* visualiser: a ring of bars around the logo, the left channel on the
+   * left and the right on the right, bass at the bottom */
   bool viz;
   char viz_target[128]; /* PipeWire sink to listen to, "": the default */
   int viz_bars;         /* per side */
@@ -59,7 +59,8 @@ struct wallpaper_config {
   uint32_t viz_color;
   double viz_alpha;
   double viz_low_hz, viz_high_hz;
-  double viz_fall; /* gravity, levels per s^2 */
+  double viz_fall;   /* gravity, levels per s^2 */
+  double viz_jitter; /* 0: a perfect ring .. 1: the most irregular */
   int viz_linger_ms; /* keep capturing this long after playback stops */
 };
 
@@ -72,7 +73,7 @@ struct wp_frame {
   double over;    /* speed past spin_visible_max, 0..1 of the most */
   int dir;        /* spin direction, 1 clockwise, -1 counter-clockwise */
   int nbars;      /* visualiser bars per side, 0: no ring */
-  float bars[WP_VIZ_MAX]; /* 0..1, bass first */
+  float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
 };
 
 struct wp_rect {
@@ -102,14 +103,20 @@ void wp_render_finish(void);
 void wp_viz_analyse(const float *samples, int rate,
                     const struct wallpaper_config *c, float *db);
 struct wp_viz {
-  float bars[WP_VIZ_MAX]; /* 0..1 */
-  float vel[WP_VIZ_MAX];  /* fall speed, levels/s */
-  float peak;             /* auto-sensitivity: the loudest recent band, dB */
+  float bars[2][WP_VIZ_MAX]; /* 0..1, [0] left, [1] right */
+  float vel[2][WP_VIZ_MAX];  /* fall speed, levels/s */
+  float peak; /* auto-sensitivity: the loudest recent band of both, dB */
 };
-/* Advance the shown bars by dt seconds towards the band levels db (NULL:
- * silence). */
+/* Advance the shown bars by dt seconds towards the band levels db of the
+ * left and right channel (NULL: silence). */
 void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
-                 const float *db, double dt);
+                 const float (*db)[WP_VIZ_MAX], double dt);
+/* A bar's fixed irregularity, -1..1: one stable value per (side, bar, what)
+ * so the ring isn't a perfect circle. */
+double wp_viz_hash(int side, int bar, int what);
+/* A bar's slowly drifting gain at time t (s), around 1, by viz_jitter. */
+double wp_viz_wobble(const struct wallpaper_config *c, int side, int bar,
+                     double t);
 
 /* audio.c: PipeWire capture of the sink, only while the module animates and
  * something plays */
@@ -120,9 +127,10 @@ void wp_audio_start(struct loop *loop, const struct wallpaper_config *c);
 void wp_audio_stop(void);
 /* "off", "waiting" (connected, nothing plays) or "capturing". */
 const char *wp_audio_state(void);
-/* Copy the last WP_VIZ_FFT samples (oldest first) and give the rate.
- * Returns false if no fresh audio arrived lately. */
-bool wp_audio_samples(float *out, int *rate);
+/* Copy the last WP_VIZ_FFT samples (oldest first) of the left and right
+ * channel and give the rate. Returns false if no fresh audio arrived
+ * lately. */
+bool wp_audio_samples(float *left, float *right, int *rate);
 
 /* surface.c: one background layer surface per output */
 void wp_surfaces_init(struct swell_wl *wl);

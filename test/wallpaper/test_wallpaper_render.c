@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
   a = render(c, f, dir, NULL);
   f.nbars = c->viz_bars;
   for (int i = 0; i < f.nbars; ++i)
-    f.bars[i] = 0.5f + 0.5f * (float)sin(i * 0.37);
+    f.bars[0][i] = f.bars[1][i] = 0.5f + 0.5f * (float)sin(i * 0.37);
   t = render(c, f, dir, "wallpaper_viz");
   int outside_small = 0;
   changed = 0;
@@ -125,20 +125,41 @@ int main(int argc, char **argv) {
         changed++;
       }
   assert(changed > 0 && outside_small > 0);
-  /* Bass at the bottom, mirrored: the bottom bars sit just below the logo
-   * on either side of the vertical, and the ring is left/right symmetric. */
+  /* Bass at the bottom: the bottom bars sit just below the logo on either
+   * side of the vertical. */
   double k = W / WP_REF_WIDTH;
   int below = (int)(H / 2 + c->logo_radius * k * c->viz_inner + 20);
   int off = (int)(M_PI * 0.5 / c->viz_bars * c->logo_radius * k *
                   c->viz_inner);
   assert(px(t, W / 2 + off, below) != 0 && px(t, W / 2 - off, below) != 0);
+  /* The same levels on both sides: jitter keeps the halves from mirroring
+   * exactly; without it the ring is perfectly symmetric. */
+  int asym = 0;
+  for (int y = big[1].y; y < big[1].y + big[1].h; y += 2)
+    for (int x = W / 2 + 1; x < big[1].x + big[1].w; x += 2)
+      asym += px(t, x, y) != px(t, W - 1 - x, y);
+  assert(asym > 100);
+  int jittered = asym;
+  struct wallpaper_config perfect = *c;
+  perfect.viz_jitter = 0;
+  cairo_surface_t *p = render(&perfect, f, dir, "wallpaper_viz_perfect");
+  asym = 0;
+  for (int y = big[1].y; y < big[1].y + big[1].h; y += 2)
+    for (int x = W / 2 + 1; x < big[1].x + big[1].w; x += 2)
+      if (y > H / 2 + 300 * k || y < H / 2 - 300 * k) /* not the logo */
+        asym += px(p, x, y) != px(p, W - 1 - x, y);
+  /* Only edge rasterisation differs. */
+  assert(asym * 10 < jittered);
+  cairo_surface_destroy(p);
   cairo_surface_destroy(a);
 
   /* A partial repaint with the ring (over a frame with other bars) equals a
    * full repaint, and so does clearing the bars with the ring's area. */
   a = render(c, f, dir, NULL);
-  for (int i = 0; i < f.nbars; ++i)
-    f.bars[i] = 1 - f.bars[i];
+  for (int i = 0; i < f.nbars; ++i) {
+    f.bars[0][i] = 1 - f.bars[0][i];
+    f.bars[1][i] = 0.3f;
+  }
   cr = cairo_create(a);
   wp_render(cr, c, W, H, &f, false, false);
   cairo_destroy(cr);

@@ -36,8 +36,8 @@ static struct {
   bool warned;
   bool pw_inited;
 
-  float ring[RING];
-  int head; /* next write */
+  float ring[2][RING]; /* left, right */
+  int head;            /* next write */
   int rate;
   int64_t last_data; /* ms */
 } a;
@@ -60,7 +60,7 @@ static void on_process(void *data) {
     uint32_t off = SPA_MIN(d->chunk->offset, d->maxsize);
     uint32_t size = SPA_MIN(d->chunk->size, d->maxsize - off);
     const float *s = SPA_PTROFF(d->data, off, const float);
-    int n = (int)(size / sizeof(float));
+    int n = (int)(size / (2 * sizeof(float))); /* interleaved frames */
     int64_t now = now_ms();
     if (now - a.last_data > FRESH_MS) {
       /* After a pause, don't analyse what played before it. */
@@ -69,7 +69,8 @@ static void on_process(void *data) {
     if (n > 0)
       a.last_data = now;
     for (int i = n > RING ? n - RING : 0; i < n; ++i) {
-      a.ring[a.head] = s[i];
+      a.ring[0][a.head] = s[2 * i];
+      a.ring[1][a.head] = s[2 * i + 1];
       a.head = (a.head + 1) % RING;
     }
   }
@@ -121,10 +122,11 @@ static bool connect_stream(const struct wallpaper_config *c) {
 
   uint8_t buf[1024];
   struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
-  /* Mono float at the graph's rate: PipeWire downmixes. */
+  /* Stereo float at the graph's rate: PipeWire up- or downmixes. */
   struct spa_audio_info_raw info = {.format = SPA_AUDIO_FORMAT_F32,
-                                    .channels = 1};
-  info.position[0] = SPA_AUDIO_CHANNEL_MONO;
+                                    .channels = 2};
+  info.position[0] = SPA_AUDIO_CHANNEL_FL;
+  info.position[1] = SPA_AUDIO_CHANNEL_FR;
   const struct spa_pod *params[1] = {
       spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &info)};
   return pw_stream_connect(a.stream, PW_DIRECTION_INPUT, PW_ID_ANY,
@@ -206,11 +208,14 @@ const char *wp_audio_state(void) {
   return now_ms() - a.last_data <= FRESH_MS ? "capturing" : "waiting";
 }
 
-bool wp_audio_samples(float *out, int *rate) {
+bool wp_audio_samples(float *left, float *right, int *rate) {
   if (!a.stream || now_ms() - a.last_data > FRESH_MS)
     return false;
-  for (int i = 0; i < WP_VIZ_FFT; ++i)
-    out[i] = a.ring[(a.head - WP_VIZ_FFT + i + RING) % RING];
+  for (int i = 0; i < WP_VIZ_FFT; ++i) {
+    int k = (a.head - WP_VIZ_FFT + i + RING) % RING;
+    left[i] = a.ring[0][k];
+    right[i] = a.ring[1][k];
+  }
   *rate = a.rate;
   return true;
 }

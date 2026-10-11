@@ -1,7 +1,9 @@
 /* The visualiser's analysis: a windowed FFT of the latest audio, grouped into
  * log-spaced bands, then cava-style bars (auto sensitivity, instant rise,
- * gravity fall). */
+ * gravity fall), plus the irregularity that keeps the ring from looking
+ * machine-made. */
 #include <math.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "wallpaper.h"
@@ -101,34 +103,66 @@ void wp_viz_analyse(const float *samples, int rate,
 }
 
 void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
-                 const float *db, double dt) {
+                 const float (*db)[WP_VIZ_MAX], double dt) {
   int n = c->viz_bars < WP_VIZ_MAX ? c->viz_bars : WP_VIZ_MAX;
-  float target[WP_VIZ_MAX] = {0};
+  float target[2][WP_VIZ_MAX] = {{0}};
   if (v->peak == 0)
     v->peak = VIZ_PEAK_FLOOR_DB;
   if (db) {
+    /* One sensitivity for both sides, so the stereo balance shows. */
     float loudest = -1e9f;
-    for (int i = 0; i < n; ++i)
-      loudest = fmaxf(loudest, db[i]);
+    for (int s = 0; s < 2; ++s)
+      for (int i = 0; i < n; ++i)
+        loudest = fmaxf(loudest, db[s][i]);
     v->peak = (float)fmax(fmax(v->peak - VIZ_PEAK_DECAY * dt, loudest),
                           VIZ_PEAK_FLOOR_DB);
-    float raw[WP_VIZ_MAX];
-    for (int i = 0; i < n; ++i)
-      raw[i] = (float)fmin(
-          fmax((db[i] - (v->peak - VIZ_RANGE_DB)) / VIZ_RANGE_DB, 0), 1);
-    /* A light blur, so neighbours don't flicker apart. */
+    for (int s = 0; s < 2; ++s) {
+      float raw[WP_VIZ_MAX];
+      for (int i = 0; i < n; ++i)
+        raw[i] = (float)fmin(
+            fmax((db[s][i] - (v->peak - VIZ_RANGE_DB)) / VIZ_RANGE_DB, 0), 1);
+      /* A light blur, so neighbours don't flicker apart. */
+      for (int i = 0; i < n; ++i) {
+        float l = raw[i > 0 ? i - 1 : i], r = raw[i < n - 1 ? i + 1 : i];
+        target[s][i] = 0.25f * l + 0.5f * raw[i] + 0.25f * r;
+      }
+    }
+  }
+  for (int s = 0; s < 2; ++s)
     for (int i = 0; i < n; ++i) {
-      float l = raw[i > 0 ? i - 1 : i], r = raw[i < n - 1 ? i + 1 : i];
-      target[i] = 0.25f * l + 0.5f * raw[i] + 0.25f * r;
+      float *bar = &v->bars[s][i], *vel = &v->vel[s][i];
+      if (target[s][i] >= *bar) {
+        *bar = target[s][i];
+        *vel = 0;
+      } else {
+        *vel += (float)(c->viz_fall * dt);
+        *bar = fmaxf(*bar - *vel * (float)dt, target[s][i]);
+      }
     }
-  }
-  for (int i = 0; i < n; ++i) {
-    if (target[i] >= v->bars[i]) {
-      v->bars[i] = target[i];
-      v->vel[i] = 0;
-    } else {
-      v->vel[i] += (float)(c->viz_fall * dt);
-      v->bars[i] = fmaxf(v->bars[i] - v->vel[i] * (float)dt, target[i]);
-    }
-  }
+}
+
+double wp_viz_hash(int side, int bar, int what) {
+  uint32_t x = (uint32_t)side * 0x9e3779b9u ^ (uint32_t)bar * 0x85ebca6bu ^
+               (uint32_t)what * 0xc2b2ae35u;
+  x ^= x >> 16;
+  x *= 0x7feb352du;
+  x ^= x >> 15;
+  x *= 0x846ca68bu;
+  x ^= x >> 16;
+  return x / 2147483647.5 - 1;
+}
+
+/* Two slow sines per bar at their own rates and phases: the bars breathe
+ * a little apart from each other instead of moving as one. */
+double wp_viz_wobble(const struct wallpaper_config *c, int side, int bar,
+                     double t) {
+  if (c->viz_jitter <= 0)
+    return 1;
+  double f1 = 0.35 + 0.25 * wp_viz_hash(side, bar, 10);
+  double f2 = 0.9 + 0.5 * wp_viz_hash(side, bar, 11);
+  double p1 = M_PI * wp_viz_hash(side, bar, 12);
+  double p2 = M_PI * wp_viz_hash(side, bar, 13);
+  double wob = 0.6 * sin(2 * M_PI * f1 * t + p1) +
+               0.4 * sin(2 * M_PI * f2 * t + p2);
+  return 1 + 0.2 * c->viz_jitter * wob;
 }
