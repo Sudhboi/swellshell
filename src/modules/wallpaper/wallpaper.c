@@ -32,6 +32,8 @@ static const struct wallpaper_config defaults = {
     .bar = 0xffffffffu,
     .logo = 0x181818ffu,
     .logo_alt = 0x111111ffu,
+    .logo_glow = 0x5a5a5affu,
+    .logo_glow_alt = 0x444444ffu,
     .bar_top = 10,
     .bar_width = 600,
     .bar_height = 10,
@@ -44,10 +46,20 @@ static const struct wallpaper_config defaults = {
     .pulse_hold_s = 1.0,
     .tween_ms = 600,
     .logo_radius = 225,
-    .spin_speed = 7.5,
-    .spin_gain = 0.02,
-    .spin_max = 12,
+    .spin_speed = 15,
+    .spin_gain = 0.008,
+    .spin_max = 100,
     .spin_decay_s = 1.2,
+    .spin_hold_ms = 200,
+    .spin_visible_max = 200,
+    .bloom = 0x808080ffu,
+    .bloom_radius = 1.6,
+    .bloom_alpha = 0.25,
+    .streak = 0xa0a0a0ffu,
+    .streak_count = 9,
+    .streak_length = 70,
+    .streak_width = 5,
+    .streak_alpha = 0.7,
 };
 
 #define S struct wallpaper_config
@@ -66,6 +78,10 @@ static const struct cfg_field fields[] = {
     CFG_COLOR(S, bar, "battery bar at full pulse brightness"),
     CFG_COLOR(S, logo, "snowflake"),
     CFG_COLOR(S, logo_alt, "snowflake, every other lambda"),
+    CFG_COLOR(S, logo_glow,
+              "snowflake at the fastest spin (it brightens with the speed)"),
+    CFG_COLOR(S, logo_glow_alt,
+              "snowflake at the fastest spin, every other lambda"),
     CFG_DOUBLE(S, bar_top, 0, 10000,
                "bar top edge (px on a 2880 px wide output; all sizes scale "
                "with the output width)"),
@@ -91,6 +107,23 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, spin_max, 0, 1000, "most extra speed (x spin_speed)"),
     CFG_DOUBLE(S, spin_decay_s, 0.001, 3600,
                "extra speed decay time constant"),
+    CFG_INT(S, spin_hold_ms, 0, 60000,
+            "the extra speed only decays once the pointer has been still "
+            "this long, so it keeps building while the pointer moves"),
+    CFG_DOUBLE(S, spin_visible_max, 0, 3600,
+               "fastest the snowflake visibly turns, degrees/s; more speed "
+               "shows as a bloom and speed lines"),
+    CFG_COLOR(S, bloom, "glow behind the snowflake past spin_visible_max"),
+    CFG_DOUBLE(S, bloom_radius, 1, 3,
+               "bloom radius at the fastest spin (x logo_radius)"),
+    CFG_DOUBLE(S, bloom_alpha, 0, 1, "bloom opacity at the fastest spin"),
+    CFG_COLOR(S, streak, "speed lines around the snowflake"),
+    CFG_INT(S, streak_count, 0, 64, "speed lines (0 = none)"),
+    CFG_DOUBLE(S, streak_length, 0, 360,
+               "speed line length at the fastest spin, degrees"),
+    CFG_DOUBLE(S, streak_width, 0, 100, "speed line thickness, px"),
+    CFG_DOUBLE(S, streak_alpha, 0, 1,
+               "speed line opacity at the fastest spin"),
 };
 #undef S
 
@@ -114,6 +147,7 @@ static struct {
   double tween_from, tween_to, tween_elapsed; /* percent, percent, ms */
   bool have_pointer;
   double px, py;
+  int64_t last_motion; /* ms of the last boosting pointer motion */
 
   /* measured frame rate */
   int64_t fps_start;
@@ -163,13 +197,29 @@ static void advance(int64_t now) {
     return;
   if (dt > 0.1)
     dt = 0.1;
-  double omega = w.cfg.spin_speed * M_PI / 180 * (1 + w.boost);
+  double omega = w.cfg.spin_speed * (1 + w.boost);
+  omega = copysign(fmin(fabs(omega), w.cfg.spin_visible_max), omega) * M_PI /
+          180;
   w.angle = fmod(w.angle + omega * dt, 2 * M_PI);
-  w.boost *= exp(-dt / w.cfg.spin_decay_s);
+  if (now - w.last_motion >= w.cfg.spin_hold_ms)
+    w.boost *= exp(-dt / w.cfg.spin_decay_s);
   if (w.boost < 1e-3)
     w.boost = 0;
   w.tween_elapsed += dt * 1000;
   w.phase = fmod(w.phase + dt / wp_pulse_period(&w.cfg, shown_percent()), 1);
+}
+
+/* The logo brightens with the pointer boost, fully at spin_max. */
+static double glow(void) {
+  return w.cfg.spin_max > 0 ? fmin(w.boost / w.cfg.spin_max, 1) : 0;
+}
+
+/* Speed past spin_visible_max, as a fraction of the most there can be. */
+static double over(void) {
+  double cap = w.cfg.spin_visible_max;
+  double v = fabs(w.cfg.spin_speed) * (1 + w.boost);
+  double vmax = fabs(w.cfg.spin_speed) * (1 + w.cfg.spin_max);
+  return vmax > cap ? fmin(fmax((v - cap) / (vmax - cap), 0), 1) : 0;
 }
 
 void wp_frame_at(int64_t now, struct wp_frame *f) {
@@ -178,6 +228,9 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->percent = shown_percent();
   f->level = wp_bar_level(&w.cfg, w.phase);
   f->angle = w.angle;
+  f->glow = glow();
+  f->over = over();
+  f->dir = w.cfg.spin_speed < 0 ? -1 : 1;
 }
 
 void wp_count_frame(int64_t now) {
@@ -229,8 +282,13 @@ static void update_animating(void) {
   } else {
     loop_timer_disarm(w.battery_timer);
     loop_timer_disarm(w.idle_timer);
+    bool glowing = w.boost > 0;
     w.boost = 0;
     w.fps = 0;
+    /* A window opened (or the user idled) mid-spin: don't leave the
+     * brightened logo as the frozen frame. */
+    if (glowing)
+      wp_surfaces_draw(false);
     bus_emit("wallpaper.freeze", NULL);
   }
 }
@@ -311,6 +369,8 @@ static void pointer_motion(void *data, double x, double y) {
     return;
   arm_idle_fallback();
   w.boost = fmin(w.boost + w.cfg.spin_gain * d, w.cfg.spin_max);
+  if (d > 0)
+    w.last_motion = now_ms();
 }
 
 const struct swell_input wp_input = {

@@ -25,6 +25,7 @@ struct wallpaper_config {
   int battery_interval_s;
   /* colours */
   uint32_t background, bar, logo, logo_alt;
+  uint32_t logo_glow, logo_glow_alt; /* the logo at the fastest spin */
   /* bar, reference px */
   double bar_top, bar_width, bar_height, bar_border, bar_gap;
   /* bar pulse: the shape at 50 %; the period scales with the percent */
@@ -35,6 +36,14 @@ struct wallpaper_config {
   double logo_radius; /* reference px */
   double spin_speed;  /* deg/s, clockwise */
   double spin_gain, spin_max, spin_decay_s;
+  int spin_hold_ms; /* no decay until the pointer is still this long */
+  /* past this speed (deg/s) the logo turns no faster; a bloom and speed
+   * lines show the rest */
+  double spin_visible_max;
+  uint32_t bloom, streak;
+  double bloom_radius, bloom_alpha; /* x logo_radius, at full speed */
+  int streak_count;
+  double streak_length, streak_width, streak_alpha; /* deg, px, at full */
 };
 
 /* One frame's worth of animation state. */
@@ -42,6 +51,9 @@ struct wp_frame {
   double percent; /* bar fill, 0..100 */
   double level;   /* bar brightness, bar_min..1 */
   double angle;   /* logo rotation, radians clockwise */
+  double glow;    /* logo brightness, 0 (logo) .. 1 (logo_glow) */
+  double over;    /* speed past spin_visible_max, 0..1 of the most */
+  int dir;        /* spin direction, 1 clockwise, -1 counter-clockwise */
 };
 
 struct wp_rect {

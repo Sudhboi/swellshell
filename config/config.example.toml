@@ -301,6 +301,10 @@ bar = "#ffffff"
 logo = "#181818"
 # snowflake, every other lambda
 logo_alt = "#111111"
+# snowflake at the fastest spin (it brightens with the speed)
+logo_glow = "#5a5a5a"
+# snowflake at the fastest spin, every other lambda
+logo_glow_alt = "#444444"
 # bar top edge (px on a 2880 px wide output; all sizes scale with the output width)
 bar_top = 10.0
 # bar length, px
@@ -326,10 +330,30 @@ tween_ms = 600
 # snowflake radius, px
 logo_radius = 225.0
 # snowflake rotation, degrees/s clockwise
-spin_speed = 7.5
+spin_speed = 15.0
 # extra speed (x spin_speed) per px of pointer travel
-spin_gain = 0.02
+spin_gain = 0.008
 # most extra speed (x spin_speed)
-spin_max = 12.0
+spin_max = 100.0
 # extra speed decay time constant
 spin_decay_s = 1.2
+# the extra speed only decays once the pointer has been still this long, so it keeps building while the pointer moves
+spin_hold_ms = 200
+# fastest the snowflake visibly turns, degrees/s; more speed shows as a bloom and speed lines
+spin_visible_max = 200.0
+# glow behind the snowflake past spin_visible_max
+bloom = "#808080"
+# bloom radius at the fastest spin (x logo_radius)
+bloom_radius = 1.6
+# bloom opacity at the fastest spin
+bloom_alpha = 0.25
+# speed lines around the snowflake
+streak = "#a0a0a0"
+# speed lines (0 = none)
+streak_count = 9
+# speed line length at the fastest spin, degrees
+streak_length = 70.0
+# speed line thickness, px
+streak_width = 5.0
+# speed line opacity at the fastest spin
+streak_alpha = 0.7

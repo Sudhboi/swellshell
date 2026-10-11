@@ -38,12 +38,19 @@ static struct wp_rect clamp_rect(double x0, double y0, double x1, double y1,
                           iy1 > iy0 ? iy1 - iy0 : 0};
 }
 
+/* Speed lines sit on rings this far out (x logo radius). */
+static const double streak_rings[] = {1.08, 1.16, 1.24};
+#define STREAK_OUTER 1.24
+
 void wp_regions(const struct wallpaper_config *c, int pw, int ph,
                 struct wp_rect out[2]) {
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
   out[0] = clamp_rect(x, y, x + w, y + h, pw, ph);
-  double r = c->logo_radius * pw / WP_REF_WIDTH + 1;
+  /* The bloom and the speed lines reach past the logo. */
+  double k = pw / WP_REF_WIDTH;
+  double r = c->logo_radius * k * fmax(c->bloom_radius, STREAK_OUTER) +
+             c->streak_width * k + 1;
   out[1] = clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r,
                       pw, ph);
 }
@@ -58,8 +65,69 @@ static void pill(cairo_t *cr, double x, double y, double w, double h) {
   cairo_close_path(cr);
 }
 
+/* a + (b - a) * t per channel, t in 0..1. */
+static uint32_t mix(uint32_t a, uint32_t b, double t) {
+  uint32_t out = 0;
+  for (int sh = 0; sh < 32; sh += 8) {
+    double ca = (a >> sh) & 0xff, cb = (b >> sh) & 0xff;
+    out |= (uint32_t)lround(ca + (cb - ca) * t) << sh;
+  }
+  return out;
+}
+
 static void set_rgba(cairo_t *cr, uint32_t c, double alpha) {
   cairo_set_source_rgba(cr, col_r(c), col_g(c), col_b(c), col_a(c) * alpha);
+}
+
+/* A soft glow behind the logo, growing with the overspeed. */
+static void draw_bloom(cairo_t *cr, const struct wallpaper_config *c,
+                       double cx, double cy, double r, double over) {
+  double outer = r * (1 + (c->bloom_radius - 1) * over);
+  double a = c->bloom_alpha * over * col_a(c->bloom);
+  cairo_pattern_t *p = cairo_pattern_create_radial(cx, cy, 0, cx, cy, outer);
+  cairo_pattern_add_color_stop_rgba(p, 0, col_r(c->bloom), col_g(c->bloom),
+                                    col_b(c->bloom), a);
+  cairo_pattern_add_color_stop_rgba(p, 0.6, col_r(c->bloom), col_g(c->bloom),
+                                    col_b(c->bloom), a * 0.6);
+  cairo_pattern_add_color_stop_rgba(p, 1, col_r(c->bloom), col_g(c->bloom),
+                                    col_b(c->bloom), 0);
+  cairo_set_source(cr, p);
+  cairo_arc(cr, cx, cy, outer, 0, 2 * M_PI);
+  cairo_fill(cr);
+  cairo_pattern_destroy(p);
+}
+
+/* Arcs circling the logo, turning with it: bright at the leading end and
+ * fading along a tail that lengthens with the overspeed. */
+static void draw_streaks(cairo_t *cr, const struct wallpaper_config *c,
+                         double cx, double cy, double r, double k,
+                         const struct wp_frame *f) {
+  int n = c->streak_count, segs = 8;
+  double len = c->streak_length * M_PI / 180 * f->over;
+  if (n <= 0 || len <= 0 || c->streak_width <= 0)
+    return;
+  cairo_set_line_width(cr, c->streak_width * k);
+  cairo_set_line_cap(cr, CAIRO_LINE_CAP_BUTT);
+  for (int i = 0; i < n; ++i) {
+    /* Spread evenly, nudged off a regular pattern by the ring. */
+    int ring = (i * 2) % 3;
+    double rr = r * streak_rings[ring];
+    double head = f->angle + 2 * M_PI * i / n + ring * 0.21;
+    double l = len * (0.7 + 0.15 * ring);
+    for (int s = 0; s < segs; ++s) {
+      /* Segment s spans from s/segs to (s+1)/segs of the way back. */
+      double a0 = head - f->dir * l * s / segs;
+      double a1 = head - f->dir * l * (s + 1) / segs;
+      set_rgba(cr, c->streak,
+               c->streak_alpha * f->over * (1 - (double)s / segs));
+      cairo_new_path(cr);
+      if (f->dir > 0)
+        cairo_arc(cr, cx, cy, rr, a1, a0);
+      else
+        cairo_arc(cr, cx, cy, rr, a0, a1);
+      cairo_stroke(cr);
+    }
+  }
 }
 
 /* render_bar_mask(): a pill outline around the whole bar and, inside the
@@ -96,7 +164,13 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
   draw_bar(cr, c, pw, f);
-  nixlogo_draw(cr, pw / 2.0, ph / 2.0, c->logo_radius * pw / WP_REF_WIDTH,
-               f->angle, c->logo, c->logo_alt, 1.0);
+  double k = pw / WP_REF_WIDTH, r = c->logo_radius * k;
+  double cx = pw / 2.0, cy = ph / 2.0;
+  if (f->over > 0) {
+    draw_bloom(cr, c, cx, cy, r, f->over);
+    draw_streaks(cr, c, cx, cy, r, k, f);
+  }
+  nixlogo_draw(cr, cx, cy, r, f->angle, mix(c->logo, c->logo_glow, f->glow),
+               mix(c->logo_alt, c->logo_glow_alt, f->glow), 1.0);
   cairo_restore(cr);
 }

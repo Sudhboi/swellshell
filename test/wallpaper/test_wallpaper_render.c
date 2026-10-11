@@ -71,10 +71,28 @@ int main(int argc, char **argv) {
   f = (struct wp_frame){.percent = 3, .level = 1, .angle = M_PI / 7};
   cairo_surface_destroy(render(c, f, dir, "wallpaper_3_turned"));
 
+  /* The overspeed bloom, speed lines and glow change only the logo tile. */
+  f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0};
+  cairo_surface_t *a = render(c, f, dir, NULL);
+  f.glow = f.over = 1;
+  f.dir = 1;
+  cairo_surface_t *t = render(c, f, dir, "wallpaper_overspeed");
+  int changed = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      if (px(a, x, y) != px(t, x, y)) {
+        assert(x >= r[1].x && x < r[1].x + r[1].w);
+        assert(y >= r[1].y && y < r[1].y + r[1].h);
+        changed++;
+      }
+  assert(changed > 0);
+  cairo_surface_destroy(a);
+  cairo_surface_destroy(t);
+
   /* A partial repaint over an older frame equals a full repaint. */
-  cairo_surface_t *a = render(c, (struct wp_frame){80, 0.4, 1.0}, dir, NULL);
+  a = render(c, (struct wp_frame){80, 0.4, 1.0}, dir, NULL);
   cairo_t *cr = cairo_create(a);
-  struct wp_frame g = {20, 0.9, 2.0};
+  struct wp_frame g = {20, 0.9, 2.0, .glow = 0.5, .over = 0.7, .dir = 1};
   wp_render(cr, c, W, H, &g, false);
   cairo_destroy(cr);
   cairo_surface_t *b = render(c, g, dir, NULL);
