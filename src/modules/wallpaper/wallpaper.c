@@ -3,9 +3,11 @@
  *
  * It animates only while the focused workspace is empty (workspace.empty /
  * workspace.occupied on the bus) and the user is not idle
- * (ext-idle-notify-v1). Otherwise no frame callbacks are requested and no
- * timer is armed: the last frame stays on screen and the module costs
- * nothing; that includes the PipeWire capture, which is torn down. Moving
+ * (ext-idle-notify-v1). Idle on an empty workspace it dozes: only the
+ * battery bar pulses (idle_bar_pulse). Otherwise no frame callbacks are
+ * requested and no timer is armed: the last frame stays on screen and the
+ * module costs nothing; that includes the PipeWire capture, which is torn
+ * down (it is while dozing too). Moving
  * the pointer over the wallpaper spins the logo faster. */
 #include "wallpaper.h"
 
@@ -30,6 +32,7 @@ static const struct wallpaper_config defaults = {
     .fps_spin = 0,
     .fps_audio = 0,
     .idle_timeout_s = 300,
+    .idle_bar_pulse = true,
     .battery_interval_s = 30,
     .background = 0x000000ffu,
     .bar = 0xffffffffu,
@@ -120,6 +123,9 @@ static const struct cfg_field fields[] = {
             "rate)"),
     CFG_INT(S, idle_timeout_s, 0, 86400,
             "freeze after this long without input (0 = never)"),
+    CFG_BOOL(S, idle_bar_pulse,
+             "the battery bar keeps pulsing while idle on an empty workspace "
+             "(the rest stays frozen; an open window freezes it too)"),
     CFG_INT(S, battery_interval_s, 1, 3600,
             "battery re-read period while animating"),
     CFG_COLOR(S, background, "background"),
@@ -279,6 +285,7 @@ static struct {
   struct swell *sw;
   struct wallpaper_config cfg;
   bool ws_empty, idle, animating;
+  bool dozing; /* idle on an empty workspace: only the bar pulses */
 
   /* battery: percent is the target, -1 when no battery was found */
   int battery;
@@ -310,6 +317,8 @@ static struct {
 
 const struct wallpaper_config *wp_config(void) { return &w.cfg; }
 bool wp_animating(void) { return w.animating; }
+bool wp_dozing(void) { return w.dozing; }
+bool wp_ticking(void) { return w.animating || w.dozing; }
 
 static bool viz_showing(void) {
   int n = w.cfg.viz_bars;
@@ -356,19 +365,19 @@ static double shown_percent(void) {
 static void set_target(double pct) {
   if (pct == w.tween_to)
     return;
-  if (w.animating) {
+  if (wp_ticking()) {
     w.tween_from = shown_percent();
     w.tween_elapsed = 0;
   } else {
     w.tween_from = pct; /* nobody sees a tween while frozen */
   }
   w.tween_to = pct;
-  if (!w.animating)
+  if (!wp_ticking())
     wp_surfaces_draw(false);
 }
 
-/* Returns the time advanced, in seconds. */
-static double advance(int64_t now) {
+/* Returns the time advanced, in seconds. bar_only: the logo stays put. */
+static double advance(int64_t now, bool bar_only) {
   /* Clamped, so a stall (or a freeze) doesn't make anything jump. */
   double dt = (now - w.last) / 1000.0;
   w.last = now;
@@ -376,6 +385,10 @@ static double advance(int64_t now) {
     return 0;
   if (dt > 0.1)
     dt = 0.1;
+  w.tween_elapsed += dt * 1000;
+  w.phase = fmod(w.phase + dt / wp_pulse_period(&w.cfg, shown_percent()), 1);
+  if (bar_only)
+    return dt;
   double music =
       w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.energy + w.react.kick
                        : 0;
@@ -387,8 +400,6 @@ static double advance(int64_t now) {
     w.boost *= exp(-dt / w.cfg.spin_decay_s);
   if (w.boost < 1e-3)
     w.boost = 0;
-  w.tween_elapsed += dt * 1000;
-  w.phase = fmod(w.phase + dt / wp_pulse_period(&w.cfg, shown_percent()), 1);
   return dt;
 }
 
@@ -442,7 +453,9 @@ static double over(void) {
 
 void wp_frame_at(int64_t now, struct wp_frame *f) {
   if (w.animating)
-    advance_viz(advance(now));
+    advance_viz(advance(now, false));
+  else if (w.dozing)
+    advance(now, true);
   f->percent = shown_percent();
   f->level = wp_bar_level(&w.cfg, w.phase);
   f->angle = w.angle;
@@ -504,38 +517,53 @@ static void arm_idle_fallback(void) {
 
 static void update_animating(void) {
   bool want = w.ws_empty && !w.idle;
-  if (want == w.animating)
+  bool doze = w.ws_empty && w.idle && w.cfg.idle_bar_pulse;
+  if (want == w.animating && doze == w.dozing)
     return;
+  bool was_animating = w.animating, was_ticking = wp_ticking();
   w.animating = want;
-  if (want) {
+  w.dozing = doze;
+  /* The bar (fill and pulse) moves in both states, so the battery is read
+   * in both. */
+  if (wp_ticking() && !was_ticking) {
     w.last = now_ms();
     w.fps_start = w.last;
     w.fps_frames = 0;
     int64_t ms = w.cfg.battery_interval_s * 1000LL;
     loop_timer_arm(w.battery_timer, ms, ms);
-    arm_idle_fallback();
     read_battery();
+  } else if (!wp_ticking()) {
+    loop_timer_disarm(w.battery_timer);
+  }
+  if (want) {
+    arm_idle_fallback();
     if (w.cfg.viz)
       wp_audio_start(w.sw->loop, &w.cfg);
     wp_surfaces_draw(false); /* and every draw asks for the next frame */
     bus_emit("wallpaper.animate", NULL);
-  } else {
-    loop_timer_disarm(w.battery_timer);
-    loop_timer_disarm(w.idle_timer);
-    wp_audio_stop();
-    bool glowing = w.boost > 0 || viz_showing() || reacting();
-    w.boost = 0;
-    memset(&w.viz, 0, sizeof(w.viz));
-    memset(&w.react, 0, sizeof(w.react));
-    w.spin_glow = 0;
-    w.playing = 0;
-    w.fps = 0;
-    /* A window opened (or the user idled) mid-spin or mid-song: don't
-     * leave the brightened logo or the bars as the frozen frame. */
-    if (glowing)
-      wp_surfaces_draw(false);
-    bus_emit("wallpaper.freeze", NULL);
+    return;
   }
+  if (!was_animating) {
+    if (doze)
+      wp_surfaces_draw(false); /* start the bar's frames */
+    return;
+  }
+  loop_timer_disarm(w.idle_timer);
+  wp_audio_stop();
+  bool glowing = w.boost > 0 || viz_showing() || reacting();
+  w.boost = 0;
+  memset(&w.viz, 0, sizeof(w.viz));
+  memset(&w.react, 0, sizeof(w.react));
+  w.spin_glow = 0;
+  w.playing = 0;
+  if (!doze)
+    w.fps = 0;
+  /* A window opened (or the user idled) mid-spin or mid-song: don't
+   * leave the brightened logo or the bars as the frozen frame. Dozing
+   * draws on for the bar. */
+  if (glowing || doze)
+    wp_surfaces_draw(false);
+  bus_emit("wallpaper.freeze", NULL);
 }
 
 static void on_bus(const struct bus_event *ev, void *data) {
@@ -663,6 +691,8 @@ static void reconfigure(const void *cfg) {
   if (old.idle_timeout_s != w.cfg.idle_timeout_s) {
     setup_idle();
     update_animating();
+  } else if (old.idle_bar_pulse != w.cfg.idle_bar_pulse) {
+    update_animating();
   }
   if (old.battery_interval_s != w.cfg.battery_interval_s && w.animating) {
     int64_t ms = w.cfg.battery_interval_s * 1000LL;
@@ -693,11 +723,15 @@ static void finish(void) {
   loop_remove_timer(w.idle_timer);
   w.battery_timer = w.idle_timer = NULL;
   w.animating = false;
+  w.dozing = false;
 }
 
 static int command(int argc, char **argv, struct reply *r) {
   if (argc == 0 || strcmp(argv[0], "status") == 0) {
-    reply_printf(r, "state: %s\n", w.animating ? "animating" : "frozen");
+    reply_printf(r, "state: %s\n",
+                 w.animating ? "animating"
+                 : w.dozing  ? "dozing (only the bar pulses)"
+                             : "frozen");
     reply_printf(r, "workspace: %s\n", w.ws_empty ? "empty" : "occupied");
     reply_printf(r, "idle: %s%s\n", w.idle ? "yes" : "no",
                  w.idle_note || w.cfg.idle_timeout_s == 0
@@ -709,7 +743,7 @@ static int command(int argc, char **argv, struct reply *r) {
       reply_printf(r, "battery: none\n");
     reply_printf(r, "percent: %.0f%s (shown %.1f)\n", target_percent(),
                  w.override >= 0 ? " (override)" : "", shown_percent());
-    reply_printf(r, "fps: %.1f\n", w.animating ? w.fps : 0.0);
+    reply_printf(r, "fps: %.1f\n", wp_ticking() ? w.fps : 0.0);
     reply_printf(r, "spin: x%.2f\n", 1 + w.boost);
     reply_printf(r, "audio: %s\n", w.cfg.viz ? wp_audio_state() : "disabled");
     if (w.cfg.viz && w.cfg.viz_edges && w.cfg.viz_edge_smooth)

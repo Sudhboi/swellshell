@@ -1,8 +1,8 @@
 /* wallpaper: a live black wallpaper with a pulsing battery bar at the top
  * and a slowly turning Nix snowflake in the middle (formerly pre-rendered
  * GIFs played by awww), ringed by an audio visualiser while sound plays. It only animates while the focused workspace is
- * empty and the user is not idle; otherwise it keeps its last frame and
- * does no work at all. Shared declarations of the module's files. */
+ * empty and the user is not idle; idle on an empty workspace only the bar
+ * pulses, and otherwise it keeps its last frame and does no work at all. Shared declarations of the module's files. */
 #ifndef SWELL_WALLPAPER_H
 #define SWELL_WALLPAPER_H
 
@@ -26,6 +26,7 @@ struct wallpaper_config {
   int fps_spin;       /* cap while the pointer speeds the logo up */
   int fps_audio;      /* cap while the visualiser shows */
   int idle_timeout_s; /* 0: never freeze for idleness */
+  bool idle_bar_pulse; /* idle on an empty workspace: the bar still pulses */
   int battery_interval_s;
   /* colours */
   uint32_t background, bar, logo, logo_alt;
@@ -248,6 +249,10 @@ int wp_surfaces_count(void);
 extern const struct swell_input wp_input;
 const struct wallpaper_config *wp_config(void);
 bool wp_animating(void);
+/* Idle on an empty workspace: the bar pulses, the rest is frozen. */
+bool wp_dozing(void);
+/* Animating or dozing: frames are wanted. */
+bool wp_ticking(void);
 /* The frame rate cap right now (0: none). */
 int wp_fps_cap(void);
 /* Advance the animation to now (monotonic ms) and give the frame. */

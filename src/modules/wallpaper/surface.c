@@ -2,7 +2,8 @@
  * fractional scale (wp_fractional_scale_v1 + viewporter), double-buffered,
  * repainting and damaging only the bar and the logo after the first frame.
  * Frame callbacks pace the animation and are only requested while the
- * module animates, so a frozen wallpaper costs nothing. While the smooth
+ * module animates or dozes, so a frozen wallpaper costs nothing. Dozing
+ * repaints only the bar, and only when its brightness or fill changed. While the smooth
  * edge visualiser shows, the GPU draws it (gl.c) into two transparent
  * subsurfaces over the strips; they exist only while bars show. */
 #include <math.h>
@@ -39,6 +40,8 @@ struct output {
   struct buffer *bufs[2];
   bool stale[2]; /* needs a full repaint before partial ones are valid */
   bool ringed[2]; /* holds visualiser bars, outside the small logo tile */
+  bool still[2];  /* holds the frozen frame outside the bar (dozing) */
+  double bar_level, bar_percent; /* of the last commit */
   struct strip strips[2]; /* left, right; surface NULL unless shown */
   int width, height; /* logical, from configure */
   uint32_t scale120;  /* preferred fractional scale, 0 if unknown */
@@ -61,7 +64,7 @@ static void frame_done(void *data, struct wl_callback *cb, uint32_t time) {
   struct output *out = data;
   wl_callback_destroy(cb);
   out->frame_cb = NULL;
-  if (!wp_animating() && !out->retry)
+  if (!wp_ticking() && !out->retry)
     return; /* frozen: stop here, the last frame stays */
   int fps = wp_fps_cap();
   int64_t wait = fps > 0 ? out->last_draw + 1000 / fps - now_ms() : 0;
@@ -82,7 +85,7 @@ static void request_frame(struct output *out) {
 
 static void on_fps_timer(struct loop_timer *t, void *data) {
   struct output *out = data;
-  if (out->surface && wp_animating())
+  if (out->surface && wp_ticking())
     draw(out, false);
 }
 
@@ -109,6 +112,7 @@ static int get_buffer(struct output *out, int pw, int ph) {
         return -1;
       out->stale[i] = true;
       out->ringed[i] = false;
+      out->still[i] = false;
     }
     return i;
   }
@@ -234,6 +238,16 @@ static void draw(struct output *out, bool full) {
   int64_t now = now_ms();
   struct wp_frame f;
   wp_frame_at(now, &f);
+  /* Dozing, once both buffers hold the frozen frame, only the bar is
+   * repainted, and nothing at all while it looks the same (the bar sits at
+   * bar_min for much of each period): the timer paces until it changes. */
+  bool bar_only = wp_dozing() && !whole && out->still[0] && out->still[1];
+  if (bar_only && fabs(f.level - out->bar_level) < 0.5 / 255 &&
+      fabs(f.percent - out->bar_percent) < 0.01) {
+    int fps = wp_fps_cap();
+    loop_timer_arm(out->fps_timer, fps > 0 ? 1000 / fps : 16, 0);
+    return;
+  }
   /* While either buffer holds visualiser bars, repaint and damage their
    * larger area (the ring's or the edge strips): that clears this buffer's
    * old bars and covers the difference from the other one. */
@@ -250,12 +264,21 @@ static void draw(struct output *out, bool full) {
   if (gpu)
     cf.nbars = 0;
   bool ring = cf.nbars > 0 || out->ringed[0] || out->ringed[1];
+  struct wp_rect r[WP_REGIONS];
+  wp_regions(wp_config(), pw, ph, ring, r);
   cairo_t *cr = cairo_create(b->cairo);
+  if (bar_only) {
+    cairo_rectangle(cr, r[0].x, r[0].y, r[0].w, r[0].h);
+    cairo_clip(cr);
+  }
   wp_render(cr, wp_config(), pw, ph, &cf, whole, ring);
   cairo_destroy(cr);
   cairo_surface_flush(b->cairo);
   out->stale[i] = false;
   out->ringed[i] = cf.nbars > 0;
+  out->still[i] = wp_dozing();
+  out->bar_level = f.level;
+  out->bar_percent = f.percent;
 
   if (out->scale120 && out->viewport) {
     wl_surface_set_buffer_scale(out->surface, 1);
@@ -266,16 +289,14 @@ static void draw(struct output *out, bool full) {
   wl_surface_attach(out->surface, b->wl_buffer, 0, 0);
   /* The other buffer was last painted with the same background, so only
    * the bar and the logo can differ from what the compositor has. */
-  struct wp_rect r[WP_REGIONS];
-  wp_regions(wp_config(), pw, ph, ring, r);
   if (whole)
     wl_surface_damage_buffer(out->surface, 0, 0, pw, ph);
   else
-    for (int k = 0; k < WP_REGIONS; ++k)
+    for (int k = 0; k < (bar_only ? 1 : WP_REGIONS); ++k)
       if (r[k].w > 0 && r[k].h > 0)
         wl_surface_damage_buffer(out->surface, r[k].x, r[k].y, r[k].w,
                                  r[k].h);
-  if (wp_animating())
+  if (wp_ticking())
     request_frame(out);
   wl_surface_commit(out->surface);
   b->busy = true;
