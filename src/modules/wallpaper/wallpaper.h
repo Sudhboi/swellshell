@@ -36,7 +36,6 @@ struct wallpaper_config {
   double bar_min, pulse_period_s, pulse_period_min_s, pulse_sigma_s,
       pulse_hold_s;
   int tween_ms; /* fill change */
-  bool bar_pulse; /* the bar grows with the logo on bass hits */
   /* logo */
   double logo_radius; /* reference px */
   double spin_speed;  /* deg/s, clockwise */

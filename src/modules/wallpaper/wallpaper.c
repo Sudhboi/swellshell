@@ -48,7 +48,6 @@ static const struct wallpaper_config defaults = {
     .pulse_sigma_s = 0.4,
     .pulse_hold_s = 1.0,
     .tween_ms = 600,
-    .bar_pulse = true,
     .logo_radius = 225,
     .spin_speed = 15,
     .spin_gain = 0.008,
@@ -143,9 +142,6 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, pulse_hold_s, 0, 3600,
                "time at full brightness per pulse at 50%"),
     CFG_INT(S, tween_ms, 0, 60000, "fill change animation"),
-    CFG_BOOL(S, bar_pulse,
-             "the bar grows with the snowflake on bass hits, about its "
-             "centre (by react_pulse_scale)"),
     CFG_DOUBLE(S, logo_radius, 0, 10000, "snowflake radius, px"),
     CFG_DOUBLE(S, spin_speed, -3600, 3600,
                "snowflake rotation, degrees/s clockwise"),

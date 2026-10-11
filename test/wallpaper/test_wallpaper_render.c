@@ -67,48 +67,6 @@ int main(int argc, char **argv) {
   assert(px(s, 1440, 900) == 0x000000);      /* the snowflake's hole */
   cairo_surface_destroy(s);
 
-  /* The bar pulses with the logo: at a full pulse it reaches further
-   * out, inside its region, and partial repaints over the resting bar
-   * equal full ones (shaken too). */
-  f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0};
-  cairo_surface_t *rest = render(c, f, dir, NULL);
-  assert(c->bar_pulse);
-  {
-    struct wp_rect br[WP_REGIONS];
-    wp_regions(c, W, H, false, br);
-    int bw = (int)((c->bar_width + 2 * (c->bar_gap + c->bar_border)) * W /
-                   WP_REF_WIDTH);
-    /* Just inside the pulsed bar's outline, past the resting bar's end. */
-    int edge = (int)(W / 2 + bw / 2.0 * (1 + c->react_pulse_scale)) - 2;
-    assert(edge > W / 2 + bw / 2 + 2 && px(rest, edge, 15) == 0x000000);
-    for (int step = 1; step <= 2; ++step) {
-      f.pulse = 1;
-      f.shake_y = step == 2 ? c->react_shake_px : 0;
-      s = render(c, f, dir, step == 1 ? "wallpaper_bar_pulse" : NULL);
-      if (step == 1)
-        assert(px(s, edge, 15) != 0x000000);
-      for (int y = 0; y < H / 4; ++y)
-        for (int x = 0; x < W; x += 2)
-          if (px(s, x, y) != px(rest, x, y))
-            assert((x >= br[0].x && x < br[0].x + br[0].w &&
-                    y >= br[0].y && y < br[0].y + br[0].h) ||
-                   (x >= br[1].x && x < br[1].x + br[1].w &&
-                    y >= br[1].y && y < br[1].y + br[1].h));
-      cairo_surface_t *cp = render(c, (struct wp_frame){.percent = 50,
-                                                        .level = 1},
-                                   dir, NULL);
-      cairo_t *pc = cairo_create(cp);
-      wp_render(pc, c, W, H, &f, false, false);
-      cairo_destroy(pc);
-      for (int y = 0; y < 200; ++y)
-        for (int x = 0; x < W; x += 2)
-          assert(px(cp, x, y) == px(s, x, y));
-      cairo_surface_destroy(cp);
-      cairo_surface_destroy(s);
-    }
-  }
-  cairo_surface_destroy(rest);
-
   f = (struct wp_frame){.percent = 100, .level = c->bar_min, .angle = 0};
   cairo_surface_destroy(render(c, f, dir, "wallpaper_100_rest"));
   f = (struct wp_frame){.percent = 3, .level = 1, .angle = M_PI / 7};
@@ -350,8 +308,7 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(t);
 
   /* The logo reacting: a pulse, slid lambdas and the glow change only the
-   * small logo tile (and the bar, which pulses too), and a partial repaint
-   * over them equals a full one. */
+   * small logo tile, and a partial repaint over them equals a full one. */
   f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0.3};
   a = render(c, f, dir, NULL);
   f.pulse = 1;
@@ -363,8 +320,6 @@ int main(int argc, char **argv) {
   for (int y = 0; y < H; y += 3)
     for (int x = 0; x < W; x += 3)
       if (px(a, x, y) != px(t, x, y)) {
-        if (y < r[0].y + r[0].h)
-          continue; /* the pulsed bar, checked above */
         assert(x >= r[1].x && x < r[1].x + r[1].w);
         assert(y >= r[1].y && y < r[1].y + r[1].h);
         changed++;
@@ -391,19 +346,15 @@ int main(int argc, char **argv) {
 
   /* A shake moves the bar and the logo (with its bloom and pulse) by whole
    * pixels, all inside the regions, and a partial repaint equals a full
-   * one, whichever way it shakes. The bar's own pulse is off, so it only
-   * moves. */
-  struct wallpaper_config still_bar = *c;
-  still_bar.bar_pulse = false;
-  const struct wallpaper_config *sc = &still_bar;
+   * one, whichever way it shakes. */
   for (int d = -1; d <= 1; d += 2) {
-    double sh = sc->react_shake_px * d;
+    double sh = c->react_shake_px * d;
     f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0.3,
                           .pulse = 1, .over = 1, .dir = 1};
-    a = render(sc, f, dir, NULL);
+    a = render(c, f, dir, NULL);
     f.shake_x = sh;
     f.shake_y = fabs(sh); /* down: up would push the bar off the top */
-    t = render(sc, f, dir, d > 0 ? "wallpaper_shake" : NULL);
+    t = render(c, f, dir, d > 0 ? "wallpaper_shake" : NULL);
     int dx = (int)round(sh * k), dy = (int)round(fabs(sh) * k);
     assert(px(t, 1600 + dx, 7 + dy) == 0xffffff); /* the moved outline */
     assert(px(t, 1600, 7) == 0x000000);
@@ -420,7 +371,7 @@ int main(int argc, char **argv) {
         }
     assert(changed > 0);
     cr = cairo_create(a);
-    wp_render(cr, sc, W, H, &f, false, false);
+    wp_render(cr, c, W, H, &f, false, false);
     cairo_destroy(cr);
     for (int y = 0; y < H; y += 3)
       for (int x = 0; x < W; x += 3)

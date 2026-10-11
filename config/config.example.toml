@@ -333,8 +333,6 @@ pulse_sigma_s = 0.4
 pulse_hold_s = 1.0
 # fill change animation
 tween_ms = 600
-# the bar grows with the snowflake on bass hits, about its centre (by react_pulse_scale)
-bar_pulse = true
 # snowflake radius, px
 logo_radius = 225.0
 # snowflake rotation, degrees/s clockwise

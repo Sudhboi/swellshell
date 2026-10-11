@@ -62,14 +62,6 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
   bar_box(c, pw, &x, &y, &w, &h);
   /* A shake moves everything by up to this much. */
   double sh = c->react_shake ? ceil(c->react_shake_px * pw / WP_REF_WIDTH) : 0;
-  /* Pulsed, the bar grows about its centre. */
-  if (c->bar_pulse) {
-    double gx = w * c->react_pulse_scale / 2, gy = h * c->react_pulse_scale / 2;
-    x -= gx;
-    y -= gy;
-    w += 2 * gx;
-    h += 2 * gy;
-  }
   out[0] = clamp_rect(x - sh, y - sh, x + w + sh, y + h + sh, pw, ph);
   /* The bloom and the speed lines reach past the logo, the visualiser
    * further still. */
@@ -481,14 +473,6 @@ static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
   double b = c->bar_border * k, pad = (c->bar_gap + c->bar_border) * k;
-  /* It grows with the logo's pulse, about its centre. */
-  double s = c->bar_pulse ? 1 + c->react_pulse_scale * f->pulse : 1;
-  cairo_save(cr);
-  if (s != 1) {
-    cairo_translate(cr, x + w / 2, y + h / 2);
-    cairo_scale(cr, s, s);
-    cairo_translate(cr, -(x + w / 2), -(y + h / 2));
-  }
   pill(cr, x, y, w, h);
   pill(cr, x + b, y + b, w - 2 * b, h - 2 * b);
   double fw = c->bar_width * k * fmin(fmax(f->percent, 0), 100) / 100.0;
@@ -497,7 +481,6 @@ static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
   set_rgba(cr, c->bar, f->level);
   cairo_fill(cr);
-  cairo_restore(cr);
 }
 
 void wp_render_finish(void) {
