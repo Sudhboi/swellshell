@@ -6,6 +6,7 @@
  * the shape isn't, so the cairo buffer underneath never holds the bars. */
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -186,6 +187,18 @@ bool wp_gl_init(struct wl_display *display) {
       !eglMakeCurrent(g.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, g.ctx) ||
       !build_program()) {
     warn("wallpaper: no GLES 3 context; the visualiser stays on the CPU");
+    wp_gl_finish();
+    g.tried = true;
+    return false;
+  }
+  /* Mesa's software rasterisers run the shader on the CPU, slower than
+   * cairo: they're no GPU. Tests (display NULL) may use them. */
+  const char *renderer = (const char *)glGetString(GL_RENDERER);
+  if (display && renderer &&
+      (strstr(renderer, "llvmpipe") || strstr(renderer, "softpipe") ||
+       strstr(renderer, "swrast"))) {
+    warn("wallpaper: GL renderer is %s; the visualiser stays on the CPU",
+         renderer);
     wp_gl_finish();
     g.tried = true;
     return false;

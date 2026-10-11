@@ -208,7 +208,7 @@ const char *wp_surfaces_viz_renderer(void) {
   if (!wp_config()->viz_gpu)
     return "cpu";
   if (gl_broken || !wl->subcompositor || !wp_gl_init(wl->display))
-    return "cpu (no EGL)";
+    return "cpu (no GPU)";
   return "gpu";
 }
 

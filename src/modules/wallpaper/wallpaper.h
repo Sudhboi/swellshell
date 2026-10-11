@@ -237,7 +237,7 @@ void wp_surfaces_init(struct swell_wl *wl);
 void wp_surfaces_finish(void);
 /* Destroy and recreate every surface (namespace change). */
 void wp_surfaces_recreate(void);
-/* "gpu", "cpu" or "cpu (no EGL)": how the smooth edges are drawn. */
+/* "gpu", "cpu" or "cpu (no GPU)": how the smooth edges are drawn. */
 const char *wp_surfaces_viz_renderer(void);
 /* Draw every output now. full: the geometry or colours changed. If the
  * module is animating, each draw also asks for the next frame. */
