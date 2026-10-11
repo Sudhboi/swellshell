@@ -117,7 +117,8 @@ void wp_render_finish(void);
 void wp_viz_analyse(const float *samples, int rate,
                     const struct wallpaper_config *c, float *db);
 struct wp_viz {
-  float bars[2][WP_VIZ_MAX]; /* 0..1, [0] left, [1] right */
+  float bars[2][WP_VIZ_MAX];  /* 0..1, [0] left, [1] right */
+  float bass_db; /* power under KICK_HZ right now, dB (-200: silence) */
   float vel[2][WP_VIZ_MAX];  /* fall speed, levels/s */
   float peak; /* auto-sensitivity: the loudest recent band of both, dB */
 };
@@ -129,11 +130,14 @@ void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
 struct wp_react {
   double loud;           /* smoothed mean bar level, 0..1 (for the glow) */
   double energy;         /* the same, following quickly (for the spin) */
-  double bass, bass_avg; /* the lowest bands now, and their slow average */
+  double bass;      /* wp_viz.bass_db, as last seen */
+  double hist[16];  /* bass over the last KICK_WINDOW_S, newest last */
+  double hist_t[16]; /* their ages, s */
+  double bass_peak; /* the high since the last kick, dB */
   double pulse;          /* 1 on a bass hit, easing back to 0 */
   double kick;           /* extra spin from beats (x spin_speed), decaying */
   double since_kick;     /* s */
-  bool held; /* a kick fired and the bass hasn't fallen back since */
+  bool held; /* a kick fired and the bass hasn't fallen from its peak */
   double slices[6];      /* per lambda, bass (0) to treble (5), 0..1 */
 };
 /* Follow the bars v by dt seconds. */

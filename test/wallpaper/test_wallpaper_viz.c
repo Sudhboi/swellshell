@@ -106,12 +106,19 @@ int main(void) {
   }
   assert(wp_viz_wobble(c, 0, 5, 1) != wp_viz_wobble(c, 1, 5, 1));
 
-  /* React: steady bars settle the loudness at their mean, with no kick. */
+  /* React: steady bars settle the loudness at their mean, and a steady
+   * bass never kicks. */
   struct wp_react r;
   memset(&r, 0, sizeof(r));
   memset(&v, 0, sizeof(v));
+  v.peak = -15;
+  v.bass_db = -20;
   for (int i = 0; i < n; ++i)
     v.bars[0][i] = v.bars[1][i] = 0.3f;
+  wp_react_step(&r, &v, c, 1 / 60.0); /* the start of the sound: a hit */
+  memset(&r, 0, sizeof(r));
+  for (int i = 0; i < 16; ++i)
+    r.hist[i] = -20;
   for (int i = 0; i < 180; ++i)
     wp_react_step(&r, &v, c, 1 / 60.0);
   assert(fabs(r.loud - 0.3) < 0.01);
@@ -119,9 +126,8 @@ int main(void) {
   for (int g = 0; g < 6; ++g)
     assert(fabs(r.slices[g] - 0.3) < 0.01);
 
-  /* A bass hit kicks once; a held note doesn't kick again. */
-  for (int i = 0; i < n / 8; ++i)
-    v.bars[0][i] = v.bars[1][i] = 0.9f;
+  /* A bass hit (a jump in dB) kicks once; a held note doesn't again. */
+  v.bass_db = -12;
   wp_react_step(&r, &v, c, 1 / 60.0);
   assert(r.pulse == 1 && fabs(r.kick - c->react_spin_kick) < 1e-9);
   double before = r.pulse;
@@ -130,35 +136,43 @@ int main(void) {
     assert(r.pulse < before); /* only easing back */
     before = r.pulse;
   }
-  /* Too soon after a hit nothing fires, even after a dip. */
-  memset(&r, 0, sizeof(r));
-  for (int i = 0; i < n / 8; ++i)
-    v.bars[0][i] = v.bars[1][i] = 0.3f;
-  for (int i = 0; i < 120; ++i)
+  /* Quick hits each kick (the bars' slow fall doesn't hide them), but not
+   * closer than the minimum gap. */
+  v.bass_db = -24;
+  for (int i = 0; i < 6; ++i)
     wp_react_step(&r, &v, c, 1 / 60.0);
-  for (int i = 0; i < n / 8; ++i)
-    v.bars[0][i] = v.bars[1][i] = 0.9f;
-  wp_react_step(&r, &v, c, 1 / 60.0);
-  assert(r.pulse == 1);
-  for (int i = 0; i < n / 8; ++i)
-    v.bars[0][i] = v.bars[1][i] = 0.3f;
-  wp_react_step(&r, &v, c, 1 / 60.0);
-  for (int i = 0; i < n / 8; ++i)
-    v.bars[0][i] = v.bars[1][i] = 0.9f;
-  wp_react_step(&r, &v, c, 1 / 60.0);
-  assert(r.pulse < 1);
-  /* Once the bass has fallen back and the gap passed, the next hit kicks. */
-  for (int i = 0; i < n / 8; ++i)
-    v.bars[0][i] = v.bars[1][i] = 0.3f;
+  int kicks = 0;
+  for (int beat = 0; beat < 8; ++beat) {
+    for (int i = 0; i < 9; ++i) { /* 150 ms per beat: 400 bpm */
+      v.bass_db = i < 3 ? -12 : -24;
+      double since = r.since_kick;
+      wp_react_step(&r, &v, c, 1 / 60.0);
+      kicks += r.since_kick < since;
+    }
+  }
+  assert(kicks == 8);
+  v.bass_db = -24;
   for (int i = 0; i < 30; ++i)
     wp_react_step(&r, &v, c, 1 / 60.0);
-  for (int i = 0; i < n / 8; ++i)
-    v.bars[0][i] = v.bars[1][i] = 0.9f;
+  v.bass_db = -12;
   wp_react_step(&r, &v, c, 1 / 60.0);
   assert(r.pulse == 1);
+  v.bass_db = -24;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  v.bass_db = -12;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.pulse < 1); /* 33 ms later: too soon */
+  /* Bass far under the loudest band doesn't kick, however it jumps. */
+  v.bass_db = -60;
+  for (int i = 0; i < 30; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  v.bass_db = -45;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.pulse < 1);
 
   /* Silence: everything returns to rest. */
   memset(&v, 0, sizeof(v));
+  v.bass_db = -200;
   for (int i = 0; i < 600; ++i)
     wp_react_step(&r, &v, c, 1 / 60.0);
   assert(r.loud < 1e-3 && r.pulse == 0 && r.kick == 0);

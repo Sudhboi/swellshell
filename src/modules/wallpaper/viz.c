@@ -102,6 +102,16 @@ void wp_viz_analyse(const float *samples, int rate,
   }
 }
 
+/* A bass hit: the bass power (40..KICK_HZ) jumped KICK_RISE_DB above its
+ * lowest in the last KICK_WINDOW_S, and isn't far below the loudest recent
+ * band. A held note kicks once: the next kick needs the bass to fall back a
+ * little from its peak. */
+#define KICK_HZ 150.0
+#define KICK_RISE_DB 6.0
+#define KICK_WINDOW_S 0.1
+#define KICK_BELOW_PEAK_DB 25.0
+#define KICK_GAP_S 0.1
+
 void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
                  const float (*db)[WP_VIZ_MAX], double dt) {
   int n = c->viz_bars < WP_VIZ_MAX ? c->viz_bars : WP_VIZ_MAX;
@@ -127,6 +137,18 @@ void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
         target[s][i] = 0.25f * l + 0.5f * raw[i] + 0.25f * r;
       }
     }
+    /* The bass power for kick detection, in plain dB: the normalised
+     * bars clamp and smooth away the jumps that make a hit. */
+    int nbass = (int)(n * log(KICK_HZ / c->viz_low_hz) /
+                      log(c->viz_high_hz / c->viz_low_hz));
+    nbass = nbass < 1 ? 1 : nbass > n ? n : nbass;
+    double p = 0;
+    for (int s = 0; s < 2; ++s)
+      for (int i = 0; i < nbass; ++i)
+        p += pow(10, db[s][i] / 10);
+    v->bass_db = (float)(10 * log10(p / 2 + 1e-20));
+  } else {
+    v->bass_db = -200;
   }
   for (int s = 0; s < 2; ++s)
     for (int i = 0; i < n; ++i) {
@@ -148,27 +170,17 @@ static double follow(double x, double target, double up, double down,
   return target + (x - target) * exp(-dt / tau);
 }
 
-/* A bass hit: the bass jumped well above its recent average. A held note
- * kicks once; the next kick needs the bass to fall back first. */
-#define KICK_LEVEL 0.45
-#define KICK_RISE 0.15
-#define KICK_GAP_S 0.12
 
 void wp_react_step(struct wp_react *r, const struct wp_viz *v,
                    const struct wallpaper_config *c, double dt) {
   if (dt <= 0)
     return;
   int n = c->viz_bars < WP_VIZ_MAX ? c->viz_bars : WP_VIZ_MAX;
-  int nbass = n / 8 > 0 ? n / 8 : 1;
-  double all = 0, bass = 0;
-  for (int i = 0; i < n; ++i) {
-    double l = (v->bars[0][i] + v->bars[1][i]) / 2;
-    all += l;
-    if (i < nbass)
-      bass += l;
-  }
+  double all = 0;
+  for (int i = 0; i < n; ++i)
+    all += (v->bars[0][i] + v->bars[1][i]) / 2;
   all /= n;
-  bass /= nbass;
+  double bass = v->bass_db;
   r->loud = follow(r->loud, all, 0.08, 0.5, dt);
   r->energy = follow(r->energy, all, 0.03, 0.15, dt);
 
@@ -184,17 +196,29 @@ void wp_react_step(struct wp_react *r, const struct wp_viz *v,
   r->since_kick += dt;
   r->pulse *= exp(-dt / fmax(c->react_pulse_ms / 1000.0, 1e-3));
   r->kick *= exp(-dt / fmax(c->react_spin_kick_ms / 1000.0, 1e-3));
-  if (r->held && bass < r->bass_avg + KICK_RISE / 2)
+  /* The lowest bass in the last KICK_WINDOW_S (silence before it counts). */
+  double low = bass;
+  for (int i = 0; i < 16; ++i) {
+    r->hist_t[i] += dt;
+    if (r->hist_t[i] <= KICK_WINDOW_S)
+      low = fmin(low, r->hist[i]);
+  }
+  r->bass_peak = fmax(r->bass_peak, bass);
+  if (r->held && bass < r->bass_peak - KICK_RISE_DB / 2)
     r->held = false;
-  if (!r->held && bass > KICK_LEVEL && bass - r->bass_avg > KICK_RISE &&
-      r->since_kick >= KICK_GAP_S) {
+  if (!r->held && bass - low > KICK_RISE_DB &&
+      bass > v->peak - KICK_BELOW_PEAK_DB && r->since_kick >= KICK_GAP_S) {
     r->pulse = 1;
     r->kick += c->react_spin_kick;
     r->since_kick = 0;
     r->held = true;
+    r->bass_peak = bass;
   }
+  memmove(r->hist, r->hist + 1, sizeof(r->hist) - sizeof(r->hist[0]));
+  memmove(r->hist_t, r->hist_t + 1, sizeof(r->hist_t) - sizeof(r->hist_t[0]));
+  r->hist[15] = bass;
+  r->hist_t[15] = 0;
   r->bass = bass;
-  r->bass_avg = follow(r->bass_avg, bass, 0.4, 0.4, dt);
   if (r->pulse < 1e-3)
     r->pulse = 0;
   if (r->kick < 1e-3)
