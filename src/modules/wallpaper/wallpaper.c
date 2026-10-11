@@ -83,6 +83,7 @@ static const struct wallpaper_config defaults = {
     .react_pulse_ms = 150,
     .react_glow = true,
     .react_glow_amount = 0.6,
+    .react_glow_spin = 1.0,
     .react_spin = true,
     .react_spin_gain = 6,
     .react_spin_kick = 4,
@@ -191,6 +192,10 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, react_pulse_ms, 1, 10000, "how fast a bass hit eases back"),
     CFG_BOOL(S, react_glow,
              "the snowflake brightens with loudness (needs viz)"),
+    CFG_DOUBLE(S, react_glow_spin, 0, 1,
+               "brightness as the music spins the snowflake: this much of "
+               "the way to logo_glow at spin_visible_max (needs react_glow and "
+               "react_spin)"),
     CFG_DOUBLE(S, react_glow_amount, 0, 1,
                "brightness at full loudness, of the way to logo_glow"),
     CFG_BOOL(S, react_spin,
@@ -339,6 +344,16 @@ static double glow(void) {
   return w.cfg.spin_max > 0 ? fmin(w.boost / w.cfg.spin_max, 1) : 0;
 }
 
+/* How fast the music spins the logo, 0 (resting) .. 1 (spin_visible_max). */
+static double spin_glow(void) {
+  if (!w.cfg.react_spin)
+    return 0;
+  double rest = fabs(w.cfg.spin_speed), cap = w.cfg.spin_visible_max;
+  double music = w.cfg.react_spin_gain * w.react.energy + w.react.kick;
+  double v = fmin(rest * (1 + music), cap);
+  return cap > rest ? fmin(fmax((v - rest) / (cap - rest), 0), 1) : 0;
+}
+
 /* Speed past spin_visible_max, as a fraction of the most there can be. */
 static double over(void) {
   double cap = w.cfg.spin_visible_max;
@@ -355,7 +370,9 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->angle = w.angle;
   f->glow = glow();
   if (w.cfg.react_glow)
-    f->glow = fmax(f->glow, fmin(w.cfg.react_glow_amount * w.react.loud, 1));
+    f->glow = fmax(f->glow, fmax(fmin(w.cfg.react_glow_amount * w.react.loud,
+                                      1),
+                                 w.cfg.react_glow_spin * spin_glow()));
   f->pulse = w.cfg.react_pulse ? w.react.pulse : 0;
   for (int k = 0; k < 6; ++k)
     f->slide[k] =

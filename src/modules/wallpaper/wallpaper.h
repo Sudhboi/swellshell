@@ -70,6 +70,7 @@ struct wallpaper_config {
   int react_pulse_ms;       /* ease-back time constant */
   bool react_glow;          /* brightens with loudness */
   double react_glow_amount; /* of the way to logo_glow at full loudness */
+  double react_glow_spin;   /* the same at the fastest music spin */
   bool react_spin;          /* loudness and beats speed the spin up */
   double react_spin_gain;   /* x spin_speed extra at full loudness */
   double react_spin_kick;   /* x spin_speed extra per beat, decaying */

@@ -401,6 +401,8 @@ react_pulse_scale = 0.1
 react_pulse_ms = 150
 # the snowflake brightens with loudness (needs viz)
 react_glow = true
+# brightness as the music spins the snowflake: this much of the way to logo_glow at spin_visible_max (needs react_glow and react_spin)
+react_glow_spin = 1.0
 # brightness at full loudness, of the way to logo_glow
 react_glow_amount = 0.6
 # loudness and beats speed the snowflake up (needs viz)
