@@ -62,7 +62,17 @@ struct wallpaper_config {
   double viz_low_hz, viz_high_hz;
   double viz_fall;   /* gravity, levels per s^2 */
   double viz_jitter; /* 0: a perfect ring .. 1: the most irregular */
-  int viz_linger_ms; /* keep capturing this long after playback stops */
+  /* the logo reacting to the music (needs viz), each part on its own */
+  bool react_slide;         /* lambdas slide out by their slice of bands */
+  double react_slide_dist;  /* x logo_radius at full level */
+  bool react_pulse;         /* the logo grows on bass hits */
+  double react_pulse_scale; /* x logo_radius per hit */
+  int react_pulse_ms;       /* ease-back time constant */
+  bool react_glow;          /* brightens with loudness */
+  double react_glow_amount; /* of the way to logo_glow at full loudness */
+  bool react_spin;          /* loudness and beats speed the spin up */
+  double react_spin_gain;   /* x spin_speed extra at full loudness */
+  double react_spin_kick;   /* x spin_speed extra per beat, decaying */
 };
 
 /* One frame's worth of animation state. */
@@ -73,6 +83,8 @@ struct wp_frame {
   double glow;    /* logo brightness, 0 (logo) .. 1 (logo_glow) */
   double over;    /* speed past spin_visible_max, 0..1 of the most */
   int dir;        /* spin direction, 1 clockwise, -1 counter-clockwise */
+  double pulse;    /* logo growth, 0..1 of react_pulse_scale */
+  double slide[6]; /* lambda k moved out by this x logo radius */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
 };
@@ -112,6 +124,20 @@ struct wp_viz {
  * left and right channel (NULL: silence). */
 void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
                  const float (*db)[WP_VIZ_MAX], double dt);
+/* What the logo reacts to, from the bars. */
+struct wp_react {
+  double loud;           /* smoothed mean bar level, 0..1 */
+  double bass, bass_avg; /* the lowest bands now, and their slow average */
+  double pulse;          /* 1 on a bass hit, easing back to 0 */
+  double kick;           /* extra spin from beats (x spin_speed), decaying */
+  double since_kick;     /* s */
+  bool held; /* a kick fired and the bass hasn't fallen back since */
+  double slices[6];      /* per lambda, bass (0) to treble (5), 0..1 */
+};
+/* Follow the bars v by dt seconds. */
+void wp_react_step(struct wp_react *r, const struct wp_viz *v,
+                   const struct wallpaper_config *c, double dt);
+
 /* A bar's fixed irregularity, -1..1: one stable value per (side, bar, what)
  * so the ring isn't a perfect circle. */
 double wp_viz_hash(int side, int bar, int what);

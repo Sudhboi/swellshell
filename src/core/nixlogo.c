@@ -1,6 +1,9 @@
 /* The Nix snowflake, drawn as six filled lambda polygons. */
 #include "nixlogo.h"
 
+#include <math.h>
+#include <stddef.h>
+
 static const double PI = 3.14159265358979323846;
 
 /* One lambda from NixOS/nixos-artwork logo/nix-snowflake-colours.svg,
@@ -19,8 +22,29 @@ static void set_rgba(cairo_t *cr, uint32_t c, double alpha) {
                         (c & 0xff) / 255.0 * alpha);
 }
 
+/* The unrotated lambda's outward direction: its centroid, normalised. */
+static void lambda_dir(double *dx, double *dy) {
+  double x = 0, y = 0;
+  for (int i = 0; i < lambda_n; i++) {
+    x += lambda_pts[i][0];
+    y += lambda_pts[i][1];
+  }
+  double len = sqrt(x * x + y * y);
+  *dx = x / len;
+  *dy = y / len;
+}
+
 void nixlogo_draw(cairo_t *cr, double cx, double cy, double r, double angle,
                   uint32_t dark, uint32_t light, double alpha) {
+  nixlogo_draw_ex(cr, cx, cy, r, angle, dark, light, alpha, NULL);
+}
+
+void nixlogo_draw_ex(cairo_t *cr, double cx, double cy, double r,
+                     double angle, uint32_t dark, uint32_t light, double alpha,
+                     const double *slide) {
+  double dx = 0, dy = 0;
+  if (slide)
+    lambda_dir(&dx, &dy);
   cairo_save(cr);
   cairo_translate(cr, cx, cy);
   cairo_rotate(cr, angle);
@@ -33,6 +57,8 @@ void nixlogo_draw(cairo_t *cr, double cx, double cy, double r, double angle,
 
     cairo_save(cr);
     cairo_rotate(cr, k * PI / 3.0);
+    if (slide && slide[k] != 0)
+      cairo_translate(cr, dx * slide[k], dy * slide[k]);
     cairo_move_to(cr, lambda_pts[0][0], lambda_pts[0][1]);
     for (int i = 1; i < lambda_n; i++)
       cairo_line_to(cr, lambda_pts[i][0], lambda_pts[i][1]);

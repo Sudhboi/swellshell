@@ -11,5 +11,10 @@
  * light (0xRRGGBBAA). alpha multiplies opacity. */
 void nixlogo_draw(cairo_t *cr, double cx, double cy, double r, double angle,
                   uint32_t dark, uint32_t light, double alpha);
+/* The same, with lambda k (0..5, k = 0 dark) moved slide[k] x r outwards
+ * along its own direction from the centre. slide may be NULL. */
+void nixlogo_draw_ex(cairo_t *cr, double cx, double cy, double r,
+                     double angle, uint32_t dark, uint32_t light, double alpha,
+                     const double *slide);
 
 #endif

@@ -76,6 +76,16 @@ static const struct wallpaper_config defaults = {
     .viz_high_hz = 10000,
     .viz_fall = 4,
     .viz_jitter = 1,
+    .react_slide = true,
+    .react_slide_dist = 0.1,
+    .react_pulse = true,
+    .react_pulse_scale = 0.05,
+    .react_pulse_ms = 150,
+    .react_glow = true,
+    .react_glow_amount = 0.6,
+    .react_spin = true,
+    .react_spin_gain = 3,
+    .react_spin_kick = 1,
 };
 
 #define S struct wallpaper_config
@@ -169,6 +179,26 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, viz_jitter, 0, 1,
                "irregularity: each bar's angle, width, length and gain vary "
                "a little (0 = a perfect ring)"),
+    CFG_BOOL(S, react_slide,
+             "the snowflake's lambdas slide outwards with the music, each by "
+             "its own slice of the spectrum (needs viz)"),
+    CFG_DOUBLE(S, react_slide_dist, 0, 1,
+               "lambda slide at full level (x logo_radius)"),
+    CFG_BOOL(S, react_pulse, "the snowflake grows on bass hits (needs viz)"),
+    CFG_DOUBLE(S, react_pulse_scale, 0, 1,
+               "growth per bass hit (x logo_radius)"),
+    CFG_INT(S, react_pulse_ms, 1, 10000, "how fast a bass hit eases back"),
+    CFG_BOOL(S, react_glow,
+             "the snowflake brightens with loudness (needs viz)"),
+    CFG_DOUBLE(S, react_glow_amount, 0, 1,
+               "brightness at full loudness, of the way to logo_glow"),
+    CFG_BOOL(S, react_spin,
+             "loudness and beats speed the snowflake up (needs viz)"),
+    CFG_DOUBLE(S, react_spin_gain, 0, 100,
+               "extra speed at full loudness (x spin_speed)"),
+    CFG_DOUBLE(S, react_spin_kick, 0, 100,
+               "extra speed per beat, easing off over spin_decay_s (x "
+               "spin_speed)"),
 };
 #undef S
 
@@ -195,6 +225,7 @@ static struct {
   int64_t last_motion; /* ms of the last boosting pointer motion */
   struct wp_viz viz;
   double viz_time; /* s, drives the bars' wobble */
+  struct wp_react react;
 
   /* measured frame rate */
   int64_t fps_start;
@@ -214,12 +245,22 @@ static bool viz_showing(void) {
   return false;
 }
 
+/* The logo still shows the music (it lingers a little after the bars). */
+static bool reacting(void) {
+  if (w.react.loud > 1e-3 || w.react.pulse > 0 || w.react.kick > 0)
+    return true;
+  for (int k = 0; k < 6; ++k)
+    if (w.react.slices[k] > 1e-3)
+      return true;
+  return false;
+}
+
 /* The resting spin is slow enough for a low rate; a pointer-boosted one
  * and moving bars need more frames to look smooth. */
 int wp_fps_cap(void) {
   if (w.boost > 0.05)
     return w.cfg.fps_spin;
-  return viz_showing() ? w.cfg.fps_audio : w.cfg.fps;
+  return viz_showing() || reacting() ? w.cfg.fps_audio : w.cfg.fps;
 }
 
 /* ---- animation ---- */
@@ -258,7 +299,10 @@ static double advance(int64_t now) {
     return 0;
   if (dt > 0.1)
     dt = 0.1;
-  double omega = w.cfg.spin_speed * (1 + w.boost);
+  double music =
+      w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.loud + w.react.kick
+                       : 0;
+  double omega = w.cfg.spin_speed * (1 + w.boost + music);
   omega = copysign(fmin(fabs(omega), w.cfg.spin_visible_max), omega) * M_PI /
           180;
   w.angle = fmod(w.angle + omega * dt, 2 * M_PI);
@@ -284,6 +328,7 @@ static void advance_viz(double dt) {
       wp_viz_analyse(samples[s], rate, &w.cfg, db[s]);
   wp_viz_step(&w.viz, &w.cfg, fresh ? (const float (*)[WP_VIZ_MAX])db : NULL,
               dt);
+  wp_react_step(&w.react, &w.viz, &w.cfg, dt);
   w.viz_time = fmod(w.viz_time + dt, 3600);
 }
 
@@ -307,6 +352,12 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->level = wp_bar_level(&w.cfg, w.phase);
   f->angle = w.angle;
   f->glow = glow();
+  if (w.cfg.react_glow)
+    f->glow = fmax(f->glow, fmin(w.cfg.react_glow_amount * w.react.loud, 1));
+  f->pulse = w.cfg.react_pulse ? w.react.pulse : 0;
+  for (int k = 0; k < 6; ++k)
+    f->slide[k] =
+        w.cfg.react_slide ? w.cfg.react_slide_dist * w.react.slices[k] : 0;
   f->over = over();
   f->dir = w.cfg.spin_speed < 0 ? -1 : 1;
   f->nbars = viz_showing() ? w.cfg.viz_bars : 0;
@@ -368,9 +419,10 @@ static void update_animating(void) {
     loop_timer_disarm(w.battery_timer);
     loop_timer_disarm(w.idle_timer);
     wp_audio_stop();
-    bool glowing = w.boost > 0 || viz_showing();
+    bool glowing = w.boost > 0 || viz_showing() || reacting();
     w.boost = 0;
     memset(&w.viz, 0, sizeof(w.viz));
+    memset(&w.react, 0, sizeof(w.react));
     w.fps = 0;
     /* A window opened (or the user idled) mid-spin or mid-song: don't
      * leave the brightened logo or the bars as the frozen frame. */
@@ -560,6 +612,16 @@ static int command(int argc, char **argv, struct reply *r) {
           top[s] = fmaxf(top[s], w.viz.bars[s][i]);
       reply_printf(r, "viz: left %.2f, right %.2f (peak %.0f dB)\n", top[0],
                    top[1], w.viz.peak);
+      reply_printf(r,
+                   "react: loud %.2f, pulse %.2f, spin x%.2f (%s%s%s%s)\n",
+                   w.react.loud, w.react.pulse,
+                   1 + (w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.loud +
+                                               w.react.kick
+                                         : 0),
+                   w.cfg.react_slide ? " slide" : "",
+                   w.cfg.react_pulse ? " pulse" : "",
+                   w.cfg.react_glow ? " glow" : "",
+                   w.cfg.react_spin ? " spin" : "");
     }
     reply_printf(r, "outputs: %d\n", wp_surfaces_count());
     return 0;

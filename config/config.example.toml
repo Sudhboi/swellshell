@@ -389,3 +389,23 @@ viz_high_hz = 10000.0
 viz_fall = 4.0
 # irregularity: each bar's angle, width, length and gain vary a little (0 = a perfect ring)
 viz_jitter = 1.0
+# the snowflake's lambdas slide outwards with the music, each by its own slice of the spectrum (needs viz)
+react_slide = true
+# lambda slide at full level (x logo_radius)
+react_slide_dist = 0.1
+# the snowflake grows on bass hits (needs viz)
+react_pulse = true
+# growth per bass hit (x logo_radius)
+react_pulse_scale = 0.05
+# how fast a bass hit eases back
+react_pulse_ms = 150
+# the snowflake brightens with loudness (needs viz)
+react_glow = true
+# brightness at full loudness, of the way to logo_glow
+react_glow_amount = 0.6
+# loudness and beats speed the snowflake up (needs viz)
+react_spin = true
+# extra speed at full loudness (x spin_speed)
+react_spin_gain = 3.0
+# extra speed per beat, easing off over spin_decay_s (x spin_speed)
+react_spin_kick = 1.0

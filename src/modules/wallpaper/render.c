@@ -55,6 +55,10 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
   double k = pw / WP_REF_WIDTH;
   double r = c->logo_radius * k * fmax(c->bloom_radius, STREAK_OUTER) +
              c->streak_width * k + 1;
+  /* The logo itself at its biggest: pulsed, with its lambdas slid out. */
+  r = fmax(r, c->logo_radius * k * (1 + c->react_pulse_scale) *
+                      (1 + c->react_slide_dist) +
+                  2);
   if (ring)
     r = fmax(r, ring_outer(c, c->logo_radius * k, k) + 1);
   out[1] = clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r,
@@ -380,7 +384,10 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   draw_bar(cr, c, pw, f);
   if (f->over > 0)
     draw_streaks(cr, c, cx, cy, r, k, f);
-  nixlogo_draw(cr, cx, cy, r, f->angle, mix(c->logo, c->logo_glow, f->glow),
-               mix(c->logo_alt, c->logo_glow_alt, f->glow), 1.0);
+  /* The logo reacts to the music: it grows on bass hits and its lambdas
+   * slide out (both 0 without music). */
+  nixlogo_draw_ex(cr, cx, cy, r * (1 + c->react_pulse_scale * f->pulse),
+                  f->angle, mix(c->logo, c->logo_glow, f->glow),
+                  mix(c->logo_alt, c->logo_glow_alt, f->glow), 1.0, f->slide);
   cairo_restore(cr);
 }

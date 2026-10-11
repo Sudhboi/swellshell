@@ -141,6 +141,65 @@ void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
     }
 }
 
+/* Move x towards target with time constant up (rising) or down (falling). */
+static double follow(double x, double target, double up, double down,
+                     double dt) {
+  double tau = target > x ? up : down;
+  return target + (x - target) * exp(-dt / tau);
+}
+
+/* A bass hit: the bass jumped well above its recent average. A held note
+ * kicks once; the next kick needs the bass to fall back first. */
+#define KICK_LEVEL 0.45
+#define KICK_RISE 0.15
+#define KICK_GAP_S 0.12
+
+void wp_react_step(struct wp_react *r, const struct wp_viz *v,
+                   const struct wallpaper_config *c, double dt) {
+  if (dt <= 0)
+    return;
+  int n = c->viz_bars < WP_VIZ_MAX ? c->viz_bars : WP_VIZ_MAX;
+  int nbass = n / 8 > 0 ? n / 8 : 1;
+  double all = 0, bass = 0;
+  for (int i = 0; i < n; ++i) {
+    double l = (v->bars[0][i] + v->bars[1][i]) / 2;
+    all += l;
+    if (i < nbass)
+      bass += l;
+  }
+  all /= n;
+  bass /= nbass;
+  r->loud = follow(r->loud, all, 0.08, 0.5, dt);
+
+  for (int g = 0; g < 6; ++g) {
+    int i0 = g * n / 6, i1 = (g + 1) * n / 6;
+    double sum = 0;
+    for (int i = i0; i < i1; ++i)
+      sum += (v->bars[0][i] + v->bars[1][i]) / 2;
+    double level = i1 > i0 ? sum / (i1 - i0) : 0;
+    r->slices[g] = follow(r->slices[g], level, 0.03, 0.2, dt);
+  }
+
+  r->since_kick += dt;
+  r->pulse *= exp(-dt / fmax(c->react_pulse_ms / 1000.0, 1e-3));
+  r->kick *= exp(-dt / c->spin_decay_s);
+  if (r->held && bass < r->bass_avg + KICK_RISE / 2)
+    r->held = false;
+  if (!r->held && bass > KICK_LEVEL && bass - r->bass_avg > KICK_RISE &&
+      r->since_kick >= KICK_GAP_S) {
+    r->pulse = 1;
+    r->kick += c->react_spin_kick;
+    r->since_kick = 0;
+    r->held = true;
+  }
+  r->bass = bass;
+  r->bass_avg = follow(r->bass_avg, bass, 0.4, 0.4, dt);
+  if (r->pulse < 1e-3)
+    r->pulse = 0;
+  if (r->kick < 1e-3)
+    r->kick = 0;
+}
+
 double wp_viz_hash(int side, int bar, int what) {
   uint32_t x = (uint32_t)side * 0x9e3779b9u ^ (uint32_t)bar * 0x85ebca6bu ^
                (uint32_t)what * 0xc2b2ae35u;

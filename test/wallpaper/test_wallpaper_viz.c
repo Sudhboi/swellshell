@@ -105,5 +105,74 @@ int main(void) {
     assert(wp_viz_wobble(&still, 0, 5, t) == 1);
   }
   assert(wp_viz_wobble(c, 0, 5, 1) != wp_viz_wobble(c, 1, 5, 1));
+
+  /* React: steady bars settle the loudness at their mean, with no kick. */
+  struct wp_react r;
+  memset(&r, 0, sizeof(r));
+  memset(&v, 0, sizeof(v));
+  for (int i = 0; i < n; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.3f;
+  for (int i = 0; i < 180; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(fabs(r.loud - 0.3) < 0.01);
+  assert(r.pulse == 0 && r.kick == 0);
+  for (int g = 0; g < 6; ++g)
+    assert(fabs(r.slices[g] - 0.3) < 0.01);
+
+  /* A bass hit kicks once; a held note doesn't kick again. */
+  for (int i = 0; i < n / 8; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.9f;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.pulse == 1 && fabs(r.kick - c->react_spin_kick) < 1e-9);
+  double before = r.pulse;
+  for (int i = 0; i < 60; ++i) {
+    wp_react_step(&r, &v, c, 1 / 60.0);
+    assert(r.pulse < before); /* only easing back */
+    before = r.pulse;
+  }
+  /* Too soon after a hit nothing fires, even after a dip. */
+  memset(&r, 0, sizeof(r));
+  for (int i = 0; i < n / 8; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.3f;
+  for (int i = 0; i < 120; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  for (int i = 0; i < n / 8; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.9f;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.pulse == 1);
+  for (int i = 0; i < n / 8; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.3f;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  for (int i = 0; i < n / 8; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.9f;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.pulse < 1);
+  /* Once the bass has fallen back and the gap passed, the next hit kicks. */
+  for (int i = 0; i < n / 8; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.3f;
+  for (int i = 0; i < 30; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  for (int i = 0; i < n / 8; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.9f;
+  wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.pulse == 1);
+
+  /* Silence: everything returns to rest. */
+  memset(&v, 0, sizeof(v));
+  for (int i = 0; i < 600; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.loud < 1e-3 && r.pulse == 0 && r.kick == 0);
+  for (int g = 0; g < 6; ++g)
+    assert(r.slices[g] < 1e-3);
+
+  /* Slices go bass to treble: only bass bars raise only the first. */
+  memset(&r, 0, sizeof(r));
+  for (int i = 0; i < n / 6; ++i)
+    v.bars[0][i] = v.bars[1][i] = 0.8f;
+  for (int i = 0; i < 60; ++i)
+    wp_react_step(&r, &v, c, 1 / 60.0);
+  assert(r.slices[0] > 0.7);
+  for (int g = 1; g < 6; ++g)
+    assert(r.slices[g] < 1e-3);
   return 0;
 }

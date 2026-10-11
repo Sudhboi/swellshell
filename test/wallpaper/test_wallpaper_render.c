@@ -185,5 +185,42 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(a);
   cairo_surface_destroy(b);
   cairo_surface_destroy(t);
+
+  /* The logo reacting: a pulse, slid lambdas and the glow change only the
+   * small logo tile, and a partial repaint over them equals a full one. */
+  f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0.3};
+  a = render(c, f, dir, NULL);
+  f.pulse = 1;
+  f.glow = 0.6;
+  for (int i = 0; i < 6; ++i)
+    f.slide[i] = c->react_slide_dist * (i + 1) / 6.0;
+  t = render(c, f, dir, "wallpaper_react");
+  changed = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      if (px(a, x, y) != px(t, x, y)) {
+        assert(x >= r[1].x && x < r[1].x + r[1].w);
+        assert(y >= r[1].y && y < r[1].y + r[1].h);
+        changed++;
+      }
+  assert(changed > 0);
+  /* The most slid lambda's tip is out past the resting logo's radius. */
+  double rk = c->logo_radius * k;
+  int lit = 0;
+  for (double ang = 0; ang < 2 * M_PI; ang += 0.01) {
+    int x = (int)(W / 2 + cos(ang) * rk * 1.04);
+    int y = (int)(H / 2 + sin(ang) * rk * 1.04);
+    lit += px(t, x, y) != 0;
+    assert(px(a, x, y) == 0);
+  }
+  assert(lit > 0);
+  cr = cairo_create(a);
+  wp_render(cr, c, W, H, &f, false, false);
+  cairo_destroy(cr);
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      assert(px(a, x, y) == px(t, x, y));
+  cairo_surface_destroy(a);
+  cairo_surface_destroy(t);
   return 0;
 }
