@@ -431,6 +431,7 @@ static void reconfigure(const void *cfg) {
 static void finish(void) {
   bus_unsubscribe(on_bus, NULL);
   wp_surfaces_finish();
+  wp_render_finish();
   if (w.idle_note)
     ext_idle_notification_v1_destroy(w.idle_note);
   w.idle_note = NULL;

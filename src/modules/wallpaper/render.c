@@ -97,6 +97,71 @@ static void draw_bloom(cairo_t *cr, const struct wallpaper_config *c,
   cairo_pattern_destroy(p);
 }
 
+/* The bloom only changes with the overspeed, but its gradient is costly
+ * per pixel, so it is drawn over the background into a tile once per step
+ * of the overspeed and copied in from there. */
+#define BLOOM_STEPS 64
+
+static struct {
+  cairo_surface_t *tile;
+  int x, y; /* buffer position */
+  int pw, ph, step;
+  uint32_t background, bloom;
+  double logo_radius, bloom_radius, bloom_alpha;
+} bloom_cache;
+
+void wp_render_finish(void) {
+  if (bloom_cache.tile)
+    cairo_surface_destroy(bloom_cache.tile);
+  bloom_cache.tile = NULL;
+}
+
+static void paint_bloom(cairo_t *cr, const struct wallpaper_config *c,
+                        int pw, int ph, double r, double over) {
+  int step = (int)lround(fmin(over, 1) * BLOOM_STEPS);
+  if (step <= 0)
+    return;
+  double cx = pw / 2.0, cy = ph / 2.0;
+  if (!bloom_cache.tile || bloom_cache.pw != pw || bloom_cache.ph != ph ||
+      bloom_cache.step != step || bloom_cache.background != c->background ||
+      bloom_cache.bloom != c->bloom ||
+      bloom_cache.logo_radius != c->logo_radius ||
+      bloom_cache.bloom_radius != c->bloom_radius ||
+      bloom_cache.bloom_alpha != c->bloom_alpha) {
+    wp_render_finish();
+    double outer = r * (1 + (c->bloom_radius - 1) * step / BLOOM_STEPS);
+    int x0 = (int)floor(cx - outer) - 1, y0 = (int)floor(cy - outer) - 1;
+    int size = (int)ceil(cx + outer) + 1 - x0;
+    bloom_cache.tile =
+        cairo_image_surface_create(CAIRO_FORMAT_RGB24, size, size);
+    cairo_t *tc = cairo_create(bloom_cache.tile);
+    set_rgba(tc, c->background, 1.0);
+    cairo_set_operator(tc, CAIRO_OPERATOR_SOURCE);
+    cairo_paint(tc);
+    cairo_set_operator(tc, CAIRO_OPERATOR_OVER);
+    draw_bloom(tc, c, cx - x0, cy - y0, r, (double)step / BLOOM_STEPS);
+    cairo_destroy(tc);
+    bloom_cache.x = x0;
+    bloom_cache.y = y0;
+    bloom_cache.pw = pw;
+    bloom_cache.ph = ph;
+    bloom_cache.step = step;
+    bloom_cache.background = c->background;
+    bloom_cache.bloom = c->bloom;
+    bloom_cache.logo_radius = c->logo_radius;
+    bloom_cache.bloom_radius = c->bloom_radius;
+    bloom_cache.bloom_alpha = c->bloom_alpha;
+  }
+  cairo_save(cr);
+  cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+  cairo_set_source_surface(cr, bloom_cache.tile, bloom_cache.x,
+                           bloom_cache.y);
+  int size = cairo_image_surface_get_width(bloom_cache.tile);
+  cairo_rectangle(cr, bloom_cache.x, bloom_cache.y, size, size);
+  cairo_fill(cr);
+  cairo_restore(cr);
+}
+
 /* Arcs circling the logo, turning with it: bright at the leading end and
  * fading along a tail that lengthens with the overspeed. */
 static void draw_streaks(cairo_t *cr, const struct wallpaper_config *c,
@@ -162,14 +227,13 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   set_rgba(cr, c->background, 1.0);
   cairo_paint(cr);
   cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-
-  draw_bar(cr, c, pw, f);
   double k = pw / WP_REF_WIDTH, r = c->logo_radius * k;
   double cx = pw / 2.0, cy = ph / 2.0;
-  if (f->over > 0) {
-    draw_bloom(cr, c, cx, cy, r, f->over);
+  paint_bloom(cr, c, pw, ph, r, f->over); /* over the background, first */
+
+  draw_bar(cr, c, pw, f);
+  if (f->over > 0)
     draw_streaks(cr, c, cx, cy, r, k, f);
-  }
   nixlogo_draw(cr, cx, cy, r, f->angle, mix(c->logo, c->logo_glow, f->glow),
                mix(c->logo_alt, c->logo_glow_alt, f->glow), 1.0);
   cairo_restore(cr);

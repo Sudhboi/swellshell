@@ -73,6 +73,8 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph,
  * only the wp_regions() areas are touched. */
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
                const struct wp_frame *f, bool full);
+/* Free wp_render()'s cache. */
+void wp_render_finish(void);
 
 /* surface.c: one background layer surface per output */
 void wp_surfaces_init(struct swell_wl *wl);
