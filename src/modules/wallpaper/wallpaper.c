@@ -87,7 +87,7 @@ static const struct wallpaper_config defaults = {
     .react_glow_base = 0.5,
     .react_spin = true,
     .react_spin_gain = 6,
-    .react_spin_kick = 2,
+    .react_spin_kick = 0,
     .react_spin_kick_ms = 400,
 };
 

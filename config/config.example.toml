@@ -412,6 +412,6 @@ react_spin = true
 # extra speed at full loudness (x spin_speed)
 react_spin_gain = 6.0
 # extra speed per beat (x spin_speed)
-react_spin_kick = 2.0
+react_spin_kick = 0.0
 # how fast a beat's extra speed eases off
 react_spin_kick_ms = 400
