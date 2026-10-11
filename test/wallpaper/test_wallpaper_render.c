@@ -85,6 +85,99 @@ static cairo_surface_t *render(const struct wallpaper_config *c,
   return s;
 }
 
+/* The frame t ms into show s, over a normal frame base. */
+static struct wp_frame show_at(const struct wallpaper_config *c,
+                               enum wp_show s, double t,
+                               struct wp_frame base) {
+  wp_show_apply(c, s, t, &base);
+  return base;
+}
+
+static bool all_black(cairo_surface_t *s) {
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      if (px(s, x, y) != 0)
+        return false;
+  return true;
+}
+
+/* The launch and power-off animations, written out for a look:
+ * wallpaper_intro_*, wallpaper_scatter_*, wallpaper_crt_*. */
+static void test_shows(const struct wallpaper_config *c, const char *dir) {
+  struct wp_frame base = {.percent = 60, .level = 1, .angle = 0.3, .dir = 1};
+  cairo_surface_t *plain = render(c, base, dir, NULL);
+  char name[64];
+
+  /* Intro: nothing at the start, the lambdas on their way in mid-flight
+   * (away from the centre), and the plain frame once it's over. */
+  int len = wp_show_ms(c, WP_SHOW_INTRO);
+  assert(len > c->intro_ms);
+  cairo_surface_t *s = render(c, show_at(c, WP_SHOW_INTRO, 0, base), dir,
+                              "wallpaper_intro_0");
+  assert(all_black(s));
+  cairo_surface_destroy(s);
+  for (int i = 1; i <= 5; ++i) {
+    double t = len * i / 6.0;
+    snprintf(name, sizeof name, "wallpaper_intro_%d", i);
+    cairo_surface_destroy(render(c, show_at(c, WP_SHOW_INTRO, t, base), dir,
+                                 name));
+  }
+  struct wp_frame mid = show_at(c, WP_SHOW_INTRO, c->intro_ms * 0.5, base);
+  assert(mid.slide[0] > 0 && mid.slide[0] < c->intro_dist);
+  assert(mid.slide[5] > mid.slide[0]); /* the last one is further out */
+  assert(mid.bar_fade == 1);           /* the bar waits for the lock */
+  s = render(c, show_at(c, WP_SHOW_INTRO, len, base), dir, NULL);
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      assert(px(s, x, y) == px(plain, x, y));
+  cairo_surface_destroy(s);
+
+  /* Scatter: the lambdas go and the bar drains; black at the end. */
+  len = wp_show_ms(c, WP_SHOW_SCATTER);
+  for (int i = 0; i <= 5; ++i) {
+    double t = len * i / 5.0;
+    snprintf(name, sizeof name, "wallpaper_scatter_%d", i);
+    s = render(c, show_at(c, WP_SHOW_SCATTER, t, base), dir, name);
+    if (i == 0)
+      for (int y = 0; y < H; y += 3)
+        for (int x = 0; x < W; x += 3)
+          assert(px(s, x, y) == px(plain, x, y));
+    if (i == 5)
+      assert(all_black(s));
+    cairo_surface_destroy(s);
+  }
+  struct wp_frame sc = show_at(c, WP_SHOW_SCATTER, len * 0.5, base);
+  assert(sc.slide[0] > sc.slide[5]); /* the first one leaves first */
+  assert(sc.percent < base.percent);
+  s = render(c, show_at(c, WP_SHOW_SCATTER, len * 2, base), dir, NULL);
+  assert(all_black(s));
+  cairo_surface_destroy(s);
+
+  /* CRT: the logo shrinks to a dot, which becomes a line across the
+   * screen, then nothing. */
+  len = wp_show_ms(c, WP_SHOW_CRT);
+  for (int i = 0; i <= 8; ++i) {
+    double t = len * i / 8.0;
+    snprintf(name, sizeof name, "wallpaper_crt_%d", i);
+    s = render(c, show_at(c, WP_SHOW_CRT, t, base), dir, name);
+    if (i == 8)
+      assert(all_black(s));
+    cairo_surface_destroy(s);
+  }
+  struct wp_frame line = show_at(c, WP_SHOW_CRT, len * 0.78, base);
+  assert(line.logo_shrink == 1 && line.crt_alpha > 0.9);
+  assert(line.crt_w > W * 0.9 && line.crt_h < 10);
+  s = render(c, line, dir, "wallpaper_crt_line");
+  assert(px(s, 100, H / 2) != 0 && px(s, W - 100, H / 2) != 0);
+  assert(px(s, 100, H / 2 - 60) == 0);
+  /* No logo left, only the line and its glow. */
+  for (int y = H / 2 - 200; y < H / 2 - 40; y += 2)
+    for (int x = W / 2 - 200; x < W / 2 + 200; x += 2)
+      assert(px(s, x, y) == 0);
+  cairo_surface_destroy(s);
+  cairo_surface_destroy(plain);
+}
+
 int main(int argc, char **argv) {
   const char *dir = argc > 1 ? argv[1] : ".";
   const struct wallpaper_config *c = wallpaper_module.defaults;
@@ -693,6 +786,8 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(t);
   cairo_surface_destroy(cover);
   cairo_surface_destroy(white);
+
+  test_shows(c, dir);
   wp_render_finish();
   return 0;
 }

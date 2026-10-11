@@ -489,3 +489,29 @@ media_max_width = 1400.0
 media_fade_ms = 400
 # opacity of the details and the hexagon while paused
 media_paused_alpha = 0.5
+# launch animation: the lambdas fly in and lock together, when the daemon starts on an empty workspace (once per login)
+intro = true
+# each lambda's flight
+intro_ms = 1100
+# between one lambda's start and the next one's
+intro_stagger_ms = 90
+# where the lambdas start, in logo radii from the centre
+intro_dist = 4.0
+# the snowflake turns this many degrees into place as they fly in
+intro_turn = 120.0
+# power-off animation (`swell power off`) on an empty workspace: the lambdas scatter
+outro = true
+# the scatter's length
+outro_ms = 1800
+# chance of an old CRT's collapse instead of the scatter
+outro_crt_chance = 0.15
+# the CRT collapse's length
+outro_crt_ms = 1500
+# the screen stays black this long after a power-off animation, then the wallpaper comes back (if the system is still up)
+outro_hold_ms = 5000
+# the CRT's dot and line
+crt_color = "#e8f0ff"
+
+[power]
+# false turns the module off
+enable = true

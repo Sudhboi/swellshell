@@ -11,16 +11,19 @@
  * the pointer over the wallpaper spins the logo faster. */
 #include "wallpaper.h"
 
+#include <fcntl.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "anim.h"
 #include "battery.h"
 #include "bus.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "ext-idle-notify-v1-client-protocol.h"
+#include "ipc.h"
 #include "loop.h"
 #include "module.h"
 #include "sway.h"
@@ -128,6 +131,17 @@ static const struct wallpaper_config defaults = {
     .media_max_width = 1400,
     .media_fade_ms = 400,
     .media_paused_alpha = 0.5,
+    .intro = true,
+    .intro_ms = 1100,
+    .intro_stagger_ms = 90,
+    .intro_dist = 4,
+    .intro_turn = 120,
+    .outro = true,
+    .outro_ms = 1800,
+    .outro_crt_chance = 0.15,
+    .outro_crt_ms = 1500,
+    .outro_hold_ms = 5000,
+    .crt_color = 0xe8f0ffffu,
 };
 
 #define S struct wallpaper_config
@@ -337,6 +351,28 @@ static const struct cfg_field fields[] = {
             "how long the details take to fade in or out"),
     CFG_DOUBLE(S, media_paused_alpha, 0, 1,
                "opacity of the details and the hexagon while paused"),
+    CFG_BOOL(S, intro,
+             "launch animation: the lambdas fly in and lock together, when "
+             "the daemon starts on an empty workspace (once per login)"),
+    CFG_INT(S, intro_ms, 0, 10000, "each lambda's flight"),
+    CFG_INT(S, intro_stagger_ms, 0, 2000,
+            "between one lambda's start and the next one's"),
+    CFG_DOUBLE(S, intro_dist, 0, 100,
+               "where the lambdas start, in logo radii from the centre"),
+    CFG_DOUBLE(S, intro_turn, -3600, 3600,
+               "the snowflake turns this many degrees into place as they "
+               "fly in"),
+    CFG_BOOL(S, outro,
+             "power-off animation (`swell power off`) on an empty workspace: "
+             "the lambdas scatter"),
+    CFG_INT(S, outro_ms, 1, 10000, "the scatter's length"),
+    CFG_DOUBLE(S, outro_crt_chance, 0, 1,
+               "chance of an old CRT's collapse instead of the scatter"),
+    CFG_INT(S, outro_crt_ms, 1, 10000, "the CRT collapse's length"),
+    CFG_INT(S, outro_hold_ms, 0, 600000,
+            "the screen stays black this long after a power-off animation, "
+            "then the wallpaper comes back (if the system is still up)"),
+    CFG_COLOR(S, crt_color, "the CRT's dot and line"),
 };
 #undef S
 
@@ -375,6 +411,13 @@ static struct {
   double chase;       /* the running line, 0..6, while the length is unknown */
   bool chasing;
 
+  /* the launch or power-off animation: a power-off ends in black, which
+   * stays outro_hold_ms (no frames), then fades back over SHOW_RETURN_MS */
+  enum wp_show show;
+  int64_t show_start; /* ms */
+  bool show_black;    /* a power-off's black frame has been drawn */
+  struct loop_timer *hold_timer;
+
   /* measured frame rate */
   int64_t fps_start;
   int fps_frames;
@@ -384,7 +427,26 @@ static struct {
 const struct wallpaper_config *wp_config(void) { return &w.cfg; }
 bool wp_animating(void) { return w.animating; }
 bool wp_dozing(void) { return w.dozing; }
-bool wp_ticking(void) { return w.animating || w.dozing; }
+
+#define SHOW_RETURN_MS 800
+
+static bool outro_show(void) {
+  return w.show == WP_SHOW_SCATTER || w.show == WP_SHOW_CRT;
+}
+
+/* After a power-off: black, waiting for hold_timer. */
+static bool show_holding(void) {
+  return outro_show() && w.show_black &&
+         now_ms() - w.show_start <
+             wp_show_ms(&w.cfg, w.show) + (int64_t)w.cfg.outro_hold_ms;
+}
+
+bool wp_showing(void) { return w.show != WP_SHOW_NONE; }
+bool wp_ticking(void) {
+  if (show_holding())
+    return false;
+  return w.animating || w.dozing || wp_showing();
+}
 
 static bool viz_showing(void) {
   int n = w.cfg.viz_bars;
@@ -410,6 +472,8 @@ static bool reacting(void) {
 /* The resting spin is slow enough for a low rate; a pointer-boosted one
  * and moving bars need more frames to look smooth. */
 int wp_fps_cap(void) {
+  if (wp_showing())
+    return 0;
   if (w.boost > 0.05)
     return w.cfg.fps_spin;
   return viz_showing() || reacting() ? w.cfg.fps_audio : w.cfg.fps;
@@ -537,6 +601,34 @@ static double over(void) {
   return vmax > cap ? fmin(fmax((v - cap) / (vmax - cap), 0), 1) : 0;
 }
 
+/* Turn f into the show's frame at now, and end the show when it's over. */
+static void show_frame(int64_t now, struct wp_frame *f) {
+  if (!wp_showing())
+    return;
+  double t = now - w.show_start;
+  int len = wp_show_ms(&w.cfg, w.show);
+  if (w.show == WP_SHOW_INTRO) {
+    if (t >= len)
+      w.show = WP_SHOW_NONE;
+    else
+      wp_show_apply(&w.cfg, w.show, t, f);
+    return;
+  }
+  double hold_end = len + (double)w.cfg.outro_hold_ms;
+  if (t < hold_end) {
+    wp_show_apply(&w.cfg, w.show, t, f);
+    if (t >= len)
+      w.show_black = true;
+    return;
+  }
+  double u = (t - hold_end) / SHOW_RETURN_MS;
+  if (u >= 1) {
+    w.show = WP_SHOW_NONE;
+    return;
+  }
+  f->fade = 1 - u;
+}
+
 void wp_frame_at(int64_t now, struct wp_frame *f) {
   if (w.animating) {
     double dt = advance(now, false);
@@ -576,6 +668,11 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
     for (int i = 0; i < f->nbars; ++i)
       f->bars[s][i] = (float)fmin(
           w.viz.bars[s][i] * wp_viz_wobble(&w.cfg, s, i, w.viz_time), 1);
+  for (int k = 0; k < 6; ++k)
+    f->lambda_fade[k] = 0;
+  f->logo_shrink = f->bar_fade = f->flash = f->fade = 0;
+  f->crt_w = f->crt_h = f->crt_alpha = 0;
+  show_frame(now, f);
 }
 
 void wp_count_frame(int64_t now) {
@@ -600,6 +697,50 @@ static void read_battery(void) {
 
 static void on_battery_timer(struct loop_timer *t, void *data) {
   read_battery();
+}
+
+/* ---- the launch and power-off animations ---- */
+
+static void show_start(enum wp_show s) {
+  w.show = s;
+  w.show_start = now_ms();
+  w.show_black = false;
+  loop_timer_disarm(w.hold_timer);
+  if (outro_show())
+    loop_timer_arm(w.hold_timer,
+                   wp_show_ms(&w.cfg, s) + (int64_t)w.cfg.outro_hold_ms, 0);
+  bus_emit(s == WP_SHOW_INTRO ? "wallpaper.intro" : "wallpaper.outro",
+           s == WP_SHOW_INTRO   ? NULL
+           : s == WP_SHOW_CRT ? "SWELL_OUTRO=crt"
+                                : "SWELL_OUTRO=scatter",
+           NULL);
+  wp_surfaces_draw(false); /* and every draw asks for the next frame */
+}
+
+static void show_stop(void) {
+  if (!wp_showing())
+    return;
+  w.show = WP_SHOW_NONE;
+  loop_timer_disarm(w.hold_timer);
+  wp_surfaces_draw(false); /* the normal frame, whole */
+}
+
+/* The black is over: fade the wallpaper back in. */
+static void on_hold_timer(struct loop_timer *t, void *data) {
+  if (outro_show())
+    wp_surfaces_draw(false);
+}
+
+/* The intro plays once per login session: the marker sits next to the
+ * control socket in the runtime dir, which goes with the session. */
+static bool intro_first(void) {
+  char path[4096];
+  snprintf(path, sizeof path, "%s.intro", ipc_socket_path());
+  int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  if (fd < 0)
+    return false;
+  close(fd);
+  return true;
 }
 
 /* ---- the animate/freeze state machine ---- */
@@ -632,6 +773,9 @@ static void update_animating(void) {
   /* A window open freezes the plain wallpaper, as before the details
    * existed: no title and no hexagon. Idle on an empty workspace keeps
    * them. */
+  /* A show is only for the wallpaper; once it's covered, it's over. */
+  if (!w.ws_empty)
+    show_stop();
   bool cleared = !w.ws_empty && w.media_alpha > 0;
   if (cleared)
     w.media_alpha = 0;
@@ -770,6 +914,8 @@ static bool init(struct swell *sw, const void *cfg) {
   w.battery_timer =
       loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_battery_timer, NULL);
   w.idle_timer = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_idle_timer, NULL);
+  w.hold_timer = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_hold_timer, NULL);
+  srand48(now_ms() ^ getpid());
   int pct;
   bool charging;
   w.battery = battery_read(&pct, &charging) ? (pct > 100 ? 100 : pct) : -1;
@@ -785,6 +931,8 @@ static bool init(struct swell *sw, const void *cfg) {
   }
   w.ws_empty = empty != 0; /* without sway: always animate */
   update_animating();
+  if (w.cfg.intro && w.animating && intro_first())
+    show_start(WP_SHOW_INTRO);
   return true;
 }
 
@@ -834,7 +982,9 @@ static void finish(void) {
   w.idle_note = NULL;
   loop_remove_timer(w.battery_timer);
   loop_remove_timer(w.idle_timer);
-  w.battery_timer = w.idle_timer = NULL;
+  loop_remove_timer(w.hold_timer);
+  w.battery_timer = w.idle_timer = w.hold_timer = NULL;
+  w.show = WP_SHOW_NONE;
   w.animating = false;
   w.dozing = false;
 }
@@ -902,7 +1052,29 @@ static int command(int argc, char **argv, struct reply *r) {
                                                          : "none");
       }
     }
+    if (wp_showing())
+      reply_printf(r, "show: %s%s\n", wp_show_name(w.show),
+                   show_holding() ? " (black)" : "");
     reply_printf(r, "outputs: %d\n", wp_surfaces_count());
+    return 0;
+  }
+  /* Play the launch animation, or the power-off one; the reply is the ms
+   * until it ends (for a power-off, in black), 0 if it doesn't play. */
+  if ((strcmp(argv[0], "intro") == 0 || strcmp(argv[0], "outro") == 0) &&
+      argc == 1) {
+    bool intro = argv[0][0] == 'i';
+    int64_t left = 0;
+    if (outro_show() && !intro) {
+      /* Already powering off: the same one, not a restart. */
+      left = w.show_start + wp_show_ms(&w.cfg, w.show) - now_ms();
+    } else if (w.ws_empty && (intro || w.cfg.outro)) {
+      enum wp_show s = intro ? WP_SHOW_INTRO
+                       : drand48() < w.cfg.outro_crt_chance ? WP_SHOW_CRT
+                                                            : WP_SHOW_SCATTER;
+      show_start(s);
+      left = wp_show_ms(&w.cfg, s);
+    }
+    reply_printf(r, "%lld\n", (long long)(left > 0 ? left : 0));
     return 0;
   }
   if (strcmp(argv[0], "percent") == 0 && argc == 2) {
@@ -928,7 +1100,10 @@ const struct swell_module wallpaper_module = {
     .name = "wallpaper",
     .aliases = (const char *const[]){"wp", NULL},
     .usage = "  status                 animation state, battery, fps\n"
-             "  percent N|auto         show N% instead of the battery\n",
+             "  percent N|auto         show N% instead of the battery\n"
+             "  intro                  play the launch animation\n"
+             "  outro                  play the power-off animation (see "
+             "`swell power`)\n",
     .needs_wayland = true,
     .config_size = sizeof(struct wallpaper_config),
     .defaults = &defaults,

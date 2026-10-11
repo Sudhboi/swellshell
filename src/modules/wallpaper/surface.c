@@ -42,6 +42,7 @@ struct output {
   bool ringed[2]; /* holds visualiser bars, outside the small logo tile */
   bool still[2];  /* holds the frozen frame outside the bar (dozing) */
   bool texted[2]; /* holds the title and artist */
+  bool showed[2]; /* holds a launch or power-off frame */
   double bar_level, bar_percent; /* of the last commit */
   struct strip strips[2]; /* left, right; surface NULL unless shown */
   int width, height; /* logical, from configure */
@@ -240,6 +241,11 @@ static void draw(struct output *out, bool full) {
   int64_t now = now_ms();
   struct wp_frame f;
   wp_frame_at(now, &f);
+  /* A show moves things far outside the regions, so it is drawn whole, and
+   * so is the first frame after it in each buffer. */
+  bool showing = wp_showing();
+  if (showing || out->showed[i])
+    whole = true;
   /* Dozing, once both buffers hold the frozen frame, only the bar is
    * repainted, and nothing at all while it looks the same (the bar sits at
    * bar_min for much of each period): the timer paces until it changes. */
@@ -282,6 +288,7 @@ static void draw(struct output *out, bool full) {
   out->stale[i] = false;
   out->ringed[i] = cf.nbars > 0;
   out->texted[i] = f.media_alpha > 0;
+  out->showed[i] = showing;
   out->still[i] = wp_dozing();
   out->bar_level = f.level;
   out->bar_percent = f.percent;

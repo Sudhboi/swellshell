@@ -544,8 +544,22 @@ static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
   if (fw > 0)
     pill(cr, x + pad, y + pad, fw, c->bar_height * k);
   cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
-  set_rgba(cr, c->bar, f->level);
+  set_rgba(cr, c->bar, f->level * (1 - fmin(fmax(f->bar_fade, 0), 1)));
   cairo_fill(cr);
+}
+
+/* The power-off CRT: a bright pill (a dot or a line) in a soft glow. */
+static void draw_crt(cairo_t *cr, const struct wallpaper_config *c,
+                     double cx, double cy, double k,
+                     const struct wp_frame *f) {
+  double w = f->crt_w * k, h = f->crt_h * k, a = fmin(f->crt_alpha, 1);
+  static const double glow[][2] = {{4, 0.08}, {2, 0.15}, {0, 1}};
+  for (size_t i = 0; i < sizeof(glow) / sizeof(glow[0]); ++i) {
+    double pad = glow[i][0] * h;
+    pill(cr, cx - w / 2 - pad, cy - h / 2 - pad, w + 2 * pad, h + 2 * pad);
+    set_rgba(cr, c->crt_color, a * glow[i][1]);
+    cairo_fill(cr);
+  }
 }
 
 /* The title and artist, drawn once per track (and size and config) into a
@@ -784,6 +798,12 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
     cairo_clip(cr);
   }
   cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+  if (f->fade >= 1) { /* the end of a power-off: black */
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_paint(cr);
+    cairo_restore(cr);
+    return;
+  }
   set_rgba(cr, c->background, 1.0);
   cairo_paint(cr);
   cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
@@ -792,7 +812,8 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
    * cached tiles stay sharp. */
   cairo_translate(cr, round(f->shake_x * k), round(f->shake_y * k));
   double cx = pw / 2.0, cy = ph / 2.0;
-  paint_bloom(cr, c, pw, ph, r, f->over); /* over the background, first */
+  /* over the background, first */
+  paint_bloom(cr, c, pw, ph, r, fmax(f->over, f->flash));
   if (f->nbars > 0 && c->viz_edges && c->viz_edge_smooth)
     draw_edges_smooth(cr, c, pw, ph, f);
   else if (f->nbars > 0 && c->viz_edges)
@@ -806,10 +827,19 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
     draw_streaks(cr, c, cx, cy, r, k, f);
   /* The logo reacts to the music: it grows on bass hits and its lambdas
    * slide out (both 0 without music). */
-  double rp = r * (1 + c->react_pulse_scale * f->pulse);
+  double rp = r * (1 + c->react_pulse_scale * f->pulse) *
+              (1 - fmin(fmax(f->logo_shrink, 0), 1));
   draw_hex(cr, c, cx, cy, r, rp, f);
-  nixlogo_draw_ex(cr, cx, cy, rp, f->angle,
-                  mix(c->logo, c->logo_glow, f->glow),
-                  mix(c->logo_alt, c->logo_glow_alt, f->glow), 1.0, f->slide);
+  if (rp > 0)
+    nixlogo_draw_ex(cr, cx, cy, rp, f->angle,
+                    mix(c->logo, c->logo_glow, f->glow),
+                    mix(c->logo_alt, c->logo_glow_alt, f->glow), 1.0, f->slide,
+                    f->lambda_fade);
+  if (f->crt_alpha > 0 && f->crt_w > 0 && f->crt_h > 0)
+    draw_crt(cr, c, cx, cy, k, f);
+  if (f->fade > 0) {
+    cairo_set_source_rgba(cr, 0, 0, 0, f->fade);
+    cairo_paint(cr);
+  }
   cairo_restore(cr);
 }

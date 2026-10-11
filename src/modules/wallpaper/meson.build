@@ -3,6 +3,7 @@ wallpaper_src = files(
   'gl.c',
   'media.c',
   'render.c',
+  'show.c',
   'surface.c',
   'viz.c',
   'wallpaper.c',

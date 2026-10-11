@@ -115,6 +115,21 @@ struct wallpaper_config {
   double media_max_width; /* reference px, ellipsised past it */
   int media_fade_ms;
   double media_paused_alpha;
+  /* the launch animation: the lambdas fly in and lock together, once per
+   * login session, when the daemon starts on an empty workspace */
+  bool intro;
+  int intro_ms;         /* each lambda's flight */
+  int intro_stagger_ms; /* between one lambda's start and the next's */
+  double intro_dist;    /* where they start, x logo_radius out */
+  double intro_turn;    /* the logo unwinds from this many extra deg */
+  /* the power-off animation (`swell power off`): the lambdas scatter, or
+   * now and then the logo collapses like an old CRT */
+  bool outro;
+  int outro_ms;            /* the scatter */
+  double outro_crt_chance; /* 0..1, of the CRT collapse instead */
+  int outro_crt_ms;
+  int outro_hold_ms; /* black this long, then the wallpaper comes back */
+  uint32_t crt_color;
 };
 
 /* One frame's worth of animation state. */
@@ -134,6 +149,13 @@ struct wp_frame {
   double chase;    /* -1, or where the running line is, 0..6 */
   cairo_surface_t *art; /* the cover in grey (RGB24, square), or NULL */
   unsigned art_id;      /* changes with the cover */
+  /* the launch and power-off animations (all 0 otherwise) */
+  double lambda_fade[6]; /* lambda k's opacity taken away, 0..1 */
+  double logo_shrink;    /* the logo's size taken away, 0..1 */
+  double bar_fade;       /* the bar's opacity taken away, 0..1 */
+  double flash;          /* a bloom without speed lines, 0..1 */
+  double crt_w, crt_h, crt_alpha; /* the CRT's line or dot, reference px */
+  double fade;           /* black over everything, 0..1 */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
 };
@@ -297,14 +319,32 @@ const char *wp_surfaces_viz_renderer(void);
 void wp_surfaces_draw(bool full);
 int wp_surfaces_count(void);
 
+/* show.c: the launch and power-off timelines */
+enum wp_show {
+  WP_SHOW_NONE,
+  WP_SHOW_INTRO,   /* the lambdas assemble */
+  WP_SHOW_SCATTER, /* the lambdas scatter */
+  WP_SHOW_CRT,     /* spin up and collapse like an old CRT */
+};
+const char *wp_show_name(enum wp_show s);
+/* The show's length in ms. The power-off ones end in black. */
+int wp_show_ms(const struct wallpaper_config *c, enum wp_show s);
+/* Change f, a normal frame, into the show's frame t ms in. Past its length
+ * an intro is the normal frame and a power-off black. */
+void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
+                   double t, struct wp_frame *f);
+
 /* wallpaper.c, for surface.c */
 extern const struct swell_input wp_input;
 const struct wallpaper_config *wp_config(void);
 bool wp_animating(void);
 /* Idle on an empty workspace: the bar pulses, the rest is frozen. */
 bool wp_dozing(void);
-/* Animating or dozing: frames are wanted. */
+/* Animating or dozing or playing a show: frames are wanted. */
 bool wp_ticking(void);
+/* A show (or its black after power-off) is on screen: frames are drawn
+ * whole. */
+bool wp_showing(void);
 /* The frame rate cap right now (0: none). */
 int wp_fps_cap(void);
 /* Advance the animation to now (monotonic ms) and give the frame. */
