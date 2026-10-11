@@ -239,3 +239,18 @@ This is a git repo (initial commit `67e3835`, 2026-10-08, on the default branch,
 - XWayland windows in the overview.
 - The systemd user service from the home-manager module in a real login.
 - main (2026-10-10): **popup power draw.** The expanded popup's stats row shows the battery's power after the CPU, with 2 decimals: `PWR 12.34W` (the system's draw) when discharging, and `PWR ▲38.71W` (the charge rate, not the draw; btop's charging arrow) while charging (user's call). The value comes from `battery_power()` in core/battery.c: the battery's `power_now`, or `current_now × voltage_now` if there is no `power_now`. When the battery is full or idle on AC, it reads 0 and the item is hidden. The real system draw on AC isn't available: RAPL `energy_uj` is root-only here, and the USB-C supply reports no voltage. The render test gained `wide_stats.png`, the widest row, and it fits at the default width. Not verified on a discharging battery (the machine was on AC).
+- main (2026-10-11): **wallpaper spin effects.** Commit `5f3c284` contains the user's own uncommitted edits (`spin_hold_ms` 200: the boost only decays once the pointer has been still that long; `spin_max` 100) and these changes:
+  - **Speed:** the resting spin is 15°/s (was 7.5) and `spin_gain` is 0.008 (was 0.02), so the boost builds more slowly.
+  - **Visible cap:** the logo never visibly turns faster than `spin_visible_max` (200°/s). At ~2 rev/s it strobed and stopped reading as the Nix logo.
+  - **What shows the extra speed:**
+    - **Glow:** the logo colours mix toward `logo_glow`/`logo_glow_alt` by `boost / spin_max`.
+    - **Overspeed:** the speed past the cap, as 0..1 of the most there can be (`wp_frame.over`), fades in a radial **bloom** behind the logo (`bloom`, `bloom_radius`, `bloom_alpha`) and **speed lines** (`streak*`: 9 arcs on three rings at 1.08/1.16/1.24 × the logo radius, turning with the logo; each is 8 butt-capped segments fading toward the tail).
+    - **Rejected:** an afterimage trail of faded ghost logos looked bad (user's call); a smooth motion blur would still blur the logo's outline.
+  - **Freeze:** freezing mid-spin (a window opens, or the user goes idle) zeroes the boost and redraws once, so the frozen frame is the plain logo.
+  - **Repaint area:** `wp_regions()`'s logo tile now covers the bloom and the lines (about 2.6× the old area). The render test checks that the overspeed changes only that tile, and that a partial repaint equals a full one with glow and overspeed on.
+- main (2026-10-11): **wallpaper power while spinning.**
+  - **Problem:** the user saw about 10 W while spinning the logo. The radial-gradient bloom was 3.1 of the 3.5 ms per overspeed frame (2880x1800, offscreen bench), about 42% of a core at 120 fps.
+  - **Fix:** `render.c` caches the bloom drawn over the background in an RGB24 tile, rebuilt per `BLOOM_STEPS` (64) step of the overspeed or on a config/size change, and SOURCE-copies it each frame (`wp_render_finish()` frees it). The output is pixel-identical; an overspeed frame takes 0.7 ms, of which the speed lines are about 0.6.
+  - **Frame rate:** `fps_spin = 60` was tried and reverted at the user's request; the spin stays at the display rate (`fps_spin = 0`, 120 Hz).
+  - **Result:** the user reports much lower power while spinning. It hasn't been re-measured in watts.
+  - **Limit:** the cache holds one tile, so outputs of different sizes would rebuild it every frame. That is no worse than before the cache.
