@@ -219,6 +219,11 @@ int main(int argc, char **argv) {
   g.mem_used_gib = 27.3;
   g.mem_total_gib = 31.0;
   rc |= dump(&g, dir, "wide_stats");
+  /* non-Latin text falls back to fonts other than C->font */
+  struct info k = normal();
+  snprintf(k.media_title, sizeof k.media_title, "回声 Midu Echoing」");
+  snprintf(k.media_artist, sizeof k.media_artist, "杨胤岳 - Topic");
+  rc |= dump(&k, dir, "cjk_media");
   rc |= dump_anim(&c, dir, "anim_compact_many_ws", 1, 0);
   rc |= dump_anim(&c, dir, "anim_expand_quarter_many_ws", 1, 0.25);
 

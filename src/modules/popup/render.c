@@ -1,6 +1,7 @@
 /* Cairo drawing of the popup: clock, date, levels, network, media, stats. */
 #include "render.h"
 
+#include <pango/pangocairo.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -59,17 +60,50 @@ static void add_stop(cairo_pattern_t *p, double off, uint32_t c) {
       ((c >> 8) & 0xff) / 255.0, (c & 0xff) / 255.0);
 }
 
+/* Text is shaped by Pango so glyphs missing from C->font (CJK, …) fall
+ * back to other fonts; the toy font set alongside it is only used for
+ * metrics of ASCII and icon glyphs, which C->font has. */
+static double font_size;
+static bool font_bold;
+
 static void font(cairo_t *cr, double size, bool bold) {
   cairo_select_font_face(cr, C->font, CAIRO_FONT_SLANT_NORMAL,
                          bold ? CAIRO_FONT_WEIGHT_BOLD
                               : CAIRO_FONT_WEIGHT_NORMAL);
   cairo_set_font_size(cr, size);
+  font_size = size;
+  font_bold = bold;
+}
+
+static PangoLayout *layout(cairo_t *cr, const char *s) {
+  PangoLayout *l = pango_cairo_create_layout(cr);
+  PangoFontDescription *fd = pango_font_description_from_string(C->font);
+  pango_font_description_set_absolute_size(fd, font_size * PANGO_SCALE);
+  pango_font_description_set_weight(fd, font_bold ? PANGO_WEIGHT_BOLD
+                                                  : PANGO_WEIGHT_NORMAL);
+  pango_layout_set_font_description(l, fd);
+  pango_font_description_free(fd);
+  pango_layout_set_single_paragraph_mode(l, TRUE);
+  pango_layout_set_text(l, s, -1);
+  return l;
 }
 
 static double advance(cairo_t *cr, const char *s) {
-  cairo_text_extents_t ext;
-  cairo_text_extents(cr, s, &ext);
-  return ext.x_advance;
+  PangoLayout *l = layout(cr, s);
+  PangoRectangle log;
+  pango_layout_get_extents(l, NULL, &log);
+  g_object_unref(l);
+  return (double)log.width / PANGO_SCALE;
+}
+
+/* Draw s with its baseline starting at the current point. */
+static void show_text(cairo_t *cr, const char *s) {
+  double x, y;
+  cairo_get_current_point(cr, &x, &y);
+  PangoLayout *l = layout(cr, s);
+  cairo_move_to(cr, x, y - (double)pango_layout_get_baseline(l) / PANGO_SCALE);
+  pango_cairo_show_layout(cr, l);
+  g_object_unref(l);
 }
 
 /* Height of a capital/digit above the baseline in the current font. */
@@ -83,7 +117,7 @@ static void text_at(cairo_t *cr, double x, double y, const char *s,
                     uint32_t col) {
   set_rgba(cr, col, 1.0);
   cairo_move_to(cr, x, y);
-  cairo_show_text(cr, s);
+  show_text(cr, s);
   cairo_new_path(cr);
 }
 
@@ -209,7 +243,7 @@ static double piece_width(cairo_t *cr, const struct piece *p) {
   cairo_text_extents_t ext;
   cairo_text_extents(cr, p->s, &ext);
   if (!p->icon)
-    return ext.x_advance;
+    return advance(cr, p->s);
   double ink = ext.x_bearing + ext.width;
   return (ink > ext.x_advance ? ink : ext.x_advance) + C->icon_gap;
 }
@@ -498,7 +532,7 @@ static void ws_cell(cairo_t *cr, const struct workspace *ws, double x, double y,
   set_rgba(cr, col, alpha);
   cairo_move_to(cr, x + (w - advance(cr, name)) / 2.0,
                 y + (h + cap_height(cr)) / 2.0);
-  cairo_show_text(cr, name);
+  show_text(cr, name);
   cairo_new_path(cr);
 }
 
