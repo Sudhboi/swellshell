@@ -20,7 +20,7 @@ struct popup_config {
       ws_focus, warn, hold;
   int battery_low_pct;
   /* timing, ms */
-  int refresh_ms, command_timeout_ms, pop_ms, close_ms, expand_delay_ms, expand_ms, media_ms;
+  int refresh_ms, command_timeout_ms, pop_ms, close_ms, expand_delay_ms, expand_ms;
   /* layout */
   double gap_date, gap_sep, gap_cols, gap_bar, bar_h, col_inset, gap_rows,
       row_step, sec_gap, icon_gap, mini_font, mini_gap;

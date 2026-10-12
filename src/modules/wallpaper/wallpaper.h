@@ -279,8 +279,6 @@ const struct wp_media *wp_media_get(void);
 /* The current track's cover in grey (RGB24, a centred square), or NULL;
  * id changes whenever it does. */
 cairo_surface_t *wp_media_art(unsigned *id);
-/* Load an image file as a grey square (NULL if it can't be read). */
-cairo_surface_t *wp_media_load_art(const char *path);
 
 /* gl.c: the smooth edge visualiser on the GPU */
 struct wl_display;

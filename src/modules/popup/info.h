@@ -40,11 +40,6 @@ struct info {
   char net_name[64]; /* SSID or connection name */
   int net_signal;    /* wifi signal percent, -1 if unknown */
 
-  bool has_media; /* a player exists */
-  bool playing;
-  char media_title[160];
-  char media_artist[128];
-
   int cpu; /* percent, -1 until two samples exist */
   double mem_used_gib, mem_total_gib;
   long uptime_s;

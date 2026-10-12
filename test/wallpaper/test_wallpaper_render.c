@@ -10,6 +10,7 @@
 
 #include <jpeglib.h>
 
+#include "art.h"
 #include "module.h"
 #include "wallpaper/wallpaper.h"
 
@@ -585,18 +586,18 @@ int main(int argc, char **argv) {
     snprintf(path, sizeof path, "%s/wallpaper_cover_in.png", dir);
     assert(cairo_surface_write_to_png(in, path) == CAIRO_STATUS_SUCCESS);
     cairo_surface_destroy(in);
-    cairo_surface_t *art = wp_media_load_art(path);
+    cairo_surface_t *art = art_load(path, true);
     assert(art && cairo_image_surface_get_width(art) == 200 &&
            cairo_image_surface_get_height(art) == 200);
     assert(px(art, 10, 100) == 0x363636 && px(art, 190, 100) == 0x121212);
     assert(px(art, 99, 100) == 0x363636 && px(art, 100, 100) == 0x121212);
     cairo_surface_destroy(art);
     snprintf(path, sizeof path, "%s/no-such-cover.png", dir);
-    assert(!wp_media_load_art(path));
+    assert(!art_load(path, true));
     /* A JPEG (a 400x250 one cut to 250x250), and broken files. */
     snprintf(path, sizeof path, "%s/wallpaper_cover_in.jpg", dir);
     write_jpeg(path, 400, 250, 200, 100, 50);
-    art = wp_media_load_art(path);
+    art = art_load(path, true);
     assert(art && cairo_image_surface_get_width(art) == 250);
     int want = (int)lround(0.2126 * 200 + 0.7152 * 100 + 0.0722 * 50);
     assert(abs((int)(px(art, 125, 125) & 0xff) - want) <= 3);
@@ -606,12 +607,12 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 200; ++i)
       fputc(0, jf); /* the header's tables zeroed */
     fclose(jf);
-    assert(!wp_media_load_art(path) || 1); /* no crash either way */
+    assert(!art_load(path, true) || 1); /* no crash either way */
     snprintf(path, sizeof path, "%s/wallpaper_cover_bad.png", dir);
     jf = fopen(path, "wb");
     fputs("\x89PNG\r\n\x1a\nnot really", jf);
     fclose(jf);
-    assert(!wp_media_load_art(path));
+    assert(!art_load(path, true));
   }
 
   /* The details: under the logo inside their region, which is empty

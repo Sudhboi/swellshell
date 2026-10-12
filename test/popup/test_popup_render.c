@@ -14,10 +14,10 @@ extern const struct swell_module popup_module;
 
 static struct popup_config cfg;
 
-static int dump_media(const struct info *in, const char *dir, const char *name,
-                      double pop, double expand, double media) {
+static int dump_anim(const struct info *in, const char *dir, const char *name,
+                     double pop, double expand) {
   cairo_t *cr = canvas(cfg.width, popup_surface_height(&cfg));
-  popup_render(cr, &cfg, in, pop, expand, media, 0);
+  popup_render(cr, &cfg, in, pop, expand, 0);
   save_png(cr, dir, name);
   /* Fully popped, the panel's bottom edge rests at y = height. */
   int bad = pop >= 1 && (pixel(cr, 0.5, cfg.height - 4) != cfg.border ||
@@ -28,18 +28,13 @@ static int dump_media(const struct info *in, const char *dir, const char *name,
   return bad;
 }
 
-static int dump_anim(const struct info *in, const char *dir, const char *name,
-                     double pop, double expand) {
-  return dump_media(in, dir, name, pop, expand, in->has_media);
-}
-
 /* The compact panel with the hold line run to hold. It traces the border
  * from the bottom-left corner: along the bottom first, and down the left
  * side last. */
 static int dump_hold(const struct info *in, const char *dir, const char *name,
                      double expand, double hold) {
   cairo_t *cr = canvas(cfg.width, popup_surface_height(&cfg));
-  popup_render(cr, &cfg, in, 1, expand, in->has_media, hold);
+  popup_render(cr, &cfg, in, 1, expand, hold);
   save_png(cr, dir, name);
   double inset = 1 + cfg.hold_h / 2; /* the line's middle */
   int bad = 0;
@@ -62,10 +57,9 @@ static int dump(const struct info *in, const char *dir, const char *name) {
 /* The logical y of the panel's top edge (the first border-coloured pixel
  * down the left edge), or -1 if no panel is drawn. Unlike the content, this
  * doesn't depend on the installed fonts. */
-static double panel_top(const struct info *in, double pop, double expand,
-                        double media) {
+static double panel_top(const struct info *in, double pop, double expand) {
   cairo_t *cr = canvas(cfg.width, popup_surface_height(&cfg));
-  popup_render(cr, &cfg, in, pop, expand, media, 0);
+  popup_render(cr, &cfg, in, pop, expand, 0);
   double top = -1;
   for (int py = 0; py < popup_surface_height(&cfg) * SCALE; ++py)
     if (pixel(cr, 0.5, (py + 0.5) / SCALE) == cfg.border) {
@@ -82,32 +76,25 @@ static int check(bool ok, const char *what) {
   return !ok;
 }
 
-/* How pop, expand and media move the panel's top edge. */
-static int check_geometry(const struct info *with_media,
-                          const struct info *no_media) {
+/* How pop and expand move the panel's top edge. */
+static int check_geometry(const struct info *in) {
   int rc = 0;
-  double compact = panel_top(with_media, 1, 0, 1);
-  double quarter = panel_top(with_media, 1, 0.25, 1);
-  double half = panel_top(with_media, 1, 0.5, 1);
-  double full = panel_top(with_media, 1, 1, 1);
-  double media_quarter = panel_top(with_media, 1, 1, 0.25);
-  double media_three_quarter = panel_top(with_media, 1, 1, 0.75);
+  double compact = panel_top(in, 1, 0);
+  double quarter = panel_top(in, 1, 0.25);
+  double half = panel_top(in, 1, 0.5);
+  double full = panel_top(in, 1, 1);
   rc |= check(compact > 0 && full >= 0, "a panel is drawn");
   rc |= check(compact > quarter && quarter > half && half > full,
               "expanding grows the panel upward");
-  rc |= check(media_quarter > media_three_quarter && media_three_quarter > full,
-              "opening the media row grows the panel upward");
-  rc |= check(panel_top(no_media, 1, 1, 0) > full,
-              "the panel is shorter without media");
-  rc |= check(panel_top(no_media, 1, 0, 0) == compact,
-              "the compact panel doesn't depend on media");
-  rc |= check(panel_top(with_media, 0.5, 0, 1) > compact,
+  if (full != 0)
+    fprintf(stderr, "full panel top at %.1f\n", full);
+  rc |= check(full == 0, "the full panel fills the surface's height");
+  rc |= check(panel_top(in, 0.5, 0) > compact,
               "half popped, the panel is lower");
-  rc |=
-      check(panel_top(with_media, 0, 0, 1) < 0, "not popped, nothing is drawn");
+  rc |= check(panel_top(in, 0, 0) < 0, "not popped, nothing is drawn");
 
   cairo_t *cr = canvas(cfg.width, popup_surface_height(&cfg));
-  popup_render(cr, &cfg, with_media, 1, 1, 1, 0);
+  popup_render(cr, &cfg, in, 1, 1, 0);
   double mid = (full + cfg.height) / 2;
   rc |= check(pixel(cr, cfg.width - 0.5, mid) == cfg.border,
               "the right border is at the surface's right edge");
@@ -135,10 +122,6 @@ static struct info normal(void) {
   in.net = NET_WIFI;
   snprintf(in.net_name, sizeof in.net_name, "home-5G");
   in.net_signal = 72;
-  in.has_media = true;
-  in.playing = true;
-  snprintf(in.media_title, sizeof in.media_title, "Teardrop");
-  snprintf(in.media_artist, sizeof in.media_artist, "Massive Attack");
   in.cpu = 12;
   in.mem_used_gib = 5.1;
   in.mem_total_gib = 15.5;
@@ -166,15 +149,12 @@ int main(int argc, char **argv) {
   rc |= dump_hold(&a, dir, "anim_hold_expand_quarter", 0.25, 1);
   rc |= dump_anim(&a, dir, "anim_expand_quarter", 1, 0.25);
   rc |= dump_anim(&a, dir, "anim_expand_half", 1, 0.5);
-  rc |= dump_media(&a, dir, "anim_media_quarter", 1, 1, 0.25);
-  rc |= dump_media(&a, dir, "anim_media_three_quarter", 1, 1, 0.75);
 
   struct info b = normal();
   b.muted = true;
   b.battery = 9;
   b.net = NET_OFFLINE;
   b.net_name[0] = '\0';
-  b.has_media = false;
   b.cpu = -1;
   b.uptime_s = 7 * 60;
   b.ws_count = 2;
@@ -185,12 +165,6 @@ int main(int argc, char **argv) {
   rc |= dump_anim(&b, dir, "anim_compact_muted_low", 1, 0);
 
   struct info c = normal();
-  c.playing = false;
-  snprintf(c.media_title, sizeof c.media_title,
-           "Symphony No. 9 in D minor, Op. 125 \"Choral\": IV. Presto "
-           "– Allegro assai – Ode an die Freude");
-  snprintf(c.media_artist, sizeof c.media_artist,
-           "Berliner Philharmoniker, Herbert von Karajan");
   c.charging = true;
   c.has_power = true;
   c.power_charging = true;
@@ -209,7 +183,7 @@ int main(int argc, char **argv) {
   snprintf(c.ws[7].name, sizeof c.ws[7].name, "mail");
   c.ws[2].focused = false;
   c.ws[11].focused = true;
-  rc |= dump(&c, dir, "long_media");
+  rc |= dump(&c, dir, "long");
   /* the widest stats row: on battery, with every field long */
   struct info g = c;
   g.charging = false;
@@ -221,9 +195,8 @@ int main(int argc, char **argv) {
   rc |= dump(&g, dir, "wide_stats");
   /* non-Latin text falls back to fonts other than C->font */
   struct info k = normal();
-  snprintf(k.media_title, sizeof k.media_title, "回声 Midu Echoing」");
-  snprintf(k.media_artist, sizeof k.media_artist, "杨胤岳 - Topic");
-  rc |= dump(&k, dir, "cjk_media");
+  snprintf(k.net_name, sizeof k.net_name, "咖啡店 回声");
+  rc |= dump(&k, dir, "cjk_net");
   rc |= dump_anim(&c, dir, "anim_compact_many_ws", 1, 0);
   rc |= dump_anim(&c, dir, "anim_expand_quarter_many_ws", 1, 0.25);
 
@@ -233,7 +206,6 @@ int main(int argc, char **argv) {
   d.has_brightness = false;
   d.net = NET_UNKNOWN;
   d.net_name[0] = '\0';
-  d.media_artist[0] = '\0';
   d.charging = true;
   d.has_power = false;
   d.net_signal = 20;
@@ -258,7 +230,7 @@ int main(int argc, char **argv) {
   rc |= dump_anim(&f, dir, "anim_compact_one_ws", 1, 0);
   rc |= dump_anim(&f, dir, "anim_expand_quarter_one_ws", 1, 0.25);
 
-  rc |= check_geometry(&a, &b);
+  rc |= check_geometry(&a);
 
   return rc;
 }

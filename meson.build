@@ -67,6 +67,7 @@ tomlc17_dep = declare_dependency(link_with: tomlc17,
 core_inc = include_directories('src/core', 'src/modules')
 core_src = files(
   'src/core/anim.h',
+  'src/core/art.c',
   'src/core/battery.c',
   'src/core/buffer.c',
   'src/core/bus.c',
@@ -90,8 +91,8 @@ core_dep = declare_dependency(link_with: core, include_directories: core_inc,
 # ---- modules: each subdir lists its sources in a <name>_src variable ----
 # Keep this list in sync with src/modules/modules.c and test/meson.build.
 module_src = files('src/modules/modules.c')
-foreach m : ['osd', 'popup', 'overview', 'workspaces', 'runner', 'wallpaper',
-    'power']
+foreach m : ['osd', 'popup', 'media', 'overview', 'workspaces', 'runner',
+    'wallpaper', 'power']
   subdir('src/modules' / m)
   module_src += get_variable(m + '_src')
 endforeach

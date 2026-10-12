@@ -1,6 +1,7 @@
 /* popup: a "hold to peek" overlay. `swell popup show` slides a panel up
  * from the bottom with a big clock; held for expand_delay_ms it grows to the
- * full details (date, levels, network, media, stats, workspaces).
+ * full details (date, levels, network, stats, workspaces); the media
+ * module drops its panel down at the top then.
  * `swell popup hide` slides it back down. */
 #include "popup.h"
 
@@ -22,7 +23,7 @@
 static const struct popup_config defaults = {
     .namespace = "popup",
     .width = 560,
-    .height = 529,
+    .height = 484,
     .pad = 36,
     .bottom_gap = 12,
     .font = "IosevkaTerm Nerd Font",
@@ -49,7 +50,6 @@ static const struct popup_config defaults = {
     .close_ms = 220,
     .expand_delay_ms = 2000,
     .expand_ms = 260,
-    .media_ms = 260,
     .gap_date = 28,
     .gap_sep = 34,
     .gap_cols = 34,
@@ -80,7 +80,7 @@ static const struct cfg_field fields[] = {
     CFG_STRING(S, namespace, "layer-shell namespace of the surface"),
     CFG_INT(S, width, 1, 4096, "panel width, logical px"),
     CFG_INT(S, height, 1, 4096,
-            "tallest panel (with a media row) and the surface height"),
+            "tallest panel and the surface height"),
     CFG_INT(S, pad, 0, 1024, "inner padding of the panel"),
     CFG_INT(S, bottom_gap, 0, 1024,
             "gap between the bottom edge (or bar) and the panel"),
@@ -105,13 +105,12 @@ static const struct cfg_field fields[] = {
             "battery at or below this (discharging) is shown in warn"),
     CFG_INT(S, refresh_ms, 100, 600000, "refresh period while shown"),
     CFG_INT(S, command_timeout_ms, 100, 600000,
-            "kill wpctl/nmcli/playerctl if one is still running after this"),
+            "kill wpctl/nmcli if one is still running after this"),
     CFG_INT(S, pop_ms, 0, 10000, "slide up into place"),
     CFG_INT(S, close_ms, 0, 10000, "slide back down"),
     CFG_INT(S, expand_delay_ms, 0, 600000,
             "hold this long to reveal the details"),
     CFG_INT(S, expand_ms, 0, 10000, "clock-only to full panel"),
-    CFG_INT(S, media_ms, 0, 10000, "media row opening/closing while expanded"),
     CFG_DOUBLE(S, gap_date, 0, 1024, "clock baseline to date cap top"),
     CFG_DOUBLE(S, gap_sep, 0, 1024, "date baseline to separator"),
     CFG_DOUBLE(S, gap_cols, 0, 1024,
@@ -152,8 +151,6 @@ static struct {
   double pop_from, pop_to; /* 0 -> 1 open, x -> 0 close */
   bool closing;            /* surface is destroyed once the close ends */
   int64_t expand_at;       /* ms, 0 until the details are revealed */
-  int64_t media_at;        /* ms: start of the media row tween */
-  double media_from, media_to;
   int64_t hold_at;         /* ms: expand timer armed, 0 while not running */
   double hold;             /* hold line, kept as it was when it stopped */
 } p;
@@ -167,25 +164,6 @@ static int pop_ms(void) { return p.closing ? p.cfg.close_ms : p.cfg.pop_ms; }
 static double pop_value(int64_t now, bool *more) {
   double t = tween(p.pop_at, pop_ms(), now, more);
   return p.pop_from + (p.pop_to - p.pop_from) * t;
-}
-
-static double media_value(int64_t now, bool *more) {
-  double t = tween(p.media_at, p.cfg.media_ms, now, more);
-  return p.media_from + (p.media_to - p.media_from) * t;
-}
-
-/* Follow info.has_media: tween the media row while the details are
- * showing, otherwise just snap to it. */
-static void sync_media(void) {
-  double to = p.info.has_media ? 1 : 0;
-  if (to == p.media_to)
-    return;
-  bool more = false;
-  int64_t now = now_ms();
-  bool showing = p.expand_at && layer_surface_shown(p.surf);
-  p.media_from = showing ? media_value(now, &more) : to;
-  p.media_to = to;
-  p.media_at = now;
 }
 
 /* How far the expand delay has run (linear, so the hold line runs at the
@@ -209,9 +187,8 @@ static bool draw(cairo_t *cr, void *data) {
   double pop = pop_value(now, &more);
   double expand =
       p.expand_at ? tween(p.expand_at, p.cfg.expand_ms, now, &more) : 0;
-  double media = media_value(now, &more);
   double hold = p.cfg.hold_h > 0 ? hold_value(now, &more) : 0;
-  popup_render(cr, &p.cfg, &p.info, pop, expand, media, hold);
+  popup_render(cr, &p.cfg, &p.info, pop, expand, hold);
   return more;
 }
 
@@ -324,7 +301,6 @@ static void on_expand(struct loop_timer *t, void *data) {
 
 /* Command output lands even when hidden; redraw only if shown. */
 static void on_info_changed(void *data) {
-  sync_media();
   if (layer_surface_shown(p.surf))
     layer_surface_redraw(p.surf);
 }

@@ -129,7 +129,7 @@ static void read_uptime(struct info *in) {
 
 /* --- async commands --- */
 
-enum { CMD_VOLUME, CMD_NETDEV, CMD_WIFI, CMD_MEDIA, CMD_COUNT };
+enum { CMD_VOLUME, CMD_NETDEV, CMD_WIFI, CMD_COUNT };
 
 /* A command still running at the next tick isn't re-spawned; after this
  * long it is killed. */
@@ -152,15 +152,11 @@ static const char *const argv_netdev[] = {
 static const char *const argv_wifi[] = {
     "nmcli",    "-t", "-f", "IN-USE,SIGNAL", "device", "wifi", "list",
     "--rescan", "no", NULL};
-static const char *const argv_media[] = {"playerctl", "metadata", "--format",
-                                         "{{status}}\t{{artist}}\t{{title}}",
-                                         NULL};
 
 static struct cmd cmds[CMD_COUNT] = {
     [CMD_VOLUME] = {.argv = argv_volume, .fd = -1},
     [CMD_NETDEV] = {.argv = argv_netdev, .fd = -1},
     [CMD_WIFI] = {.argv = argv_wifi, .fd = -1},
-    [CMD_MEDIA] = {.argv = argv_media, .fd = -1},
 };
 
 static struct loop *loop;
@@ -330,20 +326,6 @@ static void parse(struct info *in, int which, char *out) {
         break;
       }
     }
-    break;
-  }
-  case CMD_MEDIA: {
-    out[strcspn(out, "\n")] = '\0';
-    char *artist = strchr(out, '\t'),
-         *title = artist ? strchr(artist + 1, '\t') : NULL;
-    in->has_media = title != NULL;
-    if (!in->has_media)
-      break;
-    *artist++ = '\0';
-    *title++ = '\0';
-    in->playing = !strcmp(out, "Playing");
-    copy_str(in->media_artist, sizeof(in->media_artist), artist);
-    copy_str(in->media_title, sizeof(in->media_title), title);
     break;
   }
   }

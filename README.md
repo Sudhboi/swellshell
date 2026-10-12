@@ -5,7 +5,8 @@ A small shell for sway in one daemon. It merges five earlier tools and adds a li
 | module | was | what it does |
 |---|---|---|
 | `osd` | nixosd | volume/brightness OSD with a rotating Nix snowflake |
-| `popup` | popup | hold-to-peek panel: clock, date, levels, network, media, CPU/RAM, workspaces |
+| `popup` | popup | hold-to-peek panel: clock, date, levels, network, CPU/RAM, workspaces |
+| `media` | (new) | what's playing (cover, title, artist, album, progress) in a panel at the top while the popup shows its details |
 | `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav |
 | `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n |
 | `runner` | awww-kill | runs shell commands on events (none by default) |
@@ -17,6 +18,7 @@ Every module runs in a single event loop. They share one Wayland connection and 
 swell daemon                 # run everything (replaces a running daemon)
 swell osd vol 40 [mute]      # swell osd bri 80, swell osd 40
 swell popup show|hide|toggle
+swell media show|hide|toggle|play-pause|status
 swell overview [open|close|toggle]
 swell ws next|prev|goto N|reorder
 swell runner fire EVENT [KEY=VALUE...] | list
@@ -59,6 +61,7 @@ Hook `on` patterns are globs (`window.*`). Commands run through `sh -c` in a sin
 | `output.change` | outputs changed |
 | `osd.show`, `osd.hide` | `SWELL_OSD_KIND`, `SWELL_OSD_LEVEL`, `SWELL_OSD_MUTED` |
 | `popup.show`, `popup.hide`, `popup.expand` | |
+| `media.show`, `media.hide` | `SWELL_MEDIA_TITLE`, `SWELL_MEDIA_ARTIST`, `SWELL_MEDIA_PLAYER` |
 | `overview.open`, `overview.close` | |
 | `workspaces.renumber` | the workspaces were renamed to 1..n |
 | `wallpaper.animate`, `wallpaper.freeze` | the wallpaper started or stopped animating |
@@ -100,7 +103,7 @@ nix develop               # meson, ninja, wayland, cairo, pango, xkbcommon, sway
 meson setup build && ninja -C build && meson test -C build
 ```
 
-The runtime tools used by the popup (`wpctl`, `nmcli`, `playerctl`) are added to `PATH` by the nix package. Fonts are not bundled. The default font is IosevkaTerm Nerd Font (`nerd-fonts.iosevka-term`).
+The runtime tools used by the popup and media panel (`wpctl`, `nmcli`, `playerctl`) are added to `PATH` by the nix package. Fonts are not bundled. The default font is IosevkaTerm Nerd Font (`nerd-fonts.iosevka-term`).
 
 ### home-manager
 

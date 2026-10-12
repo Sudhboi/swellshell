@@ -1,4 +1,4 @@
-/* Cairo drawing of the popup: clock, date, levels, network, media, stats. */
+/* Cairo drawing of the popup: clock, date, levels, network, stats. */
 #include "render.h"
 
 #include <pango/pangocairo.h>
@@ -34,8 +34,6 @@ static const char *const ICON_WIFI[] = {
 static const char ICON_WIRED[] = "\U000F0200";
 static const char ICON_OFFLINE[] = "\U000F0319";
 static const char ICON_NET_UNK[] = "\U000F06F5";
-static const char ICON_PLAY[] = "\U000F040A";
-static const char ICON_PAUSE[] = "\U000F03E4";
 static const char ELLIPSIS[] = "…";
 
 /* The config of the frame being drawn (set by popup_render). Every size is
@@ -145,7 +143,11 @@ static void ellipsize(cairo_t *cr, char *s, size_t cap, double maxw) {
   }
   if (n == 0)
     snprintf(buf, sizeof buf, "%s", ELLIPSIS);
-  snprintf(s, cap, "%s", buf);
+  size_t len = strlen(buf);
+  if (len >= cap)
+    len = cap - 1;
+  memcpy(s, buf, len);
+  s[len] = '\0';
 }
 
 static void draw_bar(cairo_t *cr, double x, double y, double w, int pct,
@@ -375,25 +377,6 @@ static void draw_net(cairo_t *cr, const struct info *in, double base) {
   draw_pieces(cr, C->width / 2.0, base, p, n);
 }
 
-static void draw_media(cairo_t *cr, const struct info *in, double base) {
-  const char *title = in->media_title[0] ? in->media_title : "unknown";
-  uint32_t col = in->playing ? C->text : C->dim;
-  char text[512];
-
-  if (in->media_artist[0])
-    snprintf(text, sizeof text, "%s — %s", title, in->media_artist);
-  else
-    snprintf(text, sizeof text, "%s", title);
-
-  struct piece p[] = {
-      {in->playing ? ICON_PLAY : ICON_PAUSE, col, true},
-      {text, col, false},
-  };
-  double maxw = C->width - 2 * C->pad - piece_width(cr, &p[0]);
-  ellipsize(cr, text, sizeof text, maxw);
-  draw_pieces(cr, C->width / 2.0, base, p, 2);
-}
-
 static void draw_stats(cairo_t *cr, const struct info *in, double base) {
   char cpu[16], pwr[24], mem[32], up[32];
   long m = in->uptime_s / 60, h = m / 60, d = h / 24;
@@ -608,8 +591,7 @@ struct details_y {
   double foot; /* lower (footer) separator */
 };
 
-/* media (0..1) is how far the media row is opened up. */
-static struct details_y details_layout(cairo_t *cr, double y, double media) {
+static struct details_y details_layout(cairo_t *cr, double y) {
   struct details_y d;
   d.sep = (double)(long)(y + C->gap_sep);
   font(cr, C->font_row, false);
@@ -619,9 +601,7 @@ static struct details_y details_layout(cairo_t *cr, double y, double media) {
   d.rows = bars + C->gap_rows + cap;
   /* The last row sits as far above the footer separator as the level
    * labels sit below the upper one. */
-  double rows = 2 + media;
-  d.foot =
-      (double)(long)(d.rows + (rows - 1) * C->row_step + C->gap_cols + 0.5);
+  d.foot = (double)(long)(d.rows + C->row_step + C->gap_cols + 0.5);
   return d;
 }
 
@@ -633,17 +613,15 @@ static double date_baseline(cairo_t *cr) {
   return base + C->gap_date + cap_height(cr);
 }
 
-/* Height of the fully expanded panel; it depends on the content (the media
- * row), and is at most C->height. */
-static double full_height(cairo_t *cr, double media) {
-  struct details_y d = details_layout(cr, date_baseline(cr), media);
+/* Height of the fully expanded panel, at most C->height. */
+static double full_height(cairo_t *cr) {
+  struct details_y d = details_layout(cr, date_baseline(cr));
   double h = d.foot + C->gap_ws + C->ws_h + C->pad;
   return h < C->height ? h : C->height;
 }
 
-static void draw_details(cairo_t *cr, const struct info *in, double y,
-                         double media) {
-  struct details_y d = details_layout(cr, y, media);
+static void draw_details(cairo_t *cr, const struct info *in, double y) {
+  struct details_y d = details_layout(cr, y);
   set_rgba(cr, C->track, 1.0);
   cairo_rectangle(cr, C->pad, d.sep, C->width - 2 * C->pad, 1);
   cairo_fill(cr);
@@ -653,18 +631,7 @@ static void draw_details(cairo_t *cr, const struct info *in, double y,
   font(cr, C->font_row, false);
   double base = d.rows;
   draw_net(cr, in, base);
-  base += C->row_step;
-  /* Opening, the stats row moves down first and the media row fades in
-   * once there's room; closing runs the other way. The last track's text
-   * is kept in *in, so it can fade out after has_media drops. */
-  double alpha = 2.0 * media - 1.0;
-  if (alpha > 0) {
-    cairo_push_group(cr);
-    draw_media(cr, in, base);
-    cairo_pop_group_to_source(cr);
-    cairo_paint_with_alpha(cr, alpha);
-  }
-  draw_stats(cr, in, base + media * C->row_step);
+  draw_stats(cr, in, base + C->row_step);
 }
 
 /* The hold line's colour at a fraction f of its length so far. */
@@ -728,7 +695,7 @@ static void draw_hold(cairo_t *cr, double h, double hold, double alpha) {
 
 void popup_render(cairo_t *cr, const struct popup_config *cfg,
                   const struct info *in, double pop, double expand,
-                  double media, double hold) {
+                  double hold) {
   C = cfg;
   cairo_save(cr);
 
@@ -736,7 +703,7 @@ void popup_render(cairo_t *cr, const struct popup_config *cfg,
    * from clock-only to full_height; content keeps the full layout and is
    * clipped to the panel. */
   double h =
-      (double)(long)lerp(compact_height(cr), full_height(cr, media), expand);
+      (double)(long)lerp(compact_height(cr), full_height(cr), expand);
   double top = C->height - h;
   /* Slide: at pop 0 the panel's top is at the bottom of the surface. */
   top += (double)(long)((1.0 - pop) * (h + C->bottom_gap));
@@ -770,7 +737,7 @@ void popup_render(cairo_t *cr, const struct popup_config *cfg,
     cairo_rectangle(cr, 0, 0, C->width, foot);
     cairo_clip(cr);
     cairo_push_group(cr);
-    draw_details(cr, in, y, media);
+    draw_details(cr, in, y);
     cairo_pop_group_to_source(cr);
     cairo_paint_with_alpha(cr, expand);
     cairo_restore(cr);

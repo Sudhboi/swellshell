@@ -103,8 +103,8 @@ enable = true
 namespace = "popup"
 # panel width, logical px
 width = 560
-# tallest panel (with a media row) and the surface height
-height = 529
+# tallest panel and the surface height
+height = 484
 # inner padding of the panel
 pad = 36
 # gap between the bottom edge (or bar) and the panel
@@ -147,7 +147,7 @@ hold = "#333333"
 battery_low_pct = 15
 # refresh period while shown
 refresh_ms = 1000
-# kill wpctl/nmcli/playerctl if one is still running after this
+# kill wpctl/nmcli if one is still running after this
 command_timeout_ms = 3000
 # slide up into place
 pop_ms = 220
@@ -157,8 +157,6 @@ close_ms = 220
 expand_delay_ms = 2000
 # clock-only to full panel
 expand_ms = 260
-# media row opening/closing while expanded
-media_ms = 260
 # clock baseline to date cap top
 gap_date = 28.0
 # date baseline to separator
@@ -205,6 +203,78 @@ wsc_arrow = 4.0
 ws_arrow_w = 16.0
 # thickness of the line that traces the border until the expand; 0 hides it
 hold_h = 1.0
+
+[media]
+# false turns the module off
+enable = true
+# layer-shell namespace of the surface
+namespace = "media"
+# panel width, logical px
+width = 560
+# panel height
+height = 160
+# gap between the top edge (or bar) and the panel
+top_gap = 12
+# panel corner radius (0 = square)
+corner = 0
+# inner padding of the panel
+pad = 24
+# show the track's cover
+art = true
+# side of the cover's square
+art_size = 112
+# font family
+font = "IosevkaTerm Nerd Font"
+# player name size
+font_player = 14
+# title size
+font_title = 22
+# artist/album and status icon size
+font_row = 16
+# elapsed and total time size
+font_time = 13
+# panel background
+background = "#000000f0"
+# 1px panel border
+border = "#6a6a6a"
+# progress bar track, and the square without a cover
+track = "#333333"
+# progress bar gradient, left end
+bar_dark = "#a0a0a0"
+# progress bar gradient, right end
+bar_light = "#d6d6d6"
+# title and the playing icon
+text = "#f2f2f2"
+# player, artist/album and times
+dim = "#949494"
+# paused: the icon, bar and times
+muted = "#5a5a5a"
+# player baseline to title cap top
+gap_title = 12.0
+# title baseline to artist cap top
+gap_artist = 10.0
+# bar bottom to time cap top
+gap_time = 8.0
+# progress bar height
+bar_h = 4.0
+# playerctl -p ("": playerctl's pick)
+player = ""
+# playerctl poll period while the popup shows
+interval_ms = 1000
+# kill playerctl if it is still running after this
+command_timeout_ms = 3000
+# drop down into place
+slide_ms = 220
+# go back up
+close_ms = 220
+# crossfade on a track change
+fade_ms = 200
+# no track length: the bar's segment crosses it in this long
+chase_ms = 1600
+# play/pause: the icon morphs and the colours fade this long
+status_ms = 250
+# after play-pause, the panel shows this long
+flash_ms = 1500
 
 [overview]
 # false turns the module off
