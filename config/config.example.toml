@@ -96,6 +96,44 @@ slide_ms = 220
 # one red pulse cycle above 100%
 pulse_ms = 900
 
+[wsosd]
+# false turns the module off
+enable = true
+# layer-shell namespace of the surface
+namespace = "swell-wsosd"
+# panel height, logical px
+height = 36
+# gap between the top edge (or bar) and the panel
+top_gap = 12
+# panel corner radius (0 = square)
+corner = 0
+# space left and right of the row of dots
+pad = 18
+# dot diameter
+dot = 8
+# space between dots
+dot_gap = 12
+# length of the focused workspace's bar
+active_width = 28
+# surface sized for this many workspaces (grows past it)
+max_dots = 10
+# panel background
+background = "#000000f0"
+# 1px panel border
+border = "#6a6a6a"
+# dots of the other workspaces
+dot_color = "#5a5a5a"
+# focused bar gradient, right end
+active_dark = "#a0a0a0"
+# focused bar gradient, left end
+active_light = "#d6d6d6"
+# time after the last workspace change before retracting
+hide_timeout_ms = 900
+# drop-down / retract animation
+slide_ms = 220
+# bar sliding to the new workspace, and the panel resizing
+move_ms = 200
+
 [popup]
 # false turns the module off
 enable = true
