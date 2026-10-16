@@ -643,10 +643,13 @@ static int run_local(struct swell *sw, const void *cfg, bool have_daemon,
     sw->wl = wl_create(sw->loop);
   if (!sw->wl)
     return 1;
-  if (!sw->sway)
-    sw->sway = sway_init(NULL);
-  if (!sw->sway)
+  if (sw->wm == WM_NONE)
+    sw->wm = wm_init(NULL);
+  if (sw->wm != WM_SWAY) {
+    if (sw->wm != WM_NONE)
+      fprintf(stderr, "swell: the overview needs sway\n");
     return 1;
+  }
 
   ov.sw = sw;
   ov.wl = sw->wl;

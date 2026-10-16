@@ -23,7 +23,7 @@ default_border none
 exec_always true
 CONF
   # The nested compositor must not inherit the outer session.
-  env -u WAYLAND_DISPLAY -u SWAYSOCK -u I3SOCK -u DISPLAY \
+  env -u WAYLAND_DISPLAY -u SWAYSOCK -u I3SOCK -u NIRI_SOCKET -u DISPLAY \
     XDG_RUNTIME_DIR="$dir/rt" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
     WLR_RENDERER=pixman sway -c "$dir/sway.conf" >"$dir/sway.log" 2>&1 &
   echo $! >"$dir/sway.pid"
@@ -42,7 +42,7 @@ CONF
   echo "export SWAYSOCK='$sock'"
   echo "export SWELL_SOCK='$dir/rt/swell.sock'"
   echo "export SWELL_CONFIG='$dir/config.toml'"
-  echo "unset I3SOCK DISPLAY"
+  echo "unset I3SOCK NIRI_SOCKET DISPLAY"
   ;;
 stop)
   dir=${dir:-${NESTED_DIR:?}}

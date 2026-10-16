@@ -6,7 +6,7 @@
 #include <time.h>
 
 #include "loop.h"
-#include "sway.h"
+#include "wm.h"
 
 enum net_kind { NET_UNKNOWN, NET_OFFLINE, NET_WIFI, NET_WIRED };
 
@@ -44,7 +44,7 @@ struct info {
   double mem_used_gib, mem_total_gib;
   long uptime_s;
 
-  int ws_count; /* 0 until sway answers; sorted by num, then name */
+  int ws_count; /* 0 until the window manager answers; sorted by num, then name */
   struct workspace ws[WS_MAX];
 };
 
@@ -62,9 +62,9 @@ void info_finish(void);
  * baseline). */
 void info_refresh(struct info *in, int refresh_ms, int kill_ms);
 
-/* Copy sway's workspaces into *in: the first WS_MAX, sorted by num with
+/* Copy the window manager's workspaces into *in: the first WS_MAX, sorted by num with
  * named workspaces (num -1) last by name. Returns true if *in changed. */
-bool info_set_workspaces(struct info *in, const struct sway_workspace *ws,
+bool info_set_workspaces(struct info *in, const struct wm_workspace *ws,
                          int n);
 
 #endif

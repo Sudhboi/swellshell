@@ -6,9 +6,9 @@
 
 #include "popup/info.h"
 
-static struct sway_workspace ws(const char *name, int num, bool focused,
+static struct wm_workspace ws(const char *name, int num, bool focused,
                                 bool urgent) {
-  struct sway_workspace w = {.num = num, .focused = focused, .urgent = urgent};
+  struct wm_workspace w = {.num = num, .focused = focused, .urgent = urgent};
   snprintf(w.name, sizeof w.name, "%s", name);
   return w;
 }
@@ -17,7 +17,7 @@ int main(void) {
   struct info in;
   memset(&in, 0, sizeof in);
 
-  struct sway_workspace list[] = {
+  struct wm_workspace list[] = {
       ws("mail", -1, false, false), ws("10", 10, false, true),
       ws("2", 2, true, false),      ws("1:web", 1, false, false),
       ws("chat", -1, false, false), ws("3", 3, false, false),
@@ -39,7 +39,7 @@ int main(void) {
   assert(in.ws[2].focused);
 
   /* Long names are cut to fit; at most WS_MAX are kept. */
-  struct sway_workspace many[WS_MAX + 8];
+  struct wm_workspace many[WS_MAX + 8];
   for (int i = 0; i < WS_MAX + 8; ++i)
     many[i] = ws("", i + 1, i == 0, false);
   snprintf(many[0].name, sizeof many[0].name, "%s",

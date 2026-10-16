@@ -27,7 +27,9 @@ struct swell_module {
   const char *name;           /* config section and CLI word */
   const char *const *aliases; /* other CLI words, NULL-terminated, or NULL */
   const char *usage;          /* help text: one "  cmd  description" per line */
-  bool needs_wayland, needs_sway;
+  bool needs_wayland;
+  bool needs_wm;   /* sway or niri (wm.h) */
+  bool needs_sway; /* sway only (sway.h) */
 
   /* config */
   size_t config_size;
@@ -49,7 +51,7 @@ struct swell_module {
   /* Optional: run a command in the client process instead of sending it to
    * the daemon. Called with have_daemon=true first; return -1 to send it
    * on. If no daemon answers it is called again with have_daemon=false.
-   * Returns an exit status. sw->loop exists; Wayland/sway are not set up. */
+   * Returns an exit status. sw->loop exists; Wayland and the window manager are not set up. */
   int (*run_local)(struct swell *sw, const void *cfg, bool have_daemon,
                    int argc, char **argv);
 };

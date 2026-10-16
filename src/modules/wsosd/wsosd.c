@@ -1,6 +1,6 @@
 /* wsosd: a small panel that drops down from the top whenever the focused
  * workspace changes: one dot per workspace, the focused one stretched into
- * a bar that slides to its new place. It follows the sway layer's
+ * a bar that slides to its new place. It follows the window manager's
  * workspace.* bus events and stays away while the overview is open.
  * `swell wsosd show` shows it by hand. */
 #include "wsosd.h"
@@ -16,7 +16,7 @@
 #include "module.h"
 #include "render.h"
 #include "surface.h"
-#include "sway.h"
+#include "wm.h"
 #include "util.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
@@ -155,11 +155,11 @@ static bool visible(void) {
   return layer_surface_shown(w.surf) && !w.retracting;
 }
 
-/* The focused workspace's position in sway's order and the count. */
+/* The focused workspace's position in the strip's order and the count. */
 static bool query(int *index, int *n) {
-  sway_workspaces_invalidate();
-  const struct sway_workspace *list;
-  int count = sway_workspaces(&list);
+  wm_workspaces_invalidate();
+  const struct wm_workspace *list;
+  int count = wm_strip_workspaces(&list);
   for (int i = 0; i < count; ++i)
     if (list[i].focused) {
       *index = i;
@@ -320,7 +320,7 @@ const struct swell_module wsosd_module = {
              "  hide      retract the panel\n"
              "  status    shown|hidden and focused/count\n",
     .needs_wayland = true,
-    .needs_sway = true,
+    .needs_wm = true,
     .config_size = sizeof(struct wsosd_config),
     .defaults = &defaults,
     .fields = fields,

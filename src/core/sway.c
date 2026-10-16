@@ -22,7 +22,7 @@ static struct loop_watch *watch;
 static struct sub *subs;
 static int nsubs, depth;
 
-static struct sway_workspace *ws_cache;
+static struct wm_workspace *ws_cache;
 static int ws_count;
 static bool ws_stale = true;
 
@@ -130,7 +130,7 @@ static int leading_num(const char *s) {
   return atoi(s);
 }
 
-int sway_workspaces(const struct sway_workspace **out) {
+int sway_workspaces(const struct wm_workspace **out) {
   if (ws_stale && connected) {
     I3ipc_reply_workspaces *r = i3ipc_get_workspaces();
     if (r) {
@@ -138,7 +138,7 @@ int sway_workspaces(const struct sway_workspace **out) {
       ws_count = r->workspaces_size;
       for (int i = 0; i < ws_count; ++i) {
         I3ipc_reply_workspaces_el *e = &r->workspaces[i];
-        struct sway_workspace *w = &ws_cache[i];
+        struct wm_workspace *w = &ws_cache[i];
         snprintf(w->name, sizeof(w->name), "%.*s", e->name_size, e->name);
         w->truncated = e->name_size >= (int)sizeof(w->name);
         snprintf(w->output, sizeof(w->output), "%.*s", e->output_size,
@@ -220,7 +220,7 @@ static void set_focused_empty(bool empty, const char *ws_name) {
 /* Re-query which workspace is focused and whether it has windows. */
 static void sync_focused_empty(void) {
   sway_workspaces_invalidate();
-  const struct sway_workspace *ws;
+  const struct wm_workspace *ws;
   int n = sway_workspaces(&ws);
   const char *focused = NULL;
   for (int i = 0; i < n; ++i)

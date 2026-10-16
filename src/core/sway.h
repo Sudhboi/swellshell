@@ -22,6 +22,7 @@
 
 #include "i3ipc.h"
 #include "loop.h"
+#include "wm.h"
 
 /* Connect ($SWAYSOCK, $I3SOCK, then `sway --get-socketpath`) and subscribe
  * to workspace/window/output events. With loop NULL no events are read
@@ -34,17 +35,9 @@ typedef void (*sway_event_fn)(const I3ipc_event *ev, void *data);
 void sway_subscribe(sway_event_fn fn, void *data);
 void sway_unsubscribe(sway_event_fn fn, void *data);
 
-struct sway_workspace {
-  char name[256];
-  int num; /* -1 if the name doesn't start with a number */
-  bool focused, visible, urgent;
-  bool truncated; /* the name didn't fit in name[] */
-  char output[64];
-};
-
 /* Workspaces in sway's order. Cached, refreshed after workspace events.
  * Returns the count; *out stays valid until the next call. */
-int sway_workspaces(const struct sway_workspace **out);
+int sway_workspaces(const struct wm_workspace **out);
 /* Force the next sway_workspaces() call to re-query. */
 void sway_workspaces_invalidate(void);
 

@@ -26,7 +26,7 @@
 #include "ipc.h"
 #include "loop.h"
 #include "module.h"
-#include "sway.h"
+#include "wm.h"
 #include "util.h"
 
 static const struct wallpaper_config defaults = {
@@ -925,12 +925,12 @@ static bool init(struct swell *sw, const void *cfg) {
   wp_surfaces_init(sw->wl); /* a frozen first frame on every output */
 
   bus_subscribe(on_bus, NULL);
-  int empty = sway_focused_empty();
-  if (empty < 0 && sw->sway) {
-    sway_emit_focused_state(); /* the answer arrives through on_bus */
-    empty = sway_focused_empty();
+  int empty = wm_focused_empty();
+  if (empty < 0 && sw->wm != WM_NONE) {
+    wm_emit_focused_state(); /* the answer arrives through on_bus */
+    empty = wm_focused_empty();
   }
-  w.ws_empty = empty != 0; /* without sway: always animate */
+  w.ws_empty = empty != 0; /* without a window manager: always animate */
   update_animating();
   if (w.cfg.intro && w.animating && intro_first())
     show_start(WP_SHOW_INTRO);

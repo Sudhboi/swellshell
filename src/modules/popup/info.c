@@ -342,7 +342,7 @@ static int ws_cmp(const void *a, const void *b) {
   return strcmp(x->name, y->name);
 }
 
-bool info_set_workspaces(struct info *in, const struct sway_workspace *ws,
+bool info_set_workspaces(struct info *in, const struct wm_workspace *ws,
                          int n) {
   struct workspace out[WS_MAX];
   int count = 0;

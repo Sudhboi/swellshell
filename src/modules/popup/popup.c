@@ -16,7 +16,7 @@
 #include "module.h"
 #include "render.h"
 #include "surface.h"
-#include "sway.h"
+#include "wm.h"
 #include "util.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
@@ -224,12 +224,12 @@ static void arm_tick(bool on) {
   loop_timer_arm_abs(p.tick, &its);
 }
 
-/* Pull sway's (cached) workspaces into the info; true if they changed. */
+/* Pull the (cached) workspaces into the info; true if they changed. */
 static bool refresh_workspaces(void) {
-  if (!p.sw->sway)
+  if (p.sw->wm == WM_NONE)
     return false;
-  const struct sway_workspace *ws;
-  int n = sway_workspaces(&ws);
+  const struct wm_workspace *ws;
+  int n = wm_strip_workspaces(&ws);
   return info_set_workspaces(&p.info, ws, n);
 }
 
@@ -259,8 +259,7 @@ static void set_shown(bool show) {
      * details if they were already revealed. */
     retarget_pop(1, false);
     info_refresh(&p.info, p.cfg.refresh_ms, p.cfg.command_timeout_ms);
-    if (p.sw->sway)
-      sway_workspaces_invalidate();
+    wm_workspaces_invalidate();
     refresh_workspaces();
     if (!p.expand_at) {
       loop_timer_arm(p.expand, p.cfg.expand_delay_ms > 0
@@ -306,8 +305,9 @@ static void on_info_changed(void *data) {
 }
 
 /* Workspace events keep the strip current while shown. */
-static void on_sway_event(const I3ipc_event *ev, void *data) {
-  if (ev->type != I3IPC_EVENT_WORKSPACE || !layer_surface_shown(p.surf))
+static void on_bus(const struct bus_event *ev, void *data) {
+  if (strncmp(ev->name, "workspace.", 10) != 0 ||
+      !layer_surface_shown(p.surf))
     return;
   if (refresh_workspaces())
     layer_surface_redraw(p.surf);
@@ -341,10 +341,10 @@ static bool init(struct swell *sw, const void *cfg) {
   p.expand = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_expand, NULL);
   loop_add_prepare(sw->loop, 50, prepare, NULL);
   info_init(sw->loop, &p.info, on_info_changed, NULL);
-  if (sw->sway)
-    sway_subscribe(on_sway_event, NULL);
+  if (sw->wm != WM_NONE)
+    bus_subscribe(on_bus, NULL);
   else
-    warn("popup: no sway connection; workspaces are not shown");
+    warn("popup: no window manager connection; workspaces are not shown");
   return true;
 }
 
@@ -364,8 +364,8 @@ static void reconfigure(const void *cfg) {
 }
 
 static void finish(void) {
-  if (p.sw->sway)
-    sway_unsubscribe(on_sway_event, NULL);
+  if (p.sw->wm != WM_NONE)
+    bus_unsubscribe(on_bus, NULL);
   info_finish();
   loop_remove_prepare(p.sw->loop, prepare, NULL);
   loop_remove_timer(p.tick);
@@ -398,7 +398,7 @@ const struct swell_module popup_module = {
              "  hide     slide it back down (bind to the key release)\n"
              "  toggle   show or hide\n",
     .needs_wayland = true,
-    .needs_sway = false, /* without sway there are just no workspaces */
+    .needs_wm = false, /* without one there are just no workspaces */
     .config_size = sizeof(struct popup_config),
     .defaults = &defaults,
     .fields = fields,

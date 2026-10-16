@@ -1,4 +1,4 @@
-/* swell: a small sway shell. `swell daemon` runs every module in one event
+/* swell: a small sway/niri shell. `swell daemon` runs every module in one event
  * loop; every other invocation is a client that sends its arguments to the
  * daemon over $XDG_RUNTIME_DIR/swell.sock. */
 #include <errno.h>
@@ -16,7 +16,7 @@
 #include "ipc.h"
 #include "loop.h"
 #include "module.h"
-#include "sway.h"
+#include "wm.h"
 #include "util.h"
 #include "wl.h"
 
@@ -102,7 +102,9 @@ static time_t file_mtime(const char *path) {
 static bool can_run(const struct swell_module *m) {
   if (m->needs_wayland && !d.sw.wl)
     return false;
-  if (m->needs_sway && !d.sw.sway)
+  if (m->needs_wm && d.sw.wm == WM_NONE)
+    return false;
+  if (m->needs_sway && d.sw.wm != WM_SWAY)
     return false;
   return true;
 }
@@ -114,7 +116,9 @@ static void start_module(size_t i) {
     return;
   if (!can_run(m)) {
     warn("%s: disabled (needs %s)", m->name,
-         m->needs_wayland && !d.sw.wl ? "Wayland" : "sway");
+         m->needs_wayland && !d.sw.wl ? "Wayland"
+         : m->needs_sway              ? "sway"
+                                      : "sway or niri");
     return;
   }
   ms->running = !m->init || m->init(&d.sw, ms->cfg);
@@ -216,10 +220,10 @@ static int handle(int argc, char **argv, struct reply *r, void *data) {
     char when[64] = "-";
     if (d.config_mtime)
       strftime(when, sizeof(when), "%F %T", localtime(&d.config_mtime));
-    reply_printf(r, "pid %d\nconfig %s (%s, mtime %s)\nwayland %s\nsway %s\n",
+    reply_printf(r, "pid %d\nconfig %s (%s, mtime %s)\nwayland %s\nwm %s\n",
                  (int)getpid(), d.doc.path,
                  d.doc.loaded ? "loaded" : "defaults", when,
-                 d.sw.wl ? "connected" : "no", d.sw.sway ? "connected" : "no");
+                 d.sw.wl ? "connected" : "no", wm_name(d.sw.wm));
     for (size_t i = 0; i < swell_nmodules; ++i)
       reply_printf(r, "module %s %s\n", swell_modules[i]->name,
                    d.mods[i].running   ? "running"
@@ -287,7 +291,7 @@ static int run_daemon(int argc, char **argv) {
   d.config_mtime = file_mtime(d.doc.path);
 
   d.sw.wl = wl_create(d.sw.loop);
-  d.sw.sway = sway_init(d.sw.loop);
+  d.sw.wm = wm_init(d.sw.loop);
 
   d.mods = xcalloc(swell_nmodules, sizeof(*d.mods));
   for (size_t i = 0; i < swell_nmodules; ++i)
@@ -303,8 +307,7 @@ static int run_daemon(int argc, char **argv) {
     free_config(swell_modules[i], d.mods[i].cfg);
   }
   free(d.mods);
-  if (d.sw.sway)
-    sway_finish();
+  wm_finish();
   wl_destroy(d.sw.wl);
   cfg_free(&d.doc);
   loop_destroy(d.sw.loop);
@@ -395,8 +398,7 @@ static int send_or_local(int argc, char **argv) {
   if (cfg)
     free_config(m, cfg);
   if (local.loop) {
-    if (local.sway)
-      sway_finish();
+    wm_finish();
     wl_destroy(local.wl);
     loop_destroy(local.loop);
     cfg_free(&doc);

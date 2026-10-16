@@ -62,6 +62,9 @@ i3ipc_dep = declare_dependency(link_with: i3ipc,
 tomlc17 = static_library('tomlc17', 'lib/tomlc17/tomlc17.c', c_args: ['-w'])
 tomlc17_dep = declare_dependency(link_with: tomlc17,
   include_directories: include_directories('lib/tomlc17'))
+cjson = static_library('cjson', 'lib/cjson/cJSON.c', c_args: ['-w'])
+cjson_dep = declare_dependency(link_with: cjson,
+  include_directories: include_directories('lib/cjson'))
 
 # ---- core ----
 core_inc = include_directories('src/core', 'src/modules')
@@ -74,15 +77,17 @@ core_src = files(
   'src/core/config.c',
   'src/core/ipc.c',
   'src/core/loop.c',
+  'src/core/niri.c',
   'src/core/nixlogo.c',
   'src/core/surface.c',
   'src/core/sway.c',
   'src/core/util.c',
+  'src/core/wm.c',
   'src/core/wl.c',
 )
 deps = [wayland_client, cairo, pango, libjpeg, xkbcommon, math, pipewire, egl, glesv2,
   wayland_egl, protocols_dep,
-  i3ipc_dep, tomlc17_dep]
+  i3ipc_dep, tomlc17_dep, cjson_dep]
 core = static_library('swellcore', core_src,
   include_directories: core_inc, dependencies: deps)
 core_dep = declare_dependency(link_with: core, include_directories: core_inc,

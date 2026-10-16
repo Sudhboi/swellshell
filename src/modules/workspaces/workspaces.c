@@ -1,9 +1,12 @@
 /* workspaces: GNOME/niri-style dynamic workspaces (formerly dynwork).
  *
- * Workspaces are always numbered 1..n in order: whenever they change (an
- * overview reorder, the last window closing, `swaymsg workspace ...`) they
- * are renamed back to 1..n after a short quiet period. `next` past the last
- * workspace creates a new one instead of wrapping around. */
+ * On sway, workspaces are always numbered 1..n in order: whenever they
+ * change (an overview reorder, the last window closing, `swaymsg workspace
+ * ...`) they are renamed back to 1..n after a short quiet period. `next`
+ * past the last workspace creates a new one instead of wrapping around.
+ *
+ * niri already works this way, so there the commands map onto its actions
+ * and nothing is renumbered. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +14,7 @@
 
 #include "bus.h"
 #include "module.h"
+#include "niri.h"
 #include "plan.h"
 #include "sway.h"
 #include "util.h"
@@ -43,7 +47,7 @@ static struct {
  * nothing. */
 static void renumber(void) {
   sway_workspaces_invalidate();
-  const struct sway_workspace *list;
+  const struct wm_workspace *list;
   int n = sway_workspaces(&list);
   if (n <= 0)
     return;
@@ -67,7 +71,7 @@ static void renumber(void) {
 }
 
 static void maybe_renumber(void) {
-  if (ws.cfg.renumber)
+  if (ws.cfg.renumber && ws.sw->wm == WM_SWAY)
     renumber();
 }
 
@@ -75,7 +79,7 @@ static void maybe_renumber(void) {
  * -1 if none is focused. */
 static int focused_number(int *count) {
   sway_workspaces_invalidate();
-  const struct sway_workspace *list;
+  const struct wm_workspace *list;
   int n = sway_workspaces(&list);
   if (count)
     *count = n;
@@ -108,31 +112,68 @@ static void go_to(int num) {
   maybe_renumber();
 }
 
+/* niri: its own focus actions do the right thing at either end. */
+static int niri_go(const char *action) {
+  char *req = xasprintf("{\"Action\":%s}", action);
+  int ret = niri_request(req) == 0 ? 0 : 1;
+  free(req);
+  return ret;
+}
+
+static int dispatch_niri(const char *cmd, int num, struct reply *r) {
+  if (strcmp(cmd, "next") == 0)
+    return niri_go("{\"FocusWorkspaceDown\":{}}");
+  if (strcmp(cmd, "prev") == 0)
+    return niri_go("{\"FocusWorkspaceUp\":{}}");
+  if (strcmp(cmd, "goto") == 0) {
+    if (num > 255) {
+      reply_printf(r, "niri has no workspace %d\n", num);
+      return 1;
+    }
+    char *a = xasprintf(
+        "{\"FocusWorkspace\":{\"reference\":{\"Index\":%d}}}", num);
+    int ret = niri_go(a);
+    free(a);
+    return ret;
+  }
+  reply_printf(r, "niri numbers workspaces itself; nothing to reorder\n");
+  return 0;
+}
+
 static int dispatch(int argc, char **argv, struct reply *r) {
   if (argc < 1) {
     reply_printf(r, "usage: swell ws next|prev|goto N|reorder\n");
     return 1;
   }
   const char *cmd = argv[0];
-  if (strcmp(cmd, "next") == 0 && argc == 1)
-    go_next();
-  else if (strcmp(cmd, "prev") == 0 && argc == 1)
-    go_prev();
-  else if (strcmp(cmd, "reorder") == 0 && argc == 1)
-    renumber();
-  else if (strcmp(cmd, "goto") == 0) {
-    int num = argc == 2 ? ws_parse_number(argv[1]) : 0;
+  bool known = argc == 1 && (strcmp(cmd, "next") == 0 ||
+                             strcmp(cmd, "prev") == 0 ||
+                             strcmp(cmd, "reorder") == 0);
+  int num = 0;
+  if (strcmp(cmd, "goto") == 0) {
+    num = argc == 2 ? ws_parse_number(argv[1]) : 0;
     if (num <= 0) {
       reply_printf(r, "usage: swell ws goto N (N a workspace number >= 1)\n");
       return 1;
     }
-    go_to(num);
-  } else {
+    known = true;
+  }
+  if (!known) {
     reply_printf(r, "unknown workspace command '%s' (expected next, prev, "
                     "goto N or reorder)\n",
                  cmd);
     return 1;
   }
+  if (ws.sw->wm == WM_NIRI)
+    return dispatch_niri(cmd, num, r);
+  if (strcmp(cmd, "next") == 0)
+    go_next();
+  else if (strcmp(cmd, "prev") == 0)
+    go_prev();
+  else if (strcmp(cmd, "reorder") == 0)
+    renumber();
+  else
+    go_to(num);
   return 0;
 }
 
@@ -155,7 +196,8 @@ static bool init(struct swell *sw, const void *cfg) {
   ws.sw = sw;
   ws.cfg = *(const struct workspaces_config *)cfg;
   ws.debounce = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_debounce, NULL);
-  sway_subscribe(on_sway, NULL);
+  if (sw->wm == WM_SWAY)
+    sway_subscribe(on_sway, NULL);
   maybe_renumber();
   return true;
 }
@@ -166,7 +208,8 @@ static void reconfigure(const void *cfg) {
 }
 
 static void finish(void) {
-  sway_unsubscribe(on_sway, NULL);
+  if (ws.sw->wm == WM_SWAY)
+    sway_unsubscribe(on_sway, NULL);
   loop_remove_timer(ws.debounce);
   ws.debounce = NULL;
 }
@@ -180,9 +223,10 @@ static int run_local(struct swell *sw, const void *cfg, bool have_daemon,
                      int argc, char **argv) {
   if (have_daemon)
     return -1;
-  if (!sway_init(NULL))
+  sw->wm = wm_init(NULL);
+  if (sw->wm == WM_NONE)
     return 1;
-  sw->sway = true;
+  ws.sw = sw;
   ws.cfg = *(const struct workspaces_config *)cfg;
   struct reply r = {0};
   int ret = dispatch(argc, argv, &r);
@@ -200,8 +244,8 @@ const struct swell_module workspaces_module = {
     .usage = "  next      go to the next workspace, creating one after the last\n"
              "  prev      go to the previous workspace (stops at 1)\n"
              "  goto N    go to workspace N\n"
-             "  reorder   renumber the workspaces 1..n now\n",
-    .needs_sway = true,
+             "  reorder   renumber the workspaces 1..n now (sway)\n",
+    .needs_wm = true,
     .config_size = sizeof(struct workspaces_config),
     .defaults = &defaults,
     .fields = fields,

@@ -2,7 +2,8 @@
  * paused the awww wallpaper daemon while the focused workspace had
  * windows). There are no hooks unless the config defines some.
  *
- * Events come from the bus: sway's (workspace.*, window.*, output.change,
+ * Events come from the bus: the window manager's (workspace.*, window.*,
+ * output.change on sway,
  * and the workspace.empty/occupied transitions) and every module's
  * (osd.show, popup.hide, overview.open, ...). Matching hooks are queued and
  * run one command at a time, so a "pause" always finishes before a later
@@ -16,7 +17,7 @@
 #include "bus.h"
 #include "hooks.h"
 #include "module.h"
-#include "sway.h"
+#include "wm.h"
 #include "util.h"
 
 struct runner_config {
@@ -180,8 +181,7 @@ static bool init(struct swell *sw, const void *cfg) {
   bus_subscribe(on_event, NULL);
   /* Hooks see the current workspace.empty/occupied state when the runner
    * starts, including when `swell reload` turns it on. */
-  if (sw->sway)
-    sway_emit_focused_state();
+  wm_emit_focused_state();
   return true;
 }
 

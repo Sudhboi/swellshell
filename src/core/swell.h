@@ -6,11 +6,12 @@
 
 #include "loop.h"
 #include "wl.h"
+#include "wm.h"
 
 struct swell {
   struct loop *loop;
   struct swell_wl *wl; /* NULL without a Wayland connection */
-  bool sway;           /* sway IPC is connected (see sway.h) */
+  enum wm_kind wm;     /* the connected window manager (see wm.h) */
   bool daemon;         /* false for one-shot local commands */
 };
 
