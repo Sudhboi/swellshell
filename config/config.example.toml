@@ -456,17 +456,17 @@ topo_index_width = 1.5
 # contour line opacity
 topo_line_alpha = 0.9
 # the glass snowflake's fill (its alpha lets the lines show through)
-topo_logo_fill = "#14151c90"
+topo_logo_fill = "#2c2f40e0"
 # the glass snowflake's fill when it glows (music, spin)
-topo_logo_glow = "#22243290"
+topo_logo_glow = "#3a3e54e0"
 # the glass snowflake's outline at the top left
-topo_edge_a = "#f5c2e780"
+topo_edge_a = "#f5c2e7"
 # the glass snowflake's outline across the middle
-topo_edge_mid = "#fab38780"
+topo_edge_mid = "#fab387"
 # the glass snowflake's outline at the bottom right
-topo_edge_b = "#89b4fa80"
+topo_edge_b = "#89b4fa"
 # the glass snowflake's outline width, px
-topo_edge_width = 3.0
+topo_edge_width = 6.0
 # the glass snowflake's shadow, px down and right
 topo_shadow_px = 22.0
 # the shadow's darkness

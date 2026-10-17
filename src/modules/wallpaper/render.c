@@ -872,7 +872,7 @@ static void stroke_hex(cairo_t *cr, const uint32_t *edge, uint32_t col,
  * round. The hexagon, the cover and the line turn with the snowflake.
  * Under topo the line takes the outline's colours (fixed to the screen,
  * spread across the hexagon):
- * the track as faint as the outline, the progress opaque, like the bar. */
+ * the track faint, the progress opaque, like the bar. */
 static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
                      double cy, double r, double rp,
                      const struct wp_frame *f) {
@@ -909,8 +909,9 @@ static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
     if (topo)
       topo_edges(c, f, edge);
     hex_path(cr, hl);
-    stroke_hex(cr, topo ? edge : NULL, c->media_track, f->angle, hr, alpha,
-               false);
+    /* Under topo the track is a faint trace of the progress's colours. */
+    stroke_hex(cr, topo ? edge : NULL, c->media_track, f->angle, hr,
+               topo ? 0.3 * alpha : alpha, topo);
     if (f->progress > 0) {
       hex_trace(cr, hl, 0, fmin(f->progress, 1));
     } else if (f->progress < 0) {
