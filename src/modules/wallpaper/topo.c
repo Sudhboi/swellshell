@@ -269,6 +269,20 @@ static void draw_level(cairo_t *cr, struct grid *g, int level, double t) {
     g->nb[g->touched[k]][0] = g->nb[g->touched[k]][1] = -1;
 }
 
+void wp_topo_axis(const struct wallpaper_config *c, int pw, int ph,
+                  double *x0, double *y0, double *x1, double *y1) {
+  double a = c->topo_angle * M_PI / 180, dx = cos(a), dy = sin(a);
+  /* Long enough that the end colours just reach the corners. */
+  double half = (pw * fabs(dx) + ph * fabs(dy)) / 2;
+  *x0 = pw / 2.0 - dx * half;
+  *y0 = ph / 2.0 - dy * half;
+  *x1 = pw / 2.0 + dx * half;
+  *y1 = ph / 2.0 + dy * half;
+}
+
+/* Across the screen: the left to right gradient runs only across. */
+static bool across(double y0, double y1) { return fabs(y1 - y0) < 1e-6; }
+
 static void set_stop(cairo_pattern_t *p, double at, uint32_t c, double a) {
   cairo_pattern_add_color_stop_rgba(p, at, col_r(c), col_g(c), col_b(c),
                                     col_a(c) * a);
@@ -278,7 +292,11 @@ static cairo_surface_t *draw_topo(const struct wallpaper_config *c, int pw,
                                   int ph) {
   cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_RGB24, pw, ph);
   cairo_t *cr = cairo_create(s);
-  cairo_pattern_t *bg = cairo_pattern_create_linear(0, 0, pw, 0);
+  double x0, y0, x1, y1;
+  wp_topo_axis(c, pw, ph, &x0, &y0, &x1, &y1);
+  if (across(y0, y1))
+    y0 = y1 = 0;
+  cairo_pattern_t *bg = cairo_pattern_create_linear(x0, y0, x1, y1);
   set_stop(bg, 0, c->topo_bg_left, 1);
   set_stop(bg, 1, c->topo_bg_right, 1);
   cairo_set_source(cr, bg);
@@ -299,23 +317,25 @@ static cairo_surface_t *draw_topo(const struct wallpaper_config *c, int pw,
     g.touched = xcalloc(ne, sizeof(int));
     g.pts = xcalloc((size_t)2 * ne, sizeof(double));
 
-    /* The lines' colours only change across: one row of them, repeated
-     * down, is far cheaper to draw from than the gradient itself. */
-    cairo_surface_t *row =
-        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pw, 1);
-    cairo_t *rc = cairo_create(row);
-    cairo_pattern_t *ln = cairo_pattern_create_linear(0, 0, pw, 0);
+    cairo_pattern_t *ln = cairo_pattern_create_linear(x0, y0, x1, y1);
     set_stop(ln, 0, c->topo_line_left, c->topo_line_alpha);
     set_stop(ln, 0.5, c->topo_line_mid, c->topo_line_alpha);
     set_stop(ln, 1, c->topo_line_right, c->topo_line_alpha);
-    cairo_set_source(rc, ln);
-    cairo_paint(rc);
-    cairo_destroy(rc);
-    cairo_pattern_destroy(ln);
-    ln = cairo_pattern_create_for_surface(row);
-    cairo_pattern_set_extend(ln, CAIRO_EXTEND_REPEAT);
-    cairo_pattern_set_filter(ln, CAIRO_FILTER_NEAREST);
-    cairo_surface_destroy(row);
+    if (across(y0, y1)) {
+      /* The colours only change across: one row of them, repeated down, is
+       * far cheaper to draw from than the gradient itself. */
+      cairo_surface_t *row =
+          cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pw, 1);
+      cairo_t *rc = cairo_create(row);
+      cairo_set_source(rc, ln);
+      cairo_paint(rc);
+      cairo_destroy(rc);
+      cairo_pattern_destroy(ln);
+      ln = cairo_pattern_create_for_surface(row);
+      cairo_pattern_set_extend(ln, CAIRO_EXTEND_REPEAT);
+      cairo_pattern_set_filter(ln, CAIRO_FILTER_NEAREST);
+      cairo_surface_destroy(row);
+    }
     cairo_set_source(cr, ln);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
@@ -350,7 +370,7 @@ struct topo_key {
   int pw, ph;
   uint32_t bg_left, bg_right, line_left, line_mid, line_right;
   int seed, levels, index_every;
-  double scale, warp, line_width, index_width, line_alpha;
+  double scale, warp, line_width, index_width, line_alpha, angle;
 };
 
 #define TOPO_CACHED 4
@@ -380,6 +400,7 @@ cairo_surface_t *wp_topo_background(const struct wallpaper_config *c, int pw,
   key.line_width = c->topo_line_width;
   key.index_width = c->topo_index_width;
   key.line_alpha = c->topo_line_alpha;
+  key.angle = c->topo_angle;
   int slot = -1;
   for (int i = 0; i < TOPO_CACHED; ++i)
     if (cache[i].s && memcmp(&cache[i].key, &key, sizeof(key)) == 0) {

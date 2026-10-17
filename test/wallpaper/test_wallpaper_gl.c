@@ -238,6 +238,33 @@ static void check_map(const char *dir) {
       assert(lum(dm, x, y) == 0);
   cairo_surface_destroy(dm);
   cairo_surface_destroy(gm);
+
+  /* Turned a quarter: the left colour (peach) at the top, the right one
+   * (blue) at the bottom, on both. */
+  struct wallpaper_config tc = *c;
+  tc.topo_angle = 90;
+  cairo_surface_t *tm[2] = {gpu_map(&tc, &f, dir, "wallpaper_gl_map_turned"),
+                            wp_topo_background(&tc, W, H)};
+  cairo_surface_flush(tm[1]);
+  for (int s = 0; s < 2; ++s) {
+    long warm[2] = {0}, cool[2] = {0}; /* top, bottom quarter */
+    for (int y = 0; y < H; y += 2)
+      for (int x = 0; x < W; x += 2) {
+        int q = y < H / 4 ? 0 : y >= H * 3 / 4 ? 1 : -1;
+        uint32_t v = ((const uint32_t *)(cairo_image_surface_get_data(tm[s]) +
+                                         y * cairo_image_surface_get_stride(
+                                                 tm[s])))[x];
+        int r = (v >> 16) & 0xff, b = v & 0xff;
+        if (q < 0 || lum(tm[s], x, y) < 120)
+          continue;
+        warm[q] += r > b + 40;
+        cool[q] += b > r + 40;
+      }
+    fprintf(stderr, "turned %s: top %ld warm %ld cool, bottom %ld warm %ld "
+            "cool\n", s ? "cpu" : "gpu", warm[0], cool[0], warm[1], cool[1]);
+    assert(warm[0] > 10 * (cool[0] + 1) && cool[1] > 10 * (warm[1] + 1));
+  }
+  cairo_surface_destroy(tm[0]);
 }
 
 int main(int argc, char **argv) {

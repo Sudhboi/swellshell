@@ -52,6 +52,7 @@ static const struct wallpaper_config defaults = {
     .topo_line_right = 0x89dceaffu,
     .topo_seed = 7,
     .topo_new_map = true,
+    .topo_angle = 0,
     .topo_levels = 16,
     .topo_index_every = 4,
     .topo_scale = 1500,
@@ -216,7 +217,11 @@ static const struct cfg_field fields[] = {
     CFG_COLOR(S, topo_line_right, "contour lines at the right"),
     CFG_INT(S, topo_seed, 0, 1000000, "which contour map (any number)"),
     CFG_BOOL(S, topo_new_map,
-             "a new contour map each time swell starts (ignores topo_seed)"),
+             "a new contour map and colour direction each time swell "
+             "starts (ignores topo_seed, topo_angle)"),
+    CFG_DOUBLE(S, topo_angle, 0, 360,
+               "the map's colours run this many degrees clockwise from left "
+               "to right"),
     CFG_INT(S, topo_levels, 1, 200,
             "contour lines from the lowest ground to the highest"),
     CFG_INT(S, topo_index_every, 0, 200,
@@ -1082,14 +1087,18 @@ static void check_style(void) {
          w.cfg.style);
 }
 
-/* topo_new_map: one seed per daemon, so reloads keep the map. */
-static void pick_seed(void) {
+/* topo_new_map: one map per daemon, so reloads keep it. */
+static void pick_map(void) {
   static int seed;
+  static double angle;
   if (!w.cfg.topo_new_map)
     return;
-  if (!seed)
+  if (!seed) {
     seed = 1 + (int)(drand48() * 1000000);
+    angle = floor(drand48() * 360);
+  }
   w.cfg.topo_seed = seed;
+  w.cfg.topo_angle = angle;
 }
 
 static bool init(struct swell *sw, const void *cfg) {
@@ -1108,7 +1117,7 @@ static bool init(struct swell *sw, const void *cfg) {
   w.idle_timer = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_idle_timer, NULL);
   w.hold_timer = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_hold_timer, NULL);
   srand48(now_ms() ^ getpid());
-  pick_seed();
+  pick_map();
   int pct;
   bool charging;
   w.battery = battery_read(&pct, &charging) ? (pct > 100 ? 100 : pct) : -1;
@@ -1134,7 +1143,7 @@ static bool init(struct swell *sw, const void *cfg) {
 static void reconfigure(const void *cfg) {
   struct wallpaper_config old = w.cfg;
   w.cfg = *(const struct wallpaper_config *)cfg;
-  pick_seed();
+  pick_map();
   if (strcmp(old.style, w.cfg.style))
     check_style();
   if (old.idle_timeout_s != w.cfg.idle_timeout_s) {
@@ -1208,7 +1217,8 @@ static int command(int argc, char **argv, struct reply *r) {
     reply_printf(r, "fps: %.1f\n", wp_ticking() ? w.fps : 0.0);
     reply_printf(r, "spin: x%.2f\n", 1 + w.boost);
     if (wp_topo(&w.cfg))
-      reply_printf(r, "topo seed: %d%s\n", w.cfg.topo_seed,
+      reply_printf(r, "topo seed: %d, angle %.0f%s\n", w.cfg.topo_seed,
+                   w.cfg.topo_angle,
                    w.cfg.topo_new_map ? " (new each start)" : "");
     reply_printf(r, "audio: %s\n", w.cfg.viz ? wp_audio_state() : "disabled");
     if (w.cfg.viz && w.cfg.viz_edges && w.cfg.viz_edge_smooth)

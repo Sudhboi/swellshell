@@ -38,7 +38,8 @@ struct wallpaper_config {
   uint32_t topo_bg_left, topo_bg_right; /* the background, left to right */
   uint32_t topo_line_left, topo_line_mid, topo_line_right; /* the lines */
   int topo_seed;          /* which map */
-  bool topo_new_map;      /* a random topo_seed per daemon start */
+  bool topo_new_map;      /* a random topo_seed and topo_angle per start */
+  double topo_angle;      /* the colours' direction, degrees clockwise */
   int topo_levels;        /* contour lines from the lowest to the highest */
   int topo_index_every;   /* every this many'th line is wider, 0 = none */
   double topo_scale;      /* the hills' size, reference px */
@@ -243,6 +244,10 @@ void wp_edge_curve(const struct wallpaper_config *c, int pw, int ph,
 /* topo.c: the topo style's background */
 /* The style isn't "classic". */
 bool wp_topo(const struct wallpaper_config *c);
+/* The map's gradient axis in a pw x ph buffer: the left colours at x0, y0,
+ * the right ones at x1, y1, turned by topo_angle about the centre. */
+void wp_topo_axis(const struct wallpaper_config *c, int pw, int ph,
+                  double *x0, double *y0, double *x1, double *y1);
 /* The contour map for a pw x ph buffer (RGB24), cached per size and config;
  * owned by topo.c. */
 cairo_surface_t *wp_topo_background(const struct wallpaper_config *c, int pw,

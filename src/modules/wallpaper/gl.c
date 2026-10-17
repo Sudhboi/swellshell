@@ -30,10 +30,10 @@ static struct {
   /* the topo map */
   GLuint map_prog, map_tex;
   unsigned map_grid; /* the grid in map_tex */
-  GLint m_heights, m_gsize, m_cell, m_origin, m_step, m_bh, m_pw, m_levels,
+  GLint m_heights, m_gsize, m_cell, m_origin, m_step, m_bh, m_levels,
       m_every, m_lw, m_iw, m_line0, m_line1, m_line2, m_bg0, m_bg1, m_bright,
-      m_rings, m_nrings, m_centre, m_ring_px, m_ring_w, m_sway, m_time, m_k,
-      m_gorigin, m_shake;
+      m_axis0, m_axis, m_rings, m_nrings, m_centre, m_ring_px, m_ring_w,
+      m_sway, m_time, m_k, m_gorigin, m_shake;
 } g;
 
 static const char *vs_src = "#version 300 es\n"
@@ -122,10 +122,11 @@ static const char *map_fs_src =
     "precision highp int;\n"
     "uniform highp sampler2D heights;\n"
     "uniform ivec2 gsize;\n"
-    "uniform float cell, bh, pw, levels, lw, iw, bright, ring_px, ring_w,\n"
+    "uniform float cell, bh, levels, lw, iw, bright, ring_px, ring_w,\n"
     "    sway, time, k;\n"
     "uniform int every, nrings;\n"
     "uniform vec2 origin, stp, centre, shake;\n"
+    "uniform vec2 axis0, axis;\n"
     "uniform float gorigin;\n"
     "uniform vec4 line0, line1, line2;\n"
     "uniform vec3 bg0, bg1;\n"
@@ -166,7 +167,7 @@ static const char *map_fs_src =
     "  float w = lw * (index ? iw : 1.0);\n"
     "  float cov = li < 0.0 || li >= levels ? 0.0\n"
     "            : clamp(w * 0.5 - dist + 0.5, 0.0, 1.0);\n"
-    "  float x = clamp(q.x / pw, 0.0, 1.0);\n"
+    "  float x = clamp(dot(q - axis0, axis), 0.0, 1.0);\n"
     "  vec4 lc = x < 0.5 ? mix(line0, line1, x * 2.0)\n"
     "                    : mix(line1, line2, x * 2.0 - 1.0);\n"
     "  vec3 c = mix(mix(bg0, bg1, x), lc.rgb, cov * lc.a);\n"
@@ -228,10 +229,10 @@ static bool build_program(void) {
     return false;
   }
 #define M(n) g.m_##n = glGetUniformLocation(g.map_prog, #n)
-  M(heights), M(gsize), M(cell), M(origin), M(bh), M(pw), M(levels);
+  M(heights), M(gsize), M(cell), M(origin), M(bh), M(levels);
   M(every), M(lw), M(iw), M(line0), M(line1), M(line2), M(bg0), M(bg1);
   M(bright), M(rings), M(nrings), M(centre), M(ring_px), M(ring_w);
-  M(sway), M(time), M(k), M(gorigin), M(shake);
+  M(sway), M(time), M(k), M(gorigin), M(shake), M(axis0), M(axis);
 #undef M
   g.m_step = glGetUniformLocation(g.map_prog, "stp");
   glGenTextures(1, &g.map_tex);
@@ -506,7 +507,6 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform2f(g.m_origin, ox, oy);
   glUniform2f(g.m_step, sx, sy);
   glUniform1f(g.m_bh, bh);
-  glUniform1f(g.m_pw, pw);
   glUniform1f(g.m_k, k);
   bool lines = c->topo_line_width > 0 && c->topo_line_alpha > 0;
   glUniform1f(g.m_levels, lines ? c->topo_levels : 0);
@@ -520,6 +520,12 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
               col_b(c->topo_bg_left));
   glUniform3f(g.m_bg1, col_r(c->topo_bg_right), col_g(c->topo_bg_right),
               col_b(c->topo_bg_right));
+  /* The gradient's position along its axis: dot(q - axis0, axis). */
+  double x0, y0, x1, y1;
+  wp_topo_axis(c, pw, ph, &x0, &y0, &x1, &y1);
+  double len2 = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+  glUniform2f(g.m_axis0, x0, y0);
+  glUniform2f(g.m_axis, (x1 - x0) / len2, (y1 - y0) / len2);
   glUniform1f(g.m_bright, wp_map_brightness(f));
   float rings[WP_RINGS][4] = {{0}};
   int n = f->nrings < WP_RINGS ? f->nrings : WP_RINGS;

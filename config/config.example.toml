@@ -437,8 +437,10 @@ topo_line_mid = "#a6e3a1"
 topo_line_right = "#89dcea"
 # which contour map (any number)
 topo_seed = 7
-# a new contour map each time swell starts (ignores topo_seed)
+# a new contour map and colour direction each time swell starts (ignores topo_seed, topo_angle)
 topo_new_map = true
+# the map's colours run this many degrees clockwise from left to right
+topo_angle = 0.0
 # contour lines from the lowest ground to the highest
 topo_levels = 16
 # every this many'th contour line is wider (0 = none)
