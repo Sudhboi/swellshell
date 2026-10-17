@@ -895,8 +895,7 @@ static void stroke_hex(cairo_t *cr, const uint32_t *edge, uint32_t col,
 
 /* What's playing, in the snowflake's hole (resting radius r, now rp): the
  * cover in grey, with a line round its border, clockwise from the top, as
- * far as the track has played. Without a track length a sixth of it runs
- * round. The hexagon, the cover and the line turn with the snowflake.
+ * far as the track has played. The hexagon, the cover and the line turn with the snowflake.
  * Under topo the line takes the outline's colours (fixed to the screen,
  * spread across the hexagon):
  * the track faint, the progress opaque, like the bar. */
@@ -908,7 +907,7 @@ static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
     return;
   double hr = HOLE * c->media_hex_size * rp;
   double lw = c->media_line_width * rp / c->logo_radius;
-  bool line = lw > 0 && (f->progress >= 0 || f->chase >= 0);
+  bool line = lw > 0 && f->progress >= 0;
   cairo_surface_t *art =
       c->media_art ? art_tile(f, (int)ceil(2 * HOLE * c->media_hex_size * r))
                    : NULL;
@@ -939,14 +938,8 @@ static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
     /* Under topo the track is a faint trace of the progress's colours. */
     stroke_hex(cr, topo ? edge : NULL, c->media_track, f->angle, hr,
                topo ? 0.3 * alpha : alpha, topo);
-    if (f->progress > 0) {
+    if (f->progress > 0)
       hex_trace(cr, hl, 0, fmin(f->progress, 1));
-    } else if (f->progress < 0) {
-      double t0 = fmod(f->chase, 6) / 6, t1 = t0 + 1 / 6.0;
-      hex_trace(cr, hl, t0, fmin(t1, 1));
-      if (t1 > 1)
-        hex_trace(cr, hl, 0, t1 - 1);
-    }
     stroke_hex(cr, topo ? edge : NULL, c->media_line, f->angle, hr, alpha,
                true);
   }

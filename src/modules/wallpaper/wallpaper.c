@@ -162,7 +162,6 @@ static const struct wallpaper_config defaults = {
     .media_player = "",
     .media_interval_ms = 2000,
     .media_progress = true,
-    .media_chase_ms = 2000,
     .media_art = true,
     .media_art_alpha = 0.5,
     .media_line = 0xb4b4b4ffu,
@@ -460,11 +459,7 @@ static const struct cfg_field fields[] = {
             "how often playerctl is asked while the wallpaper animates"),
     CFG_BOOL(S, media_progress,
              "a line runs clockwise round the snowflake's hexagonal hole from "
-             "its top as the track plays; without a track length a sixth of "
-             "it keeps running round"),
-    CFG_INT(S, media_chase_ms, 100, 60000,
-            "without a track length, the running line moves a sixth of the "
-            "way round in this long"),
+             "its top as the track plays"),
     CFG_COLOR(S, media_line,
               "the progress line (classic; topo uses the outline's colours)"),
     CFG_COLOR(S, media_track,
@@ -555,8 +550,7 @@ static struct {
   char title[256], artist[256];
   double media_alpha; /* the details' opacity, following the player */
   double progress;    /* the track's, 0..1, -1: none */
-  double chase;       /* the running line, 0..6, while the length is unknown */
-  bool chasing;
+  bool timed;         /* the player gives the track's length */
 
   /* the launch or power-off animation: a power-off ends in black, which
    * stays outro_hold_ms (no frames), then fades back over SHOW_RETURN_MS */
@@ -805,10 +799,7 @@ static void advance_media(int64_t now, double dt) {
                       ? fmin(w.media_alpha + step, target)
                       : fmax(w.media_alpha - step, target);
   w.progress = has && w.cfg.media_progress ? wp_media_progress(m, now) : -1;
-  /* No length: a lit wedge goes round while it plays. */
-  w.chasing = has && w.cfg.media_progress && w.progress < 0;
-  if (w.chasing && m->playing)
-    w.chase = fmod(w.chase + dt * 1000 / w.cfg.media_chase_ms, 6);
+  w.timed = has && m->len_us > 0;
 }
 
 /* The logo brightens with the pointer boost, fully at spin_max. */
@@ -896,10 +887,9 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   double saver = smooth(w.saver_mix);
   f->media_alpha = w.media_alpha * (1 - saver);
   /* Idle, the hexagon (cover and progress) goes; the title stays. Off the
-   * centre it goes too. */
-  bool hex = w.animating && w.saver_mix <= 0;
+   * centre it goes too, and without a track length it never shows. */
+  bool hex = w.animating && w.saver_mix <= 0 && w.timed;
   f->progress = hex ? w.progress : -1;
-  f->chase = hex && w.chasing ? w.chase : -1;
   f->art = hex && w.cfg.media_art ? wp_media_art(&f->art_id) : NULL;
   f->title = w.title;
   f->artist = w.artist;
@@ -1351,11 +1341,11 @@ static int command(int argc, char **argv, struct reply *r) {
         reply_printf(r, "media: none\n");
       } else {
         double p = wp_media_progress(m, now_ms());
-        char prog[16];
+        char prog[32];
         if (p >= 0)
           snprintf(prog, sizeof prog, "%.0f%%", p * 100);
         else
-          snprintf(prog, sizeof prog, "chase");
+          snprintf(prog, sizeof prog, "no length, no hexagon");
         reply_printf(r, "media: %s, \"%s\"%s%s, %s\n",
                      m->playing ? "playing" : "paused", m->title,
                      m->artist[0] ? " — " : "", m->artist, prog);

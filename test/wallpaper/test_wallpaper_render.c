@@ -942,7 +942,6 @@ int main(int argc, char **argv) {
             "Legends) and a much longer tail so that it has to be cut short";
   f.artist = "Release - Topic";
   f.progress = 0.4;
-  f.chase = -1;
   f.art = cover;
   f.art_id = 1;
   t = render(c, f, dir, "wallpaper_media_progress");
@@ -1004,34 +1003,8 @@ int main(int argc, char **argv) {
     assert(px(t, x, y) == 0);
     cairo_surface_destroy(t);
   }
-  /* No length: a sixth of the border runs round, wrapping past the top. */
   f.art = white;
-  f.progress = -1;
   f.angle = 0;
-  f.chase = 0.2; /* 0.033 .. 0.2 */
-  t = render(c, f, dir, NULL);
-  {
-    int x, y;
-    rim(hl, 0.1, 0, &x, &y);
-    assert(px(t, x, y) == line);
-    rim(hl, 0.01, 0, &x, &y);
-    assert(px(t, x, y) == track);
-    rim(hl, 0.5, 0, &x, &y);
-    assert(px(t, x, y) == track);
-  }
-  cairo_surface_destroy(t);
-  f.chase = 5.5; /* 0.917 .. 1.083 */
-  t = render(c, f, dir, NULL);
-  {
-    int x, y;
-    rim(hl, 0.97, 0, &x, &y);
-    assert(px(t, x, y) == line);
-    rim(hl, 0.04, 0, &x, &y);
-    assert(px(t, x, y) == line);
-    rim(hl, 0.5, 0, &x, &y);
-    assert(px(t, x, y) == track);
-  }
-  cairo_surface_destroy(t);
   /* Line width 0: no line, no track. */
   struct wallpaper_config noline = *c;
   noline.media_line_width = 0;
@@ -1044,14 +1017,11 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(t);
   f.art = cover;
   f.art_id = 1;
-  f.chase = 4.0;
   f.angle = 0.3;
   f.title = "NIGHT DANCER";
   f.artist = "imase";
-  cairo_surface_destroy(render(c, f, dir, "wallpaper_media_chase"));
   struct wp_frame pf = f;
   pf.media_alpha = c->media_paused_alpha;
-  pf.chase = -1;
   pf.progress = 0.7;
   cairo_surface_destroy(render(c, pf, dir, "wallpaper_media_paused"));
   /* A partial repaint over other details, shaken and pulsed, equals a full

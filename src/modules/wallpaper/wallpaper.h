@@ -147,8 +147,6 @@ struct wallpaper_config {
   char media_player[128]; /* playerctl -p, "": playerctl's pick */
   int media_interval_ms;  /* playerctl poll while animating */
   bool media_progress;    /* a line round the hexagon shows the progress */
-  int media_chase_ms;     /* no track length: a line runs round, a sixth
-                           * of the way in this long */
   bool media_art;         /* the cover, in grey, fills the hexagon */
   double media_art_alpha; /* the cover's opacity, 0..1 */
   uint32_t media_line, media_track; /* the progress line, the rest */
@@ -199,7 +197,6 @@ struct wp_frame {
   double media_alpha; /* the details (title, artist, hexagon), 0: none */
   const char *title, *artist;
   double progress; /* 0..1 of the way round from the top, -1: none */
-  double chase;    /* -1, or where the running line is, 0..6 */
   cairo_surface_t *art; /* the cover in grey (RGB24, square), or NULL */
   unsigned art_id;      /* changes with the cover */
   /* the launch and power-off animations (all 0 otherwise) */

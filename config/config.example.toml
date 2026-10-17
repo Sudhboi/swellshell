@@ -653,10 +653,8 @@ media = true
 media_player = ""
 # how often playerctl is asked while the wallpaper animates
 media_interval_ms = 2000
-# a line runs clockwise round the snowflake's hexagonal hole from its top as the track plays; without a track length a sixth of it keeps running round
+# a line runs clockwise round the snowflake's hexagonal hole from its top as the track plays
 media_progress = true
-# without a track length, the running line moves a sixth of the way round in this long
-media_chase_ms = 2000
 # the progress line (classic; topo uses the outline's colours)
 media_line = "#b4b4b4"
 # the rest of the hexagon's border (classic; topo: the outline's colours, as faint)
