@@ -6,22 +6,16 @@
 
 #include "capture.h"
 #include "config.h"
+#include "draw.h"
 #include "layout.h"
 #include "util.h"
 #include "zoom.h"
 
-static void set_color(cairo_t *cr, uint32_t c) {
-  cairo_set_source_rgba(cr, col_r(c), col_g(c), col_b(c), col_a(c));
-}
+static void set_color(cairo_t *cr, uint32_t c) { set_rgba(cr, c, 1.0); }
 
 static void rounded(cairo_t *cr, struct box b, double r) {
   r = fmin(r, fmin(b.w, b.h) / 2);
-  cairo_new_sub_path(cr);
-  cairo_arc(cr, b.x + b.w - r, b.y + r, r, -M_PI / 2, 0);
-  cairo_arc(cr, b.x + b.w - r, b.y + b.h - r, r, 0, M_PI / 2);
-  cairo_arc(cr, b.x + r, b.y + b.h - r, r, M_PI / 2, M_PI);
-  cairo_arc(cr, b.x + r, b.y + r, r, M_PI, 3 * M_PI / 2);
-  cairo_close_path(cr);
+  rounded_rect(cr, b.x, b.y, b.w, b.h, r);
 }
 
 /* Stroke a border lying fully inside b. */

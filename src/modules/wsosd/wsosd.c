@@ -8,7 +8,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 #include "anim.h"
 #include "bus.h"
@@ -66,10 +65,6 @@ static const struct cfg_field fields[] = {
 };
 #undef S
 
-struct tween {
-  double from, to, t0, dur;
-};
-
 static struct {
   struct swell *sw;
   struct wsosd_config cfg;
@@ -81,29 +76,6 @@ static struct {
   bool retracting;
   bool overview; /* the overview is open */
 } w;
-
-static double now_fms(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
-}
-
-static double progress(const struct tween *tw, double now) {
-  if (tw->dur <= 0 || now >= tw->t0 + tw->dur)
-    return 1.0;
-  return now <= tw->t0 ? 0.0 : (now - tw->t0) / tw->dur;
-}
-
-static double tween_value(const struct tween *tw, double now) {
-  return tw->from + (tw->to - tw->from) * ease_out_cubic(progress(tw, now));
-}
-
-static void retarget(struct tween *tw, double to, double dur, double now) {
-  tw->from = tween_value(tw, now);
-  tw->to = to;
-  tw->t0 = now;
-  tw->dur = dur;
-}
 
 static void snap(struct tween *tw, double to) {
   *tw = (struct tween){.from = to, .to = to};
@@ -118,8 +90,9 @@ static bool draw(cairo_t *cr, void *data) {
       .slide = tween_value(&w.shown, now),
   };
   wsosd_render_surface(cr, &w.cfg, &rs);
-  return progress(&w.shown, now) < 1.0 || progress(&w.pos, now) < 1.0 ||
-         progress(&w.count, now) < 1.0;
+  return tween_progress(&w.shown, now) < 1.0 ||
+         tween_progress(&w.pos, now) < 1.0 ||
+         tween_progress(&w.count, now) < 1.0;
 }
 
 static int wanted_width(int n) {
@@ -184,14 +157,14 @@ static void show(void) {
   bool was_visible = visible();
   double now = now_fms();
   if (was_visible) {
-    retarget(&w.pos, index, w.cfg.move_ms, now);
-    retarget(&w.count, n, w.cfg.move_ms, now);
+    tween_retarget(&w.pos, index, w.cfg.move_ms, now);
+    tween_retarget(&w.count, n, w.cfg.move_ms, now);
   } else {
     snap(&w.pos, index);
     snap(&w.count, n);
   }
   if (w.shown.to < 1.0)
-    retarget(&w.shown, 1.0, w.cfg.slide_ms, now);
+    tween_retarget(&w.shown, 1.0, w.cfg.slide_ms, now);
   w.index = index;
   w.n = n;
   w.retracting = false;
@@ -209,8 +182,8 @@ static void refresh(void) {
   if (!visible() || !query(&index, &n) || (index == w.index && n == w.n))
     return;
   double now = now_fms();
-  retarget(&w.pos, index, w.cfg.move_ms, now);
-  retarget(&w.count, n, w.cfg.move_ms, now);
+  tween_retarget(&w.pos, index, w.cfg.move_ms, now);
+  tween_retarget(&w.count, n, w.cfg.move_ms, now);
   w.index = index;
   w.n = n;
   show_surface(n);
@@ -220,7 +193,7 @@ static void refresh(void) {
 static void retract(void) {
   if (!visible())
     return;
-  retarget(&w.shown, 0.0, w.cfg.slide_ms, now_fms());
+  tween_retarget(&w.shown, 0.0, w.cfg.slide_ms, now_fms());
   w.retracting = true;
   loop_timer_disarm(w.hide_timer);
   layer_surface_redraw(w.surf);

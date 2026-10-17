@@ -8,33 +8,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "draw.h"
+
 /* Nerd Font icon, UTF-8 */
 static const char ICON_MUSIC[] = "\U000F075A";
 
 /* The config of the frame being drawn (set by media_render). */
 static const struct media_config *C;
-
-static void set_rgba(cairo_t *cr, uint32_t c, double alpha) {
-  cairo_set_source_rgba(cr, ((c >> 24) & 0xff) / 255.0,
-                        ((c >> 16) & 0xff) / 255.0, ((c >> 8) & 0xff) / 255.0,
-                        (c & 0xff) / 255.0 * alpha);
-}
-
-/* a to b by t, per channel. */
-static uint32_t mix(uint32_t a, uint32_t b, double t) {
-  uint32_t c = 0;
-  for (int sh = 0; sh < 32; sh += 8) {
-    double ca = (a >> sh) & 0xff, cb = (b >> sh) & 0xff;
-    c |= (uint32_t)(ca + (cb - ca) * t + 0.5) << sh;
-  }
-  return c;
-}
-
-static void add_stop(cairo_pattern_t *p, double off, uint32_t c) {
-  cairo_pattern_add_color_stop_rgba(
-      p, off, ((c >> 24) & 0xff) / 255.0, ((c >> 16) & 0xff) / 255.0,
-      ((c >> 8) & 0xff) / 255.0, (c & 0xff) / 255.0);
-}
 
 /* Text is shaped by Pango, so glyphs missing from C->font (CJK, …) fall
  * back to other fonts. maxw > 0 ellipsises at the end past it. */
@@ -96,12 +76,7 @@ static void panel_path(cairo_t *cr, double x, double y, double w, double h,
     r = w / 2;
   if (r > h / 2)
     r = h / 2;
-  cairo_new_sub_path(cr);
-  cairo_arc(cr, x + w - r, y + r, r, -M_PI / 2, 0);
-  cairo_arc(cr, x + w - r, y + h - r, r, 0, M_PI / 2);
-  cairo_arc(cr, x + r, y + h - r, r, M_PI / 2, M_PI);
-  cairo_arc(cr, x + r, y + r, r, M_PI, 3 * M_PI / 2);
-  cairo_close_path(cr);
+  rounded_rect(cr, x, y, w, h, r);
 }
 
 void media_format_time(char *out, size_t n, int64_t us) {
@@ -239,8 +214,8 @@ static void draw_bar(cairo_t *cr, const struct media_track *t, double p,
   bool chase = t->len_us <= 0;
   double q = chase ? 0 : p;
   cairo_pattern_t *g = cairo_pattern_create_linear(x, 0, x + w, 0);
-  add_stop(g, 0.0, mix(C->bar_dark, C->muted, q));
-  add_stop(g, 1.0, mix(C->bar_light, C->muted, q));
+  add_stop(g, 0.0, col_mix(C->bar_dark, C->muted, q));
+  add_stop(g, 1.0, col_mix(C->bar_light, C->muted, q));
   cairo_set_source(cr, g);
   cairo_pattern_destroy(g);
   cairo_rectangle(cr, x + from, y, to - from, C->bar_h);
@@ -271,7 +246,7 @@ static void draw_slot(cairo_t *cr, const struct media_slot *sl, int64_t now) {
   /* player, with the status icon on the right */
   double y = C->pad + cap_height(cr, C->font_player);
   double iw = C->font_row * 0.75;
-  draw_status(cr, right - iw, y - iw, iw, p, mix(C->text, C->muted, p));
+  draw_status(cr, right - iw, y - iw, iw, p, col_mix(C->text, C->muted, p));
   if (t->player[0])
     text_at(cr, x, y, t->player, C->font_player, false, w - iw - 8, C->dim);
 
@@ -295,7 +270,7 @@ static void draw_slot(cairo_t *cr, const struct media_slot *sl, int64_t now) {
     char a[32], b[32];
     media_format_time(a, sizeof a, media_position(t, now));
     media_format_time(b, sizeof b, t->len_us);
-    uint32_t col = mix(C->dim, C->muted, p);
+    uint32_t col = col_mix(C->dim, C->muted, p);
     text_at(cr, x, tb, a, C->font_time, false, 0, col);
     text_at(cr, right - advance(cr, b, C->font_time), tb, b, C->font_time,
             false, 0, col);

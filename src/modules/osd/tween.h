@@ -4,12 +4,9 @@
 
 #include <stdbool.h>
 
+#include "anim.h"
 #include "osd.h"
 #include "render.h"
-
-struct tween {
-  double from, to, t0, dur;
-};
 
 struct osd_anim {
   struct tween level;

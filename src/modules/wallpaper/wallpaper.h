@@ -402,6 +402,14 @@ const char *wp_audio_state(void);
  * lately. */
 bool wp_audio_samples(float *left, float *right, int *rate);
 
+/* wallpaper.c: the module's entry points (settings.c's descriptor) */
+struct swell;
+struct reply;
+bool wp_init(struct swell *sw, const void *cfg);
+void wp_reconfigure(const void *cfg);
+void wp_finish(void);
+int wp_command(int argc, char **argv, struct reply *r);
+
 /* media.c: what's playing, polled with playerctl only while animating */
 struct wp_media {
   bool has;     /* a player has a track */

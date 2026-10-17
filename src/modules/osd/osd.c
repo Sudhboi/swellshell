@@ -101,12 +101,6 @@ static struct {
   bool retracting;
 } o;
 
-static double now_fms(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
-}
-
 static bool draw(cairo_t *cr, void *data) {
   struct osd_render_state rs;
   bool more = osd_anim_sample(&o.anim, &o.cfg, now_fms(), &rs);

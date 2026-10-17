@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "draw.h"
+
 /* Nerd Font icons, UTF-8 */
 static const char *const ICON_BAT[] = {
     /* 0, 10, 20 .. 100 % */
@@ -44,18 +46,6 @@ static const struct popup_config *C;
  * its separator's y in a panel of height h: */
 static double footer_h(double h) {
   return (double)(long)(h - C->pad - C->ws_h - C->gap_ws);
-}
-
-static void set_rgba(cairo_t *cr, uint32_t c, double alpha) {
-  cairo_set_source_rgba(cr, ((c >> 24) & 0xff) / 255.0,
-                        ((c >> 16) & 0xff) / 255.0, ((c >> 8) & 0xff) / 255.0,
-                        (c & 0xff) / 255.0 * alpha);
-}
-
-static void add_stop(cairo_pattern_t *p, double off, uint32_t c) {
-  cairo_pattern_add_color_stop_rgba(
-      p, off, ((c >> 24) & 0xff) / 255.0, ((c >> 16) & 0xff) / 255.0,
-      ((c >> 8) & 0xff) / 255.0, (c & 0xff) / 255.0);
 }
 
 /* Text is shaped by Pango so glyphs missing from C->font (CJK, …) fall

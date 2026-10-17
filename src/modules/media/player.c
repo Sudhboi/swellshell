@@ -1,51 +1,25 @@
-/* What's playing, for the media panel: playerctl run every interval_ms
- * while polling is on, its output read on the daemon loop, and the track's
- * cover (a file:// one read directly, an http(s) one fetched by curl
- * first). The same pattern as wallpaper/media.c. */
+/* What's playing, for the media panel: polled with playerctl (core
+ * mpris.c) every interval_ms while polling is on, plus playerctl commands
+ * (play-pause, ...). */
 #include "player.h"
 
-#include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
 #include <signal.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 
-#include "art.h"
+#include "mpris.h"
 #include "util.h"
 
 static struct {
-  struct loop *loop;
+  struct mpris poll;
   player_fn fn;
   void *data;
-  struct loop_timer *timer;
-  char player[128];
-  int kill_ms;
-  pid_t pid;
-  bool watched; /* the loop reaps pid; else we waitpid */
-  int fd;
-  struct loop_watch *watch;
-  int64_t started;
-  char buf[8192];
-  size_t len;
   struct media_track t;
-  /* the cover */
   bool want_art;
-  char art_url[1024]; /* the cover shown or being fetched */
-  cairo_surface_t *art;
-  unsigned art_id;
-  pid_t curl;
-  char art_tmp[512]; /* curl's download */
-  pid_t ctl;         /* a player_command running */
-} pl = {.fd = -1};
-
-static void copy_str(char *dst, size_t n, const char *src) {
-  snprintf(dst, n, "%s", src);
-}
+  pid_t ctl; /* a player_command running */
+} pl;
 
 bool media_parse(const char *line, int64_t now, struct media_track *t) {
   char buf[8192];
@@ -106,266 +80,90 @@ bool media_same_track(const struct media_track *a,
 
 const struct media_track *player_track(void) { return &pl.t; }
 
-cairo_surface_t *player_art(unsigned *id) {
-  *id = pl.art_id;
-  return pl.art;
+cairo_surface_t *player_art(unsigned *id) { return mpris_art(&pl.poll, id); }
+
+static const char *parsed(const char *out, void *data) {
+  media_parse(out, now_ms(), &pl.t);
+  return pl.want_art && pl.t.has ? pl.t.art_url : "";
 }
 
-static void set_art(cairo_surface_t *art) {
-  if (pl.art)
-    cairo_surface_destroy(pl.art);
-  pl.art = art;
-  pl.art_id++;
-}
-
-static void curl_kill(void) {
-  if (pl.curl > 0)
-    kill(pl.curl, SIGKILL); /* the loop reaps it */
-  pl.curl = 0;
-  if (pl.art_tmp[0])
-    unlink(pl.art_tmp);
-}
-
-static void on_curl(pid_t pid, int status, void *data) {
-  if (pid != pl.curl)
-    return; /* killed: a newer cover or a stop */
-  pl.curl = 0;
-  if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
-    set_art(art_load(pl.art_tmp, false));
-  unlink(pl.art_tmp);
+static void changed(void *data) {
   if (pl.fn)
     pl.fn(pl.data);
 }
 
-static void fetch_art(const char *url) {
-  snprintf(pl.art_tmp, sizeof pl.art_tmp, "%s/swell-media-art-%d",
-           runtime_dir(), (int)getpid());
-  pid_t pid = fork();
-  if (pid < 0)
-    return;
-  if (pid == 0) {
-    sigset_t none;
-    sigemptyset(&none);
-    sigprocmask(SIG_SETMASK, &none, NULL);
-    signal(SIGPIPE, SIG_DFL);
-    int null = open("/dev/null", O_RDWR);
-    if (null >= 0) {
-      dup2(null, STDIN_FILENO);
-      dup2(null, STDOUT_FILENO);
-      dup2(null, STDERR_FILENO);
-    }
-    execlp("curl", "curl", "-sfL", "--max-time", "10", "--max-filesize",
-           "20000000", "-o", pl.art_tmp, "--", url, (char *)NULL);
-    _exit(127);
-  }
-  if (!loop_watch_child(pl.loop, pid, on_curl, NULL)) {
-    /* Nobody would reap it in time: give the cover up. */
-    kill(pid, SIGKILL);
-    waitpid(pid, NULL, 0);
-    return;
-  }
-  pl.curl = pid;
-}
-
-/* Follow the track's cover URL. */
-static void update_art(void) {
-  const char *url = pl.want_art && pl.t.has ? pl.t.art_url : "";
-  if (!strcmp(url, pl.art_url))
-    return;
-  copy_str(pl.art_url, sizeof pl.art_url, url);
-  curl_kill();
-  set_art(NULL);
-  char path[1024];
-  if (art_file_path(url, path, sizeof path))
-    set_art(art_load(path, false));
-  else if (!strncmp(url, "http://", 7) || !strncmp(url, "https://", 8))
-    fetch_art(url);
-}
-
-static void child_close(void) {
-  loop_remove_fd(pl.watch);
-  pl.watch = NULL;
-  if (pl.fd >= 0)
-    close(pl.fd);
-  pl.fd = -1;
-}
-
-/* Kill a running playerctl and forget it. */
-static void child_kill(void) {
-  if (pl.pid > 0) {
-    kill(pl.pid, SIGKILL);
-    if (!pl.watched)
-      waitpid(pl.pid, NULL, 0);
-  }
-  pl.pid = 0;
-  child_close();
-}
-
-static void on_child(pid_t pid, int status, void *data) {
-  if (pl.pid == pid)
-    pl.pid = 0;
-}
-
-static void on_output(int fd, short revents, void *data) {
-  ssize_t r;
-  while ((r = read(pl.fd, pl.buf + pl.len, sizeof(pl.buf) - 1 - pl.len)) > 0)
-    pl.len += (size_t)r;
-  if (r < 0 && errno == EAGAIN && pl.len < sizeof(pl.buf) - 1)
-    return;
-  pl.buf[pl.len] = '\0';
-  child_close();
-  if (pl.pid > 0 && !pl.watched) {
-    waitpid(pl.pid, NULL, 0);
-    pl.pid = 0;
-  }
-  /* No player: playerctl prints nothing (and fails). */
-  media_parse(pl.buf, now_ms(), &pl.t);
-  update_art();
-  if (pl.fn)
-    pl.fn(pl.data);
-}
-
-static void poll_player(void) {
-  if (pl.fd >= 0 || pl.pid > 0) {
-    if (now_ms() - pl.started < pl.kill_ms)
-      return;
-    child_kill();
-  }
-  const char *argv[8];
-  int n = 0;
-  argv[n++] = "playerctl";
-  if (pl.player[0]) {
-    argv[n++] = "-p";
-    argv[n++] = pl.player;
-  }
-  argv[n++] = "metadata";
-  argv[n++] = "--format";
-  argv[n++] = "{{status}}\t{{mpris:length}}\t{{position}}\t{{mpris:artUrl}}"
-              "\t{{playerName}}\t{{album}}\t{{artist}}\t{{title}}";
-  argv[n] = NULL;
-  int p[2];
-  if (pipe2(p, O_CLOEXEC) < 0)
-    return;
-  pid_t pid = fork();
-  if (pid < 0) {
-    close(p[0]);
-    close(p[1]);
-    return;
-  }
-  if (pid == 0) {
-    /* The daemon blocks signals for its signalfd and ignores SIGPIPE;
-     * don't pass that on. */
-    sigset_t none;
-    sigemptyset(&none);
-    sigprocmask(SIG_SETMASK, &none, NULL);
-    signal(SIGPIPE, SIG_DFL);
-    dup2(p[1], STDOUT_FILENO);
-    int null = open("/dev/null", O_RDWR);
-    if (null >= 0) {
-      dup2(null, STDIN_FILENO);
-      dup2(null, STDERR_FILENO);
-    }
-    execvp(argv[0], (char *const *)argv);
-    _exit(127);
-  }
-  close(p[1]);
-  fcntl(p[0], F_SETFL, O_NONBLOCK);
-  pl.pid = pid;
-  pl.watched = loop_watch_child(pl.loop, pid, on_child, NULL);
-  pl.fd = p[0];
-  pl.len = 0;
-  pl.watch = loop_add_fd(pl.loop, pl.fd, POLLIN, on_output, NULL);
-  pl.started = now_ms();
-}
-
-static void on_timer(struct loop_timer *t, void *data) { poll_player(); }
+static const struct mpris_ops ops = {
+    .format = "{{status}}\t{{mpris:length}}\t{{position}}\t{{mpris:artUrl}}"
+              "\t{{playerName}}\t{{album}}\t{{artist}}\t{{title}}",
+    .grey = false,
+    .art_tag = "swell-media-art",
+    .parsed = parsed,
+    .changed = changed,
+};
 
 static void on_ctl(pid_t pid, int status, void *data) {
   if (pid != pl.ctl)
     return;
   pl.ctl = 0;
   /* A poll started before the command would report the old state. */
-  child_kill();
-  poll_player();
+  mpris_repoll(&pl.poll);
 }
 
 void player_command(const struct media_config *c, const char *verb) {
   if (pl.ctl > 0)
     kill(pl.ctl, SIGKILL); /* the loop reaps it */
   pl.ctl = 0;
-  if (!pl.timer) {
+  if (!mpris_running(&pl.poll)) {
     /* Not polling: take the settings the poll after it will use. */
     pl.want_art = c->art;
-    pl.kill_ms = c->command_timeout_ms;
-    copy_str(pl.player, sizeof pl.player, c->player);
+    mpris_configure(&pl.poll, c->player, c->command_timeout_ms);
   }
+  const char *player = pl.poll.player;
   pid_t pid = fork();
   if (pid < 0)
     return;
   if (pid == 0) {
-    sigset_t none;
-    sigemptyset(&none);
-    sigprocmask(SIG_SETMASK, &none, NULL);
-    signal(SIGPIPE, SIG_DFL);
-    int null = open("/dev/null", O_RDWR);
-    if (null >= 0) {
-      dup2(null, STDIN_FILENO);
-      dup2(null, STDOUT_FILENO);
-      dup2(null, STDERR_FILENO);
-    }
-    if (pl.player[0])
-      execlp("playerctl", "playerctl", "-p", pl.player, verb, (char *)NULL);
+    child_setup(-1);
+    if (player[0])
+      execlp("playerctl", "playerctl", "-p", player, verb, (char *)NULL);
     else
       execlp("playerctl", "playerctl", verb, (char *)NULL);
     _exit(127);
   }
-  if (!loop_watch_child(pl.loop, pid, on_ctl, NULL)) {
+  if (!loop_watch_child(pl.poll.loop, pid, on_ctl, NULL)) {
     waitpid(pid, NULL, 0);
-    child_kill();
-    poll_player();
+    mpris_repoll(&pl.poll);
     return;
   }
   pl.ctl = pid;
 }
 
 void player_init(struct loop *loop, player_fn fn, void *data) {
-  pl.loop = loop;
+  mpris_init(&pl.poll, loop, &ops, NULL);
   pl.fn = fn;
   pl.data = data;
 }
 
 void player_start(const struct media_config *c) {
-  if (pl.timer)
+  if (mpris_running(&pl.poll))
     return;
   if (pl.want_art != c->art)
-    pl.art_url[0] = '\0'; /* look at the cover again */
+    mpris_forget_art(&pl.poll); /* look at the cover again */
   pl.want_art = c->art;
-  pl.kill_ms = c->command_timeout_ms;
-  copy_str(pl.player, sizeof pl.player, c->player);
-  pl.timer = loop_add_timer(pl.loop, CLOCK_MONOTONIC, on_timer, NULL);
-  loop_timer_arm(pl.timer, c->interval_ms, c->interval_ms);
-  poll_player();
+  mpris_configure(&pl.poll, c->player, c->command_timeout_ms);
+  mpris_start(&pl.poll, c->interval_ms);
 }
 
-void player_stop(void) {
-  if (pl.timer)
-    loop_remove_timer(pl.timer);
-  pl.timer = NULL;
-  child_kill();
-  if (pl.curl > 0)
-    pl.art_url[0] = '\0'; /* fetch it again next time */
-  curl_kill();
-}
+void player_stop(void) { mpris_stop(&pl.poll); }
 
-bool player_running(void) { return pl.timer != NULL; }
+bool player_running(void) { return mpris_running(&pl.poll); }
 
 void player_finish(void) {
   player_stop();
   if (pl.ctl > 0)
     kill(pl.ctl, SIGKILL);
   pl.ctl = 0;
-  set_art(NULL);
+  mpris_clear_art(&pl.poll);
   memset(&pl.t, 0, sizeof pl.t);
-  pl.art_url[0] = '\0';
   pl.fn = NULL;
 }

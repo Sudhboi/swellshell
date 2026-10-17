@@ -38,10 +38,6 @@ static bool read_long(const char *path, long *v) {
   return end != buf;
 }
 
-static void copy_str(char *dst, size_t n, const char *src) {
-  snprintf(dst, n, "%s", src);
-}
-
 /* --- sysfs / proc --- */
 
 static void read_battery(struct info *in) {
@@ -228,18 +224,7 @@ static void cmd_start(struct cmd *c, int kill_ms) {
     return;
   }
   if (pid == 0) {
-    /* The daemon blocks signals for its signalfd and ignores SIGPIPE;
-     * don't pass that on. */
-    sigset_t none;
-    sigemptyset(&none);
-    sigprocmask(SIG_SETMASK, &none, NULL);
-    signal(SIGPIPE, SIG_DFL);
-    dup2(p[1], STDOUT_FILENO);
-    int null = open("/dev/null", O_RDWR);
-    if (null >= 0) {
-      dup2(null, STDIN_FILENO);
-      dup2(null, STDERR_FILENO);
-    }
+    child_setup(p[1]);
     execvp(c->argv[0], (char *const *)c->argv);
     _exit(127);
   }

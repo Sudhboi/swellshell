@@ -30,7 +30,7 @@ static struct rect apply(struct xform f, int x, int y, int w, int h) {
                        (int)lround(h * f.sy)};
 }
 
-static char *copy_str(const char *s, int size) {
+static char *dup_str(const char *s, int size) {
   return s ? xstrndup(s, size) : NULL;
 }
 
@@ -44,13 +44,13 @@ static void add_window(struct builder *b, const I3ipc_node *n, bool floating,
   struct workspace *ws = b->ws;
   struct window *w = xcalloc(1, sizeof(*w));
   w->con_id = (long)n->id;
-  w->title = copy_str(n->name, n->name_size);
-  w->app_id = copy_str(n->app_id, n->app_id_size);
+  w->title = dup_str(n->name, n->name_size);
+  w->app_id = dup_str(n->app_id, n->app_id_size);
   if (!w->app_id && n->window_properties && n->window_properties->window_class)
-    w->app_id = copy_str(n->window_properties->window_class,
-                         n->window_properties->window_class_size);
-  w->ident = copy_str(n->foreign_toplevel_identifier,
-                      n->foreign_toplevel_identifier_size);
+    w->app_id = dup_str(n->window_properties->window_class,
+                        n->window_properties->window_class_size);
+  w->ident = dup_str(n->foreign_toplevel_identifier,
+                     n->foreign_toplevel_identifier_size);
   /* relative to the workspace */
   f.tx -= ws->rect.x;
   f.ty -= ws->rect.y;
@@ -204,7 +204,7 @@ bool ov_model_load(struct model *m, bool new_slot, double spread_gap) {
 
     m->outputs = xrealloc(m->outputs, (m->noutputs + 1) * sizeof(*m->outputs));
     struct sway_output_info *so = &m->outputs[m->noutputs++];
-    so->name = copy_str(out->name, out->name_size);
+    so->name = dup_str(out->name, out->name_size);
     so->rect = (struct rect){out->rect.x, out->rect.y, out->rect.width,
                              out->rect.height};
 
@@ -214,7 +214,7 @@ bool ov_model_load(struct model *m, bool new_slot, double spread_gap) {
         continue;
       struct workspace *ws = add_workspace(m);
       ws->id = (long)wn->id;
-      ws->name = copy_str(wn->name, wn->name_size);
+      ws->name = dup_str(wn->name, wn->name_size);
       ws->num = wn->num_set ? wn->num : parse_num(ws->name);
       ws->output_name = xstrdup(so->name);
       ws->rect = (struct rect){wn->rect.x, wn->rect.y, wn->rect.width,

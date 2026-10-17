@@ -1,5 +1,6 @@
 #include "util.h"
 
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,10 +44,20 @@ char *xasprintf(const char *fmt, ...) {
   return s;
 }
 
+void copy_str(char *dst, size_t n, const char *src) {
+  snprintf(dst, n, "%s", src);
+}
+
 int64_t now_ms(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+double now_fms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
 }
 
 void vwarn_prefixed(const char *prefix, const char *fmt, va_list ap) {
@@ -78,13 +89,28 @@ const char *runtime_dir(void) {
   return dir && *dir ? dir : "/tmp";
 }
 
-static void exec_shell(const char *cmd, char *const extra_env[]) {
-  /* The daemon blocks some signals for its signalfd; children must not
-   * inherit that. */
+void child_reset_signals(void) {
   sigset_t none;
   sigemptyset(&none);
   sigprocmask(SIG_SETMASK, &none, NULL);
   signal(SIGPIPE, SIG_DFL);
+}
+
+void child_setup(int out_fd) {
+  child_reset_signals();
+  if (out_fd >= 0)
+    dup2(out_fd, STDOUT_FILENO);
+  int null = open("/dev/null", O_RDWR);
+  if (null >= 0) {
+    dup2(null, STDIN_FILENO);
+    if (out_fd < 0)
+      dup2(null, STDOUT_FILENO);
+    dup2(null, STDERR_FILENO);
+  }
+}
+
+static void exec_shell(const char *cmd, char *const extra_env[]) {
+  child_reset_signals();
   for (int i = 0; extra_env && extra_env[i]; ++i)
     putenv(extra_env[i]);
   execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);

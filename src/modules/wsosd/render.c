@@ -4,33 +4,16 @@
 #include <math.h>
 #include <stdint.h>
 
-static const double PI = 3.14159265358979323846;
+#include "draw.h"
 
-static void set_rgba(cairo_t *cr, uint32_t c, double alpha) {
-  cairo_set_source_rgba(cr, ((c >> 24) & 0xff) / 255.0,
-                        ((c >> 16) & 0xff) / 255.0, ((c >> 8) & 0xff) / 255.0,
-                        (c & 0xff) / 255.0 * alpha);
-}
-
-static void add_stop(cairo_pattern_t *p, double off, uint32_t c) {
-  cairo_pattern_add_color_stop_rgba(p, off, ((c >> 24) & 0xff) / 255.0,
-                                    ((c >> 16) & 0xff) / 255.0,
-                                    ((c >> 8) & 0xff) / 255.0,
-                                    (c & 0xff) / 255.0);
-}
-
-static void rounded_rect(cairo_t *cr, double x, double y, double w, double h,
+/* A rounded rectangle, the radius held to half the smaller side. */
+static void clamped_rect(cairo_t *cr, double x, double y, double w, double h,
                          double rad) {
   if (rad > w / 2)
     rad = w / 2;
   if (rad > h / 2)
     rad = h / 2;
-  cairo_new_sub_path(cr);
-  cairo_arc(cr, x + w - rad, y + rad, rad, -PI / 2, 0);
-  cairo_arc(cr, x + w - rad, y + h - rad, rad, 0, PI / 2);
-  cairo_arc(cr, x + rad, y + h - rad, rad, PI / 2, PI);
-  cairo_arc(cr, x + rad, y + rad, rad, PI, 3 * PI / 2);
-  cairo_close_path(cr);
+  rounded_rect(cr, x, y, w, h, rad);
 }
 
 static double clamp01(double v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
@@ -67,7 +50,7 @@ static void draw_row(cairo_t *cr, const struct wsosd_config *c,
     if (k == from)
       bar_x = x + (s->pos - from) * (w + c->dot_gap);
     if (w > 0 && h > 0) {
-      rounded_rect(cr, x, cy - h / 2, w, h, h / 2);
+      clamped_rect(cr, x, cy - h / 2, w, h, h / 2);
       set_rgba(cr, c->dot_color, 1.0);
       cairo_fill(cr);
     }
@@ -77,7 +60,7 @@ static void draw_row(cairo_t *cr, const struct wsosd_config *c,
   /* One bar over the row, sliding from slot to slot while the slots under
    * it stretch and shrink. Light-to-dark gradient, like the volume ring. */
   double bw = c->active_width, bh = c->dot;
-  rounded_rect(cr, bar_x, cy - bh / 2, bw, bh, bh / 2);
+  clamped_rect(cr, bar_x, cy - bh / 2, bw, bh, bh / 2);
   cairo_pattern_t *g = cairo_pattern_create_linear(bar_x, 0, bar_x + bw, 0);
   add_stop(g, 0.0, c->active_light);
   add_stop(g, 1.0, c->active_dark);
@@ -92,7 +75,7 @@ static void draw_panel(cairo_t *cr, const struct wsosd_config *c,
   double x = round((s->width - pw) / 2);
 
   set_rgba(cr, c->background, 1.0);
-  rounded_rect(cr, x + 0.5, 0.5, pw - 1, c->height - 1, c->corner);
+  clamped_rect(cr, x + 0.5, 0.5, pw - 1, c->height - 1, c->corner);
   cairo_fill_preserve(cr);
   set_rgba(cr, c->border, 1.0);
   cairo_set_line_width(cr, 1);

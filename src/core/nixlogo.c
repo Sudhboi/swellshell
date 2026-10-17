@@ -4,7 +4,7 @@
 #include <math.h>
 #include <stddef.h>
 
-static const double PI = 3.14159265358979323846;
+#include "draw.h"
 
 /* One lambda from NixOS/nixos-artwork logo/nix-snowflake-colours.svg,
  * centred on the snowflake centre and scaled to outer radius 1 (y down). */
@@ -14,13 +14,6 @@ static const double lambda_pts[][2] = {
     {-0.55591, 0.76818}, {-0.36921, 0.44716}, {-0.50174, 0.21654},
 };
 static const int lambda_n = sizeof(lambda_pts) / sizeof(lambda_pts[0]);
-
-/* Set the cairo source from 0xRRGGBBAA, times alpha. */
-static void set_rgba(cairo_t *cr, uint32_t c, double alpha) {
-  cairo_set_source_rgba(cr, ((c >> 24) & 0xff) / 255.0,
-                        ((c >> 16) & 0xff) / 255.0, ((c >> 8) & 0xff) / 255.0,
-                        (c & 0xff) / 255.0 * alpha);
-}
 
 /* The unrotated lambda's outward direction: its centroid, normalised. */
 static void lambda_dir(double *dx, double *dy) {
@@ -38,7 +31,7 @@ static void lambda_dir(double *dx, double *dy) {
 static void lambda_path(cairo_t *cr, int k, double slide, double dx,
                         double dy) {
   cairo_save(cr);
-  cairo_rotate(cr, k * PI / 3.0);
+  cairo_rotate(cr, k * M_PI / 3.0);
   if (slide != 0)
     cairo_translate(cr, dx * slide, dy * slide);
   cairo_move_to(cr, lambda_pts[0][0], lambda_pts[0][1]);

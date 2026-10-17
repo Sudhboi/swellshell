@@ -77,6 +77,7 @@ core_src = files(
   'src/core/config.c',
   'src/core/ipc.c',
   'src/core/loop.c',
+  'src/core/mpris.c',
   'src/core/niri.c',
   'src/core/nixlogo.c',
   'src/core/surface.c',
