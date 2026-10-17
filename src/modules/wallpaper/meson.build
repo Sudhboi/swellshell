@@ -1,6 +1,7 @@
 wallpaper_src = files(
   'audio.c',
   'gl.c',
+  'logo.c',
   'media.c',
   'render.c',
   'show.c',

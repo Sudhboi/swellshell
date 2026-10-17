@@ -12,6 +12,7 @@
 
 #include "art.h"
 #include "module.h"
+#include "nixlogo.h"
 #include "wallpaper/wallpaper.h"
 
 extern const struct swell_module wallpaper_module;
@@ -184,6 +185,61 @@ static void test_shows(const struct wallpaper_config *c, const char *dir,
 
 /* The topo style (the default): the contour map under the glass snowflake,
  * wallpaper_topo_*. */
+/* The GPU snowflake's distance field: negative inside the lambdas, the
+ * distance to their edges, agreeing with cairo's fill. */
+static void test_logo_sdf(void) {
+  const struct wallpaper_config *c = wallpaper_module.defaults;
+  const struct wp_logo_sdf *s = wp_logo_sdf(c, W);
+  double r0 = c->logo_radius;
+  assert(s->w > 2 * 0.85 * r0 && s->h > 2 * 0.85 * r0);
+  assert(wp_logo_sdf(c, W) == s && wp_logo_sdf(c, W / 2) != s);
+  s = wp_logo_sdf(c, W);
+#define D(px, py)                                                             \
+  s->d[(int)floor((py) - s->y) * s->w + (int)floor((px) - s->x)]
+  /* The hole in the middle: outside, about its inner radius from an edge. */
+  double hole = D(0.5, 0.5) / r0;
+  assert(hole > 0.3 && hole < 0.4);
+  /* The edge from lambda 0's inner corner down its long leg: ±1 px either
+   * side of its middle (texel centres sit on half px). */
+  double ax = -0.38986 * r0, ay = 0.02158 * r0, bx = 0.09750 * r0,
+         by = 0.86581 * r0;
+  double len = hypot(bx - ax, by - ay);
+  double nx = (by - ay) / len, ny = -(bx - ax) / len; /* outwards */
+  for (int side = -1; side <= 1; side += 2) {
+    double x = (ax + bx) / 2 + side * 3 * nx, y = (ay + by) / 2 + side * 3 * ny;
+    double d = D(x, y);
+    assert(d * side > 1.5 && d * side < 4.5);
+  }
+  /* The corners of the texture are clear of the outline. */
+  assert(s->d[0] > c->topo_edge_width && s->d[s->w * s->h - 1] > 0);
+  /* Against cairo's fill at the same size: every texel 1.5 px or more
+   * from an edge (the sharp corners' antialiasing reaches past 1) is in or
+   * out alike. */
+  cairo_surface_t *m = cairo_image_surface_create(CAIRO_FORMAT_A8, s->w, s->h);
+  cairo_t *cr = cairo_create(m);
+  cairo_translate(cr, -s->x, -s->y);
+  cairo_scale(cr, r0, r0);
+  for (int k = 0; k < 6; ++k)
+    nixlogo_lambda_path(cr, k, 0);
+  cairo_fill(cr);
+  cairo_destroy(cr);
+  cairo_surface_flush(m);
+  const unsigned char *md = cairo_image_surface_get_data(m);
+  int ms = cairo_image_surface_get_stride(m);
+  long in = 0;
+  for (int y = 0; y < s->h; ++y)
+    for (int x = 0; x < s->w; ++x) {
+      float d = s->d[y * s->w + x];
+      if (d < -1.5)
+        assert(md[y * ms + x] == 255), ++in;
+      else if (d > 1.5)
+        assert(md[y * ms + x] == 0);
+    }
+  assert(in > 1000);
+  cairo_surface_destroy(m);
+#undef D
+}
+
 static void test_topo(const char *dir) {
   const struct wallpaper_config *c = wallpaper_module.defaults;
   assert(wp_topo(c));
@@ -324,6 +380,57 @@ static void test_topo(const char *dir) {
   uint32_t glass = ud[(H / 2) * us + W / 2 + (int)(0.6 * c->logo_radius)];
   int ga = glass >> 24;
   assert(ga > 0 && ga < 255);
+
+  /* The snowflake on the GPU's surface above: the buffer clear where it
+   * was, the hexagon (cover, progress) and the speed lines still drawn. */
+  cairo_surface_t *lg = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, W, H);
+  cr = cairo_create(lg);
+  struct wp_frame lf = uf;
+  lf.logo_gpu = true;
+  lf.media_alpha = 1;
+  lf.progress = 0.4;
+  lf.over = 1;
+  lf.dir = 1;
+  wp_render(cr, c, W, H, &lf, true, false, false);
+  cairo_destroy(cr);
+  cairo_surface_flush(lg);
+  const uint32_t *ld = (const uint32_t *)cairo_image_surface_get_data(lg);
+  assert(ld[(H / 2) * us + W / 2 + (int)(0.6 * c->logo_radius)] == 0);
+  int hex = 0, streak = 0;
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      double d = hypot(x - W / 2.0, y - H / 2.0);
+      bool on = ld[y * us + x] >> 24;
+      hex += on && d < 0.4 * c->logo_radius;
+      streak += on && d > 1.05 * c->logo_radius && d < 1.3 * c->logo_radius;
+    }
+  assert(hex > 100 && streak > 100);
+  /* Its regions: just the hexagon's box in the middle, or the whole logo
+   * box while a buffer holds the CPU's snowflake. */
+  struct wp_rect rl[WP_REGIONS], rb[WP_REGIONS];
+  wp_regions_ex(c, W, H, false, false, true, false, rl);
+  wp_regions_ex(c, W, H, false, false, true, true, rb);
+  assert(rl[1].w < 0.5 * rg[1].w && rl[1].w > 0.7 * c->logo_radius);
+  assert(memcmp(&rb[1], &rg[1], sizeof rb[1]) == 0);
+  struct wp_rect box = wp_logo_box(c, W, H);
+  assert(box.x <= rg[1].x + rg[1].w / 2 - c->logo_radius * 1.1 &&
+         box.w < rg[1].w);
+  /* A partial repaint over a buffer that held the CPU's snowflake (with
+   * logo_box) clears it: the same as a whole one. */
+  cairo_surface_t *lp = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, W, H);
+  cr = cairo_create(lp);
+  wp_render(cr, c, W, H, &uf, true, false, false);
+  struct wp_frame lb = lf;
+  lb.logo_box = true;
+  wp_render(cr, c, W, H, &lb, false, false, false);
+  cairo_destroy(cr);
+  cairo_surface_flush(lp);
+  const uint32_t *pd = (const uint32_t *)cairo_image_surface_get_data(lp);
+  for (int y = 0; y < H; y += 2)
+    for (int x = 0; x < W; x += 2)
+      assert(pd[y * us + x] == ld[y * us + x]);
+  cairo_surface_destroy(lp);
+  cairo_surface_destroy(lg);
   cairo_surface_destroy(u);
 
   /* What's playing, readable over the lines: bright text in a dark glow. */
@@ -974,6 +1081,7 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(white);
 
   test_shows(c, dir, "wallpaper");
+  test_logo_sdf();
   test_topo(dir);
   wp_render_finish();
   return 0;

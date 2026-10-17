@@ -267,6 +267,216 @@ static void check_map(const char *dir) {
   cairo_surface_destroy(tm[0]);
 }
 
+/* The GPU's snowflake over the logo box of a flat grey map (dimmed as the
+ * frame dims the map), as an RGB24 surface of the whole buffer, black
+ * outside the box. Written as a PNG (the box only) when name is given. */
+static cairo_surface_t *gpu_logo(const struct wallpaper_config *c,
+                                 const struct wp_frame *f, const char *dir,
+                                 const char *name) {
+  struct wp_rect r = wp_logo_box(c, W, H);
+  GLuint fbo, rb;
+  glGenFramebuffers(1, &fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  glGenRenderbuffers(1, &rb);
+  glBindRenderbuffer(GL_RENDERBUFFER, rb);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, r.w, r.h);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                            GL_RENDERBUFFER, rb);
+  assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+  wp_gl_logo_draw(c, W, H, f, r.x, r.y, 1, 1, r.w, r.h);
+  unsigned char *px = malloc((size_t)r.w * r.h * 4);
+  glReadPixels(0, 0, r.w, r.h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+  assert(glGetError() == GL_NO_ERROR);
+  glDeleteFramebuffers(1, &fbo);
+  glDeleteRenderbuffers(1, &rb);
+  int bg = (int)lround(((c->topo_bg_left >> 24) & 0xff) * wp_map_brightness(f));
+  cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_RGB24, W, H);
+  unsigned char *od = cairo_image_surface_get_data(out);
+  int os = cairo_image_surface_get_stride(out);
+  for (int y = 0; y < r.h; ++y)
+    for (int x = 0; x < r.w; ++x) {
+      /* Premultiplied over the map, as the compositor does it. */
+      const unsigned char *g = px + ((size_t)(r.h - 1 - y) * r.w + x) * 4;
+      int v[3];
+      for (int k = 0; k < 3; ++k) {
+        v[k] = g[k] + bg * (255 - g[3]) / 255;
+        v[k] = v[k] > 255 ? 255 : v[k];
+      }
+      *(uint32_t *)(od + (r.y + y) * os + (r.x + x) * 4) =
+          v[0] << 16 | v[1] << 8 | v[2];
+    }
+  cairo_surface_mark_dirty(out);
+  free(px);
+  if (name) {
+    cairo_surface_t *box = cairo_surface_create_for_rectangle(out, r.x, r.y,
+                                                              r.w, r.h);
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.png", dir, name);
+    assert(cairo_surface_write_to_png(box, path) == CAIRO_STATUS_SUCCESS);
+    cairo_surface_destroy(box);
+  }
+  return out;
+}
+
+/* Sum of the channels' light over the logo box. */
+static long box_light(cairo_surface_t *s, struct wp_rect r) {
+  long sum = 0;
+  for (int y = r.y; y < r.y + r.h; ++y)
+    for (int x = r.x; x < r.x + r.w; ++x)
+      sum += lum(s, x, y);
+  return sum;
+}
+
+/* The GPU's snowflake of frame f against cairo's (over the same grey map):
+ * nearly every pixel agrees, and the outline's colours sit alike (pink at
+ * the top left, blue at the bottom right). */
+static void compare_logo(const struct wallpaper_config *c,
+                         const struct wp_frame *f, const char *dir,
+                         const char *name) {
+  struct wp_rect r = wp_logo_box(c, W, H);
+  cairo_surface_t *gs = gpu_logo(c, f, dir, name);
+  cairo_surface_t *cs = render(c, f);
+  int bg = lum(cs, r.x + 1, r.y + 1);
+  long changed = 0, off = 0;
+  double sum = 0;
+  long pink[2] = {0}, blue[2] = {0}; /* [cpu, gpu] at the top left, ... */
+  long pink_br[2] = {0}, blue_br[2] = {0}; /* ... and the bottom right */
+  for (int y = r.y; y < r.y + r.h; ++y)
+    for (int x = r.x; x < r.x + r.w; ++x) {
+      uint32_t a = ((const uint32_t *)(cairo_image_surface_get_data(cs) +
+                                       y * cairo_image_surface_get_stride(
+                                               cs)))[x];
+      uint32_t b = ((const uint32_t *)(cairo_image_surface_get_data(gs) +
+                                       y * cairo_image_surface_get_stride(
+                                               gs)))[x];
+      int worst = 0;
+      for (int k = 0; k < 24; k += 8) {
+        int e = abs((int)((a >> k) & 0xff) - (int)((b >> k) & 0xff));
+        worst = e > worst ? e : worst;
+        sum += e;
+      }
+      changed += lum(cs, x, y) != bg || lum(gs, x, y) != bg;
+      off += worst > 32;
+      for (int s = 0; s < 2; ++s) {
+        uint32_t v = s ? b : a;
+        int rr = (v >> 16) & 0xff, bb = v & 0xff;
+        bool tl = x < W / 2 - 80 && y < H / 2 - 80;
+        bool br = x > W / 2 + 80 && y > H / 2 + 80;
+        /* Lit outline pixels: pink (red over blue) or blue. */
+        if (lum(s ? gs : cs, x, y) < bg + 150)
+          continue;
+        if (tl) {
+          pink[s] += rr > bb + 5;
+          blue[s] += bb > rr + 40;
+        } else if (br) {
+          pink_br[s] += rr > bb + 5;
+          blue_br[s] += bb > rr + 40;
+        }
+      }
+    }
+  double mean = sum / ((double)r.w * r.h * 3);
+  fprintf(stderr, "%-24s off %ld/%ld changed, mean %.3f; top left pink %ld/%ld blue "
+         "%ld/%ld, bottom right pink %ld/%ld blue %ld/%ld (cpu/gpu)\n",
+         name ? name : "logo", off, changed, mean, pink[0], pink[1], blue[0],
+         blue[1], pink_br[0], pink_br[1], blue_br[0], blue_br[1]);
+  assert(changed > 1000);
+  assert(off * 100 < changed * 5);
+  assert(mean < 1.5);
+  for (int s = 0; s < 2; ++s)
+    assert(pink[s] > 4 * blue[s] && blue_br[s] > 4 * pink_br[s]);
+  assert(labs(pink[0] - pink[1]) * 5 < pink[0] &&
+         labs(blue_br[0] - blue_br[1]) * 5 < blue_br[0]);
+  cairo_surface_destroy(gs);
+  cairo_surface_destroy(cs);
+}
+
+/* The mean light of the GPU snowflake's pixels 20..30 px outside it, at
+ * the top left (side 0) or the bottom right (1), at rest (unturned,
+ * unpulsed, unshaken). */
+static double outside_light(const struct wallpaper_config *c,
+                            cairo_surface_t *s, int side) {
+  const struct wp_logo_sdf *sdf = wp_logo_sdf(c, W);
+  long sum = 0, n = 0;
+  for (int j = 0; j < sdf->h; ++j)
+    for (int i = 0; i < sdf->w; ++i) {
+      float d = sdf->d[j * sdf->w + i];
+      double x = sdf->x + i + 0.5, y = sdf->y + j + 0.5;
+      if (d < 20 || d > 30 || (side ? x + y < 100 : x + y > -100))
+        continue;
+      sum += lum(s, (int)(W / 2 + x), (int)(H / 2 + y));
+      ++n;
+    }
+  assert(n > 100);
+  return (double)sum / n;
+}
+
+/* The GPU's glass snowflake against cairo's draw_glass_logo(). */
+static void check_logo(const char *dir) {
+  struct wallpaper_config c =
+      *(const struct wallpaper_config *)wallpaper_module.defaults;
+  /* A flat grey map, nothing else in the logo's box. */
+  c.topo_line_alpha = 0;
+  c.topo_bg_left = c.topo_bg_right = 0x505050ffu;
+  c.battery_bar = false;
+  struct wp_frame f = {.percent = 50, .level = 1};
+  compare_logo(&c, &f, dir, "wallpaper_gl_logo");
+  struct wp_frame t = f;
+  t.angle = 0.3;
+  t.glow = 0.6;
+  compare_logo(&c, &t, dir, "wallpaper_gl_logo_turned");
+  struct wp_frame p = t;
+  p.pulse = 1;
+  p.shake_x = 9.4;
+  p.shake_y = -6.2;
+  compare_logo(&c, &p, dir, "wallpaper_gl_logo_pulsed");
+  struct wp_frame n = f;
+  n.over = 1;
+  n.glow = 1;
+  compare_logo(&c, &n, dir, "wallpaper_gl_logo_neon");
+  struct wp_frame w = f;
+  w.map_fade = 0.6;
+  compare_logo(&c, &w, dir, "wallpaper_gl_logo_window");
+
+  /* A window open: the snowflake (over black) under half as bright. */
+  struct wp_rect r = wp_logo_box(&c, W, H);
+  w.map_fade = 1;
+  cairo_surface_t *a = gpu_logo(&c, &f, dir, NULL);
+  cairo_surface_t *b = gpu_logo(&c, &w, dir, NULL);
+  struct wp_frame black = f;
+  black.bg_fade = 1; /* the empty map's light, to take away */
+  cairo_surface_t *z = gpu_logo(&c, &black, dir, NULL);
+  long lb = box_light(b, r), lz = box_light(z, r);
+  fprintf(stderr, "logo light over black: %ld, with a window %ld\n", lz, lb);
+  assert(lb > 0 && lb * 2 < lz);
+  cairo_surface_destroy(b);
+  cairo_surface_destroy(z);
+
+  /* The glow adds light round the outline; without it none, and the
+   * shadow darkens the bottom right (its blur barely reaches the top
+   * left). */
+  b = gpu_logo(&c, &n, dir, NULL);
+  int bg = 3 * 0x50;
+  double tl = outside_light(&c, a, 0), brl = outside_light(&c, a, 1);
+  double ntl = outside_light(&c, b, 0);
+  fprintf(stderr, "outside: top left %.1f, bottom right %.1f, lit top left %.1f "
+         "(map %d)\n",
+         tl, brl, ntl, bg);
+  assert(tl <= bg && tl > bg - 4 && brl < bg - 10 && ntl > bg + 20);
+  cairo_surface_destroy(a);
+  cairo_surface_destroy(b);
+
+  /* In a show (lambdas apart) it draws nothing: the CPU does. */
+  struct wp_frame sf = f;
+  sf.lambda_fade[2] = 0.5;
+  a = gpu_logo(&c, &sf, dir, NULL);
+  long lit = 0;
+  for (int y = r.y; y < r.y + r.h; y += 2)
+    for (int x = r.x; x < r.x + r.w; x += 2)
+      lit += lum(a, x, y) != bg;
+  assert(lit == 0);
+  cairo_surface_destroy(a);
+}
+
 int main(int argc, char **argv) {
   const char *dir = argc > 1 ? argv[1] : ".";
   if (!wp_gl_init(NULL) || !wp_gl_current()) {
@@ -313,6 +523,7 @@ int main(int argc, char **argv) {
   check(c, &qf, dir, "wallpaper_gl_silent");
 
   check_map(dir);
+  check_logo(dir);
   wp_gl_finish();
   wp_render_finish();
   return 0;

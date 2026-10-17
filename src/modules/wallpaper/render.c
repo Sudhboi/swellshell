@@ -70,6 +70,11 @@ static void text_box(const struct wallpaper_config *c, int pw, int ph,
 
 static void blur_a8(unsigned char *d, int w, int h, int stride, int b);
 
+/* The snowflake's hexagonal hole: its corners sit at the lambdas' inner
+ * points, this far out (x the radius) and at this angle. */
+#define HOLE 0.39046
+#define HOLE_ANGLE 3.08629 /* atan2(0.02158, -0.38986) */
+
 /* Speed lines sit on rings this far out (x logo radius). */
 static const double streak_rings[] = {1.08, 1.16, 1.24};
 #define STREAK_OUTER 1.24
@@ -87,6 +92,12 @@ static void edge_box(const struct wallpaper_config *c, int pw, int ph, int s,
 
 void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
                 bool text, struct wp_rect out[WP_REGIONS]) {
+  wp_regions_ex(c, pw, ph, ring, text, false, false, out);
+}
+
+void wp_regions_ex(const struct wallpaper_config *c, int pw, int ph, bool ring,
+                   bool text, bool logo_gpu, bool logo_box,
+                   struct wp_rect out[WP_REGIONS]) {
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
   /* A shake moves everything by up to this much. */
@@ -111,9 +122,16 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
                     4);
   if (ring && !c->viz_edges)
     r = fmax(r, ring_outer(c, c->logo_radius * k, k) + 1);
+  /* The GPU's snowflake leaves only the hexagon in the middle. */
+  if (logo_gpu && !logo_box)
+    r = c->media ? HOLE * c->media_hex_size * c->logo_radius * k *
+                           (1 + c->react_pulse_scale) +
+                       2
+                 : 0;
   r += sh;
-  out[1] = clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r,
-                      pw, ph);
+  out[1] = r > 0 ? clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r,
+                              ph / 2.0 + r, pw, ph)
+                 : (struct wp_rect){0, 0, 0, 0};
   for (int s = 0; s < 2; ++s) {
     out[2 + s] = (struct wp_rect){0, 0, 0, 0};
     if (ring && c->viz_edges) {
@@ -745,11 +763,6 @@ static void draw_text(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_restore(cr);
 }
 
-/* The snowflake's hexagonal hole: its corners sit at the lambdas' inner
- * points, this far out (x the radius) and at this angle. */
-#define HOLE 0.39046
-#define HOLE_ANGLE 3.08629 /* atan2(0.02158, -0.38986) */
-
 /* The cover scaled to the hexagon at its resting size, made once per cover
  * and size. */
 static struct {
@@ -948,6 +961,7 @@ struct shadow {
   cairo_surface_t *mask; /* A8 */
   double x, y;           /* its top left, px from the snowflake's centre */
   double r, blur, line;  /* resting radius, blur radius, outline width, px */
+  unsigned id;           /* changes with the mask */
 };
 static struct shadow shadow_cache[4];
 
@@ -1031,7 +1045,8 @@ static const struct shadow *shadow_mask(int which, double r, double blur,
     blur_a8(cairo_image_surface_get_data(m), w, h,
             cairo_image_surface_get_stride(m), b);
   cairo_surface_mark_dirty(m);
-  *sc = (struct shadow){m, x0, y0, r, blur, line};
+  static unsigned ids;
+  *sc = (struct shadow){m, x0, y0, r, blur, line, ++ids};
   return sc;
 }
 
@@ -1079,6 +1094,68 @@ static void paint_lambda_mask(cairo_t *cr, const struct shadow *m, bool whole,
   }
 }
 
+void wp_glass_look(const struct wallpaper_config *c, const struct wp_frame *f,
+                   double k, struct wp_glass *g) {
+  /* Toned down as the map fades for a window. */
+  double win = fmin(fmax(f->map_fade, 0), 1);
+  g->fill = mix(mix(c->topo_logo_fill, c->topo_logo_glow, f->glow),
+                c->topo_window_fill, win);
+  topo_edges(c, f, g->edge);
+  g->edge_alpha = 1 + (c->topo_window_edge_alpha - 1) * win;
+  g->edge_width =
+      (c->topo_edge_width + (c->topo_window_edge_width - c->topo_edge_width) *
+                                win) *
+      k;
+  /* Past spin_visible_max (and in the intro's flash) the outline glows. */
+  g->neon = c->topo_neon_alpha * fmin(fmax(fmax(f->over, f->flash), 0), 1);
+}
+
+bool wp_logo_mask(const struct wallpaper_config *c, int pw, int which,
+                  struct wp_logo_mask *m) {
+  double k = pw / WP_REF_WIDTH, r0 = c->logo_radius * k;
+  double np = c->topo_neon_px * k;
+  if (r0 <= 0 || (which == 0 && (c->topo_shadow_px <= 0 ||
+                                 c->topo_shadow_alpha <= 0)) ||
+      (which == 1 && np <= 0))
+    return false;
+  const struct shadow *sc =
+      which == 0 ? shadow_mask(0, r0, c->topo_shadow_px * k, 0)
+                 : shadow_mask(2, r0, np / 2, np * 0.4);
+  *m = (struct wp_logo_mask){
+      .data = cairo_image_surface_get_data(sc->mask),
+      .w = cairo_image_surface_get_width(sc->mask),
+      .h = cairo_image_surface_get_height(sc->mask),
+      .stride = cairo_image_surface_get_stride(sc->mask),
+      .x = sc->x,
+      .y = sc->y,
+      .id = sc->id,
+  };
+  return true;
+}
+
+struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph) {
+  double k = pw / WP_REF_WIDTH;
+  double sh = c->react_shake ? ceil(c->react_shake_px * pw / WP_REF_WIDTH) : 0;
+  /* Pulsed to the most; the shadow (offset, blurred), the glow and the
+   * outline past the lambdas, as shadow_mask() pads them. */
+  double ext = fmax(fmax(1.8 * c->topo_shadow_px, 0.75 * c->topo_neon_px),
+                    fmax(c->topo_edge_width, c->topo_window_edge_width) / 2) *
+                   k +
+               6;
+  double r = (c->logo_radius * k + ext) * (1 + c->react_pulse_scale) + sh;
+  return clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r, pw,
+                    ph);
+}
+
+bool wp_logo_whole(const struct wp_frame *f) {
+  if (f->logo_shrink != 0)
+    return false;
+  for (int i = 0; i < 6; ++i)
+    if (f->slide[i] != 0 || f->lambda_fade[i] != 0)
+      return false;
+  return true;
+}
+
 /* The topo style's snowflake (resting radius r0, now r): dark glass
  * lambdas with the contour lines showing through, a gradient outline fixed
  * to the screen (it doesn't turn with them) and a soft shadow down and to
@@ -1103,28 +1180,19 @@ static void draw_glass_logo(cairo_t *cr, const struct wallpaper_config *c,
                       r, NULL, c->topo_shadow_alpha);
   }
 
-  /* Toned down as the map fades for a window. */
-  double win = fmin(fmax(f->map_fade, 0), 1);
-  uint32_t fill = mix(mix(c->topo_logo_fill, c->topo_logo_glow, f->glow),
-                      c->topo_window_fill, win);
-  uint32_t edge[3];
-  topo_edges(c, f, edge);
-  double ea = 1 + (c->topo_window_edge_alpha - 1) * win;
+  struct wp_glass g;
+  wp_glass_look(c, f, k, &g);
+  uint32_t fill = g.fill, *edge = g.edge;
+  double ea = g.edge_alpha;
 
-  /* Past spin_visible_max (and in the intro's flash) the outline glows:
-   * a blurred outline, cached, under the glass. */
-  double neon =
-      c->topo_neon_alpha * fmin(fmax(fmax(f->over, f->flash), 0), 1);
+  /* The glow: a blurred outline, cached, under the glass. */
   double np = c->topo_neon_px * k;
-  if (neon > 0 && np > 0) {
+  if (g.neon > 0 && np > 0) {
     const struct shadow *m = shadow_mask(whole ? 2 : 3, r0, np / 2, np * 0.4);
     paint_lambda_mask(cr, m, whole, f, alpha, cx, cy, 0, 0, r0, r, edge,
-                      neon);
+                      g.neon);
   }
-  double ew =
-      (c->topo_edge_width + (c->topo_window_edge_width - c->topo_edge_width) *
-                                win) *
-      k * s;
+  double ew = g.edge_width * s;
   cairo_set_line_join(cr, CAIRO_LINE_JOIN_MITER);
   /* The lambdas alike (all of them, but in a show) in one path. */
   bool done[6] = {false};
@@ -1166,6 +1234,7 @@ void wp_render_finish(void) {
   art_cache_free();
   wp_topo_finish();
   shadow_cache_free();
+  wp_logo_finish();
 }
 
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
@@ -1173,8 +1242,9 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   cairo_save(cr);
   if (!full) {
     struct wp_rect r[WP_REGIONS];
-    wp_regions(c, pw, ph, ring || f->nbars > 0,
-               text || (c->media_title && f->media_alpha > 0), r);
+    wp_regions_ex(c, pw, ph, ring || f->nbars > 0,
+                  text || (c->media_title && f->media_alpha > 0), f->logo_gpu,
+                  f->logo_box, r);
     for (int i = 0; i < WP_REGIONS; ++i)
       if (r[i].w > 0 && r[i].h > 0)
         cairo_rectangle(cr, r[i].x, r[i].y, r[i].w, r[i].h);
@@ -1235,7 +1305,9 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   double rp = r * (1 + c->react_pulse_scale * f->pulse) *
               (1 - fmin(fmax(f->logo_shrink, 0), 1));
   draw_hex(cr, c, cx, cy, r, rp, f);
-  if (rp > 0 && topo)
+  if (rp > 0 && topo && f->logo_gpu)
+    ; /* the GPU draws it over the buffer */
+  else if (rp > 0 && topo)
     draw_glass_logo(cr, c, cx, cy, r, rp, k, f);
   else if (rp > 0)
     nixlogo_draw_ex(cr, cx, cy, rp, f->angle,

@@ -34,6 +34,13 @@ static struct {
       m_every, m_lw, m_iw, m_line0, m_line1, m_line2, m_bg0, m_bg1, m_bright,
       m_axis0, m_axis, m_rings, m_nrings, m_centre, m_ring_px, m_ring_w,
       m_sway, m_time, m_k, m_gorigin, m_shake;
+  /* the topo snowflake */
+  GLuint logo_prog, logo_tex[3]; /* distance field, shadow, glow */
+  unsigned logo_ids[3];          /* what's in them */
+  GLint l_sdf, l_shadow, l_neon, l_origin, l_step, l_bh, l_centre, l_rot,
+      l_inv_s, l_scale, l_sdf_org, l_sdf_size, l_sh_org, l_sh_size, l_ne_org,
+      l_ne_size, l_sh_off, l_sh_alpha, l_neon_a, l_fill, l_edge0, l_edge1,
+      l_edge2, l_edge_alpha, l_hw, l_axis0, l_axis;
 } g;
 
 static const char *vs_src = "#version 300 es\n"
@@ -174,6 +181,51 @@ static const char *map_fs_src =
     "  color = vec4(c * bright, 1.0);\n"
     "}\n";
 
+/* The glass snowflake (gl.c's twin of render.c's draw_glass_logo() for
+ * whole lambdas), premultiplied over transparent: the shadow's mask down
+ * and right, the glow's mask added as light (alpha 0: the compositor's
+ * OVER adds it, like cairo's ADD), the glass filled where the distance
+ * field is negative and the outline stroked where it is near 0, both in
+ * screen px (the field times the pulse). The masks and the field are in
+ * the resting snowflake's px; p is the pixel there, turned back and
+ * shrunk by the pulse. The outline's gradient stays put on the screen. */
+static const char *logo_fs_src =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "uniform highp sampler2D sdf, shadow, neon;\n"
+    "uniform vec2 origin, stp, centre, rot, sdf_org, sdf_size, sh_org,\n"
+    "    sh_size, ne_org, ne_size, sh_off, axis0, axis;\n"
+    "uniform float bh, inv_s, scale, sh_alpha, neon_a, edge_alpha, hw;\n"
+    "uniform vec4 fill, edge0, edge1, edge2;\n"
+    "out vec4 color;\n"
+    "vec2 back(vec2 d) {\n"
+    "  return vec2(rot.x * d.x + rot.y * d.y, rot.x * d.y - rot.y * d.x) *\n"
+    "         inv_s;\n"
+    "}\n"
+    "void main() {\n"
+    "  vec2 q = origin + vec2(gl_FragCoord.x, bh - gl_FragCoord.y) * stp;\n"
+    "  vec2 d0 = q - centre;\n"
+    "  vec4 o = vec4(0.0);\n"
+    "  if (sh_alpha > 0.0)\n"
+    "    o.a = sh_alpha *\n"
+    "          texture(shadow, (back(d0 - sh_off) - sh_org) / sh_size).r;\n"
+    "  float x = clamp(dot(q - axis0, axis), 0.0, 1.0);\n"
+    "  vec4 ec = x < 0.5 ? mix(edge0, edge1, x * 2.0)\n"
+    "                    : mix(edge1, edge2, x * 2.0 - 1.0);\n"
+    "  vec2 p = back(d0);\n"
+    "  if (neon_a > 0.0)\n"
+    "    o.rgb += ec.rgb * neon_a *\n"
+    "             texture(neon, (p - ne_org) / ne_size).r;\n"
+    "  float d = texture(sdf, (p - sdf_org) / sdf_size).r * scale;\n"
+    "  float fa = fill.a * clamp(0.5 - d, 0.0, 1.0);\n"
+    "  o = vec4(fill.rgb * fa, fa) + o * (1.0 - fa);\n"
+    "  if (hw > 0.0) {\n"
+    "    float ea = ec.a * edge_alpha * clamp(hw - abs(d) + 0.5, 0.0, 1.0);\n"
+    "    o = vec4(ec.rgb * ea, ea) + o * (1.0 - ea);\n"
+    "  }\n"
+    "  color = o;\n"
+    "}\n";
+
 static GLuint compile(GLenum type, const char *src) {
   GLuint sh = glCreateShader(type);
   glShaderSource(sh, 1, &src, NULL);
@@ -235,6 +287,39 @@ static bool build_program(void) {
   M(sway), M(time), M(k), M(gorigin), M(shake), M(axis0), M(axis);
 #undef M
   g.m_step = glGetUniformLocation(g.map_prog, "stp");
+
+  GLuint lvs = compile(GL_VERTEX_SHADER, vs_src);
+  GLuint lfs = compile(GL_FRAGMENT_SHADER, logo_fs_src);
+  if (!lvs || !lfs)
+    return false;
+  g.logo_prog = glCreateProgram();
+  glAttachShader(g.logo_prog, lvs);
+  glAttachShader(g.logo_prog, lfs);
+  glLinkProgram(g.logo_prog);
+  glDeleteShader(lvs);
+  glDeleteShader(lfs);
+  glGetProgramiv(g.logo_prog, GL_LINK_STATUS, &ok);
+  if (!ok) {
+    warn("wallpaper: logo shader link failed");
+    return false;
+  }
+#define L(n) g.l_##n = glGetUniformLocation(g.logo_prog, #n)
+  L(sdf), L(shadow), L(neon), L(origin), L(bh), L(centre), L(rot), L(inv_s);
+  L(scale), L(sdf_org), L(sdf_size), L(sh_org), L(sh_size), L(ne_org);
+  L(ne_size), L(sh_off), L(sh_alpha), L(neon_a), L(fill), L(edge0), L(edge1);
+  L(edge2), L(edge_alpha), L(hw), L(axis0), L(axis);
+#undef L
+  g.l_step = glGetUniformLocation(g.logo_prog, "stp");
+  glGenTextures(3, g.logo_tex);
+  for (int i = 0; i < 3; ++i) {
+    /* The shadow as cairo paints it: the nearest texel. */
+    GLint filter = i == 1 ? GL_NEAREST : GL_LINEAR;
+    glBindTexture(GL_TEXTURE_2D, g.logo_tex[i]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  }
   glGenTextures(1, &g.map_tex);
   glBindTexture(GL_TEXTURE_2D, g.map_tex);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -317,6 +402,10 @@ void wp_gl_finish(void) {
         glDeleteTextures(1, &g.map_tex);
       if (g.map_prog)
         glDeleteProgram(g.map_prog);
+      if (g.logo_tex[0])
+        glDeleteTextures(3, g.logo_tex);
+      if (g.logo_prog)
+        glDeleteProgram(g.logo_prog);
       eglMakeCurrent(g.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
       eglDestroyContext(g.dpy, g.ctx);
     }
@@ -549,5 +638,95 @@ bool wp_gl_map(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
   if (!eglMakeCurrent(g.dpy, w->surf, w->surf, g.ctx))
     return false;
   wp_gl_map_draw(c, pw, ph, f, ox, oy, sx, sy, bw, bh);
+  return eglSwapBuffers(g.dpy, w->surf);
+}
+
+/* Upload mask which (0 shadow, 1 glow) into logo_tex[1 + which] if it
+ * changed and set its uniforms; false if that part is off. */
+static bool logo_mask(const struct wallpaper_config *c, int pw, int which,
+                      GLint u_org, GLint u_size) {
+  struct wp_logo_mask m;
+  if (!wp_logo_mask(c, pw, which, &m))
+    return false;
+  glActiveTexture(GL_TEXTURE1 + which);
+  glBindTexture(GL_TEXTURE_2D, g.logo_tex[1 + which]);
+  if (g.logo_ids[1 + which] != m.id) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, m.stride);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, m.w, m.h, 0, GL_RED,
+                 GL_UNSIGNED_BYTE, m.data);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    g.logo_ids[1 + which] = m.id;
+  }
+  glUniform2f(u_org, m.x, m.y);
+  glUniform2f(u_size, m.w, m.h);
+  return true;
+}
+
+void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
+                     const struct wp_frame *f, double ox, double oy,
+                     double sx, double sy, int bw, int bh) {
+  glViewport(0, 0, bw, bh);
+  glDisable(GL_BLEND);
+  glClearColor(0, 0, 0, 0);
+  glClear(GL_COLOR_BUFFER_BIT);
+  double k = pw / WP_REF_WIDTH, r0 = c->logo_radius * k;
+  double s = 1 + c->react_pulse_scale * f->pulse;
+  if (r0 <= 0 || s <= 0 || !wp_logo_whole(f) || f->fade >= 1)
+    return;
+  const struct wp_logo_sdf *sdf = wp_logo_sdf(c, pw);
+  glUseProgram(g.logo_prog);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, g.logo_tex[0]);
+  if (g.logo_ids[0] != sdf->id) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, sdf->w, sdf->h, 0, GL_RED,
+                 GL_FLOAT, sdf->d);
+    g.logo_ids[0] = sdf->id;
+  }
+  glUniform1i(g.l_sdf, 0);
+  glUniform1i(g.l_shadow, 1);
+  glUniform1i(g.l_neon, 2);
+  glUniform2f(g.l_sdf_org, sdf->x, sdf->y);
+  glUniform2f(g.l_sdf_size, sdf->w, sdf->h);
+  glUniform2f(g.l_origin, ox, oy);
+  glUniform2f(g.l_step, sx, sy);
+  glUniform1f(g.l_bh, bh);
+  /* As cairo: shaken by whole pixels. */
+  double cx = pw / 2.0 + round(f->shake_x * k);
+  double cy = ph / 2.0 + round(f->shake_y * k);
+  glUniform2f(g.l_centre, cx, cy);
+  glUniform2f(g.l_rot, cos(f->angle), sin(f->angle));
+  glUniform1f(g.l_inv_s, 1 / s);
+  glUniform1f(g.l_scale, s);
+  double sd = c->topo_shadow_px * k * s;
+  bool shadow = logo_mask(c, pw, 0, g.l_sh_org, g.l_sh_size);
+  glUniform2f(g.l_sh_off, 0.7 * sd, 0.7 * sd);
+  glUniform1f(g.l_sh_alpha, shadow ? c->topo_shadow_alpha : 0);
+  struct wp_glass look;
+  wp_glass_look(c, f, k, &look);
+  bool neon = look.neon > 0 && logo_mask(c, pw, 1, g.l_ne_org, g.l_ne_size);
+  glUniform1f(g.l_neon_a, neon ? look.neon : 0);
+  set_color(g.l_fill, look.fill, 1);
+  set_color(g.l_edge0, look.edge[0], 1);
+  set_color(g.l_edge1, look.edge[1], 1);
+  set_color(g.l_edge2, look.edge[2], 1);
+  glUniform1f(g.l_edge_alpha, look.edge_alpha);
+  glUniform1f(g.l_hw, look.edge_width * s / 2);
+  /* The outline's gradient, top left to bottom right over the lambdas'
+   * extent: dot(q - axis0, axis) from 0 to 1. */
+  double e = 0.6 * r0 * s;
+  glUniform2f(g.l_axis0, cx - e, cy - e);
+  glUniform2f(g.l_axis, 1 / (4 * e), 1 / (4 * e));
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
+bool wp_gl_logo(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
+                int ph, const struct wp_frame *f, double ox, double oy,
+                double sx, double sy, int bw, int bh) {
+  if (!eglMakeCurrent(g.dpy, w->surf, w->surf, g.ctx))
+    return false;
+  wp_gl_logo_draw(c, pw, ph, f, ox, oy, sx, sy, bw, bh);
   return eglSwapBuffers(g.dpy, w->surf);
 }

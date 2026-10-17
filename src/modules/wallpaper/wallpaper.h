@@ -105,6 +105,7 @@ struct wallpaper_config {
   uint32_t viz_edge_rim;  /* the line along the curve */
   double viz_edge_rim_width; /* reference px, 0 = none */
   bool viz_gpu; /* draw the smooth edges with the GPU (if EGL works) */
+  bool logo_gpu; /* draw the topo snowflake with the GPU (needs viz_gpu) */
   double viz_radius;    /* the bars' centre line, x logo_radius */
   double viz_length;    /* reference px at full level, both ends together */
   double viz_inward;    /* the share of a bar that grows inwards, 0..1 */
@@ -202,6 +203,10 @@ struct wp_frame {
   double bg_fade;        /* black over the topo map only, 0..1 */
   double map_fade;       /* the topo map taken away (windows), 0..1 */
   bool map_under; /* the GPU draws the map under the buffer: leave it clear */
+  /* The GPU draws the topo snowflake over the buffer: leave it out, and
+   * repaint only the hexagon's box round it unless logo_box (a buffer
+   * still holds the CPU's snowflake or speed lines). */
+  bool logo_gpu, logo_box;
   double sway;    /* the map's sway, 0..1 (loudness) */
   double time;    /* s, drives the sway */
   int nrings;
@@ -229,6 +234,11 @@ double wp_bar_level(const struct wallpaper_config *c, double phase);
 #define WP_REGIONS 5
 void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
                 bool text, struct wp_rect out[WP_REGIONS]);
+/* The same for frames with f->logo_gpu set as given (the logo's region is
+ * then the hexagon's, or the whole one with logo_box). */
+void wp_regions_ex(const struct wallpaper_config *c, int pw, int ph, bool ring,
+                   bool text, bool logo_gpu, bool logo_box,
+                   struct wp_rect out[WP_REGIONS]);
 /* Draw a frame into a pw x ph buffer. full repaints everything, otherwise
  * only the wp_regions() areas (with ring and text) are touched. */
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
@@ -274,6 +284,48 @@ void wp_topo_finish(void);
 double wp_map_brightness(const struct wp_frame *f);
 /* Free wp_render()'s cache. */
 void wp_render_finish(void);
+
+/* The topo snowflake drawn by the GPU (gl.c), from these. */
+/* The buffer area it can cover in a pw x ph buffer: pulsed, shaken, with
+ * its shadow and glow. */
+struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph);
+/* Frame f's snowflake is one the GPU can draw: every lambda in place and
+ * opaque, full size (not in a show, not sliding). */
+bool wp_logo_whole(const struct wp_frame *f);
+/* Its colours in frame f: the fill, the outline's three (top left, middle,
+ * bottom right, lit by the glow), the outline's opacity (x its colours'
+ * alpha) and width (buffer px at the resting size; k = pw / WP_REF_WIDTH),
+ * and the glow's strength (0: none). */
+struct wp_glass {
+  uint32_t fill, edge[3];
+  double edge_alpha, edge_width, neon;
+};
+void wp_glass_look(const struct wallpaper_config *c, const struct wp_frame *f,
+                   double k, struct wp_glass *g);
+/* The blurred masks cairo draws its shadow (which 0) and glow (1) with, at
+ * the resting size: w x h A8 texels (rows stride bytes apart) whose top left
+ * corner is (x, y) px from the snowflake's centre; id changes with them.
+ * False if that part is off. Owned by render.c. */
+struct wp_logo_mask {
+  const unsigned char *data;
+  int w, h, stride;
+  double x, y;
+  unsigned id;
+};
+bool wp_logo_mask(const struct wallpaper_config *c, int pw, int which,
+                  struct wp_logo_mask *m);
+/* logo.c: the distance to the resting snowflake's nearest edge (buffer px,
+ * negative inside) at w x h texel centres from (x, y) px from its centre;
+ * cached per size, id changes with it. */
+struct wp_logo_sdf {
+  int w, h;
+  double x, y;
+  float *d;
+  unsigned id;
+};
+const struct wp_logo_sdf *wp_logo_sdf(const struct wallpaper_config *c,
+                                      int pw);
+void wp_logo_finish(void);
 
 /* viz.c: the visualiser's analysis, cava-style */
 #define WP_VIZ_FFT 2048 /* samples per analysis */
@@ -395,11 +447,24 @@ bool wp_gl_map(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
                int ph, const struct wp_frame *f, double ox, double oy,
                double sx, double sy, int bw, int bh);
 
+/* Draw the topo snowflake of a pw x ph cairo buffer into the bound bw x bh
+ * framebuffer, premultiplied, transparent around it (and all of it unless
+ * wp_logo_whole(f)), placed as wp_gl_edge_draw()'s strips. */
+void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
+                     const struct wp_frame *f, double ox, double oy,
+                     double sx, double sy, int bw, int bh);
+/* The same into w, then swap. */
+bool wp_gl_logo(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
+                int ph, const struct wp_frame *f, double ox, double oy,
+                double sx, double sy, int bw, int bh);
+
 /* surface.c: one background layer surface per output */
 void wp_surfaces_init(struct swell_wl *wl);
 void wp_surfaces_finish(void);
 /* Destroy and recreate every surface (namespace change). */
 void wp_surfaces_recreate(void);
+/* "gpu", "cpu" or "cpu (no GPU)": how the topo snowflake is drawn. */
+const char *wp_surfaces_logo_renderer(void);
 /* "gpu", "cpu" or "cpu (no GPU)": how the smooth edges are drawn. */
 const char *wp_surfaces_viz_renderer(void);
 /* Draw every output now. full: the geometry or colours changed. If the

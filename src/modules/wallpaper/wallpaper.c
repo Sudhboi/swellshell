@@ -122,6 +122,7 @@ static const struct wallpaper_config defaults = {
     .viz_edge_rim = 0xa0a0a0ffu,
     .viz_edge_rim_width = 3,
     .viz_gpu = true,
+    .logo_gpu = true,
     .viz_radius = 1.6,
     .viz_length = 260,
     .viz_inward = 0.4,
@@ -368,6 +369,10 @@ static const struct cfg_field fields[] = {
              "draw the smooth edge curve (needs viz_edge_smooth) and the "
              "topo map, with its waves, with the GPU (EGL); falls back to "
              "the CPU if that fails"),
+    CFG_BOOL(S, logo_gpu,
+             "draw the topo snowflake with the GPU too (needs viz_gpu; the "
+             "CPU still draws it in the launch and power-off animations and "
+             "while react_slide moves the lambdas)"),
     CFG_DOUBLE(S, viz_radius, 0, 10,
                "the line the ring's bars grow from, both ways (x "
                "logo_radius)"),
@@ -1240,6 +1245,8 @@ static int command(int argc, char **argv, struct reply *r) {
                    w.cfg.topo_angle,
                    w.cfg.topo_new_map ? " (new each start)" : "");
     reply_printf(r, "audio: %s\n", w.cfg.viz ? wp_audio_state() : "disabled");
+    if (wp_topo(&w.cfg))
+      reply_printf(r, "logo render: %s\n", wp_surfaces_logo_renderer());
     if (w.cfg.viz && w.cfg.viz_edges && w.cfg.viz_edge_smooth)
       reply_printf(r, "viz render: %s\n", wp_surfaces_viz_renderer());
     if (w.cfg.viz) {

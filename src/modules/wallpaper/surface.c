@@ -5,9 +5,12 @@
  * module animates or dozes, so a frozen wallpaper costs nothing. Dozing
  * repaints only the bar, and only when its brightness or fill changed. While the smooth
  * edge visualiser shows, the GPU draws it (gl.c) into two transparent
- * subsurfaces over the strips; they exist only while bars show. */
+ * subsurfaces over the strips; they exist only while bars show. Under the
+ * topo style the GPU also draws the map on a subsurface below and the
+ * snowflake on one above, so a frame often leaves the buffer alone. */
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include "buffer.h"
@@ -53,6 +56,15 @@ struct output {
   bool map_moved;       /* the last map frame had rings or sway */
   double cpu_bright[2]; /* the cairo map's brightness in each buffer */
   bool shook[2];        /* the cairo map in each buffer is shaken */
+  /* The topo snowflake on the GPU, on a subsurface over the logo's box. */
+  bool lgpu;            /* the GPU draws it (but in shows and slides) */
+  struct strip logo;    /* surface NULL until the GPU first draws it */
+  bool logo_on;         /* it holds a snowflake, not nothing */
+  double logo_key[8];   /* the frame it was drawn from, NAN: redraw */
+  bool logoed[2];   /* the buffer holds the CPU's snowflake */
+  bool streaked[2]; /* the buffer holds speed lines */
+  bool hexed[2];    /* the buffer holds the hexagon (cover, progress) */
+  double bar_sx, bar_sy; /* the shake of the last commit, px */
   int width, height; /* logical, from configure */
   uint32_t scale120;  /* preferred fractional scale, 0 if unknown */
   bool configured;
@@ -156,12 +168,14 @@ static void strips_destroy(struct output *out) {
 
 static long gcd(long a, long b) { return b ? gcd(b, a % b) : a; }
 
-/* Draw side s over buffer rect r of the pw x ph parent buffer. The strip
- * covers r in whole logical px, widened so its corner lands on a whole
- * buffer px where the scale allows. False if the GPU failed. */
-static bool strip_draw(struct output *out, int s, struct wp_rect r, int pw,
-                       int ph, const struct wp_frame *f) {
-  struct strip *st = &out->strips[s];
+/* Place strip st over buffer rect r of the pw x ph parent buffer, created
+ * on first use: it covers r in whole logical px, widened so its corner
+ * lands on a whole buffer px where the scale allows. Gives where its top
+ * left pixel's corner sits in the parent buffer (ox, oy) and how much of
+ * it a pixel spans (sx, sy). -1 if the GPU failed, 0 if r is empty. */
+static int strip_place(struct output *out, struct strip *st, struct wp_rect r,
+                       int pw, double *ox, double *oy, double *sx,
+                       double *sy) {
   bool fractional = out->scale120 && out->viewport;
   double k = (double)pw / out->width; /* buffer px per logical px */
   int m = fractional ? (int)(120 / gcd(out->scale120, 120)) : 1;
@@ -172,7 +186,7 @@ static bool strip_draw(struct output *out, int s, struct wp_rect r, int pw,
   ly1 = ly1 < out->height ? ly1 : out->height;
   int lw = lx1 - lx0, lh = ly1 - ly0;
   if (lw <= 0 || lh <= 0)
-    return true;
+    return 0;
   int bw = fractional ? (int)lround(lw * k) : lw * (int)lround(k);
   int bh = fractional ? (int)lround(lh * k) : lh * (int)lround(k);
   if (!st->surface) {
@@ -187,7 +201,7 @@ static bool strip_draw(struct output *out, int s, struct wp_rect r, int pw,
       st->viewport = wp_viewporter_get_viewport(wl->viewporter, st->surface);
     st->win = wp_gl_win_create(st->surface, bw, bh);
     if (!st->win)
-      return false;
+      return -1;
     st->lx = st->ly = -1;
   } else if (bw != st->bw || bh != st->bh) {
     wp_gl_win_resize(st->win, bw, bh);
@@ -204,8 +218,24 @@ static bool strip_draw(struct output *out, int s, struct wp_rect r, int pw,
   st->ly = ly0;
   st->lw = lw;
   st->lh = lh;
-  return wp_gl_edge(st->win, wp_config(), pw, ph, f, s, lx0 * k, ly0 * k,
-                    lw * k / bw, lh * k / bh, bw, bh);
+  *ox = lx0 * k;
+  *oy = ly0 * k;
+  *sx = lw * k / bw;
+  *sy = lh * k / bh;
+  return 1;
+}
+
+/* Draw side s over buffer rect r of the pw x ph parent buffer. False if
+ * the GPU failed. */
+static bool strip_draw(struct output *out, int s, struct wp_rect r, int pw,
+                       int ph, const struct wp_frame *f) {
+  struct strip *st = &out->strips[s];
+  double ox, oy, sx, sy;
+  int placed = strip_place(out, st, r, pw, &ox, &oy, &sx, &sy);
+  if (placed <= 0)
+    return placed == 0;
+  return wp_gl_edge(st->win, wp_config(), pw, ph, f, s, ox, oy, sx, sy,
+                    st->bw, st->bh);
 }
 
 /* Show the frame's edge bars in the strips (false: the GPU failed). */
@@ -258,6 +288,45 @@ static bool map_draw(struct output *out, int pw, int ph,
   return wp_gl_map(st->win, wp_config(), pw, ph, f, 0, 0, 1, 1, pw, ph);
 }
 
+/* ---- the GPU's topo snowflake ---- */
+
+static bool gpu_logo(void) {
+  const struct wallpaper_config *c = wp_config();
+  return c->logo_gpu && c->logo_radius > 0 && gpu_map();
+}
+
+/* Draw frame f's snowflake over its box, or nothing (f NULL). False if the
+ * GPU failed. */
+static bool logo_draw(struct output *out, int pw, int ph,
+                      const struct wp_frame *f) {
+  /* Not whole: wp_gl_logo() clears it. */
+  static const struct wp_frame none = {.logo_shrink = 1};
+  struct strip *st = &out->logo;
+  double ox, oy, sx, sy;
+  int placed = strip_place(out, st, wp_logo_box(wp_config(), pw, ph), pw, &ox,
+                           &oy, &sx, &sy);
+  if (placed <= 0)
+    return placed == 0;
+  out->logo_on = f != NULL;
+  return wp_gl_logo(st->win, wp_config(), pw, ph, f ? f : &none, ox, oy, sx,
+                    sy, st->bw, st->bh);
+}
+
+/* What the GPU's snowflake is drawn from. */
+static void logo_key(const struct wp_frame *f, double key[8]) {
+  double k[8] = {f->angle, f->pulse,   f->glow,    f->over,
+                 f->flash, f->map_fade, f->shake_x, f->shake_y};
+  memcpy(key, k, sizeof(k));
+}
+
+const char *wp_surfaces_logo_renderer(void) {
+  if (!wp_config()->logo_gpu || !wp_config()->viz_gpu)
+    return "cpu";
+  if (gl_broken || !wl->subcompositor || !wp_gl_init(wl->display))
+    return "cpu (no GPU)";
+  return "gpu";
+}
+
 const char *wp_surfaces_viz_renderer(void) {
   if (!wp_config()->viz_gpu)
     return "cpu";
@@ -282,6 +351,19 @@ static void draw(struct output *out, bool full) {
   }
   if (full || out->map.bw != pw || out->map.bh != ph)
     out->map_bright = -1;
+  /* The snowflake moving between the CPU and the GPU: repaint the buffers
+   * with it or without it. */
+  bool lgpu = under && gpu_logo();
+  if (lgpu != out->lgpu) {
+    out->lgpu = lgpu;
+    out->stale[0] = out->stale[1] = true;
+    if (!lgpu) {
+      strip_destroy(&out->logo);
+      out->logo_on = false;
+    }
+  }
+  if (full)
+    out->logo_key[0] = NAN;
   int i = get_buffer(out, pw, ph,
                      under ? WL_SHM_FORMAT_ARGB8888 : WL_SHM_FORMAT_XRGB8888);
   if (i < 0) {
@@ -312,11 +394,19 @@ static void draw(struct output *out, bool full) {
   if (!under && wp_topo(wp_config()) &&
       (out->cpu_bright[i] != bright || shaking || out->shook[i]))
     whole = true;
+  /* The GPU's snowflake, but in shows and while the lambdas slide (the
+   * CPU draws those, and the GPU's surface shows nothing). */
+  bool gl_logo = lgpu && !showing && wp_logo_whole(&f);
+  double key[8];
+  logo_key(&f, key);
+  bool logo_due = gl_logo ? !out->logo_on || memcmp(key, out->logo_key,
+                                                    sizeof(key)) != 0
+                          : out->logo_on;
   /* Dozing, once both buffers hold the frozen frame, only the bar is
    * repainted, and nothing at all while it looks the same (the bar sits at
    * bar_min for much of each period): the timer paces until it changes. */
-  bool bar_only = wp_dozing() && !whole && !map_due && out->still[0] &&
-                  out->still[1];
+  bool bar_only = wp_dozing() && !whole && !map_due && !logo_due &&
+                  out->still[0] && out->still[1];
   if (bar_only && fabs(f.level - out->bar_level) < 0.5 / 255 &&
       fabs(f.percent - out->bar_percent) < 0.01) {
     int fps = wp_fps_cap();
@@ -345,17 +435,51 @@ static void draw(struct output *out, bool full) {
     out->map_bright = bright;
     out->map_moved = moving;
   }
+  if (logo_due) {
+    if (!logo_draw(out, pw, ph, gl_logo ? &f : NULL)) {
+      warn("wallpaper: GPU drawing failed; the snowflake is back on the CPU");
+      gl_broken = true;
+      draw(out, true); /* again, on the CPU */
+      return;
+    }
+    memcpy(out->logo_key, key, sizeof(key));
+  }
   struct wp_frame cf = f;
   cf.map_under = under;
   if (gpu)
     cf.nbars = 0;
+  /* While a buffer holds the CPU's snowflake or speed lines, the whole
+   * logo box is repainted, so they're cleared. */
+  bool streaking = f.over > 0;
+  cf.logo_gpu = gl_logo;
+  cf.logo_box = gl_logo && (streaking || out->logoed[0] || out->logoed[1] ||
+                            out->streaked[0] || out->streaked[1]);
   bool ring = cf.nbars > 0 || out->ringed[0] || out->ringed[1];
   /* The same for the title and artist: a buffer still holding them is
    * cleared once they're gone. */
   bool texting = f.media_alpha > 0 && wp_config()->media_title;
   bool text = texting || out->texted[0] || out->texted[1];
+  /* With the snowflake on the GPU, and no hexagon, title or bars, only the
+   * bar can change in the buffer: repaint just it, and only if it changed
+   * (or moved with a shake); otherwise commit the GPU's surfaces alone. */
+  double bsx = round(f.shake_x * pw / WP_REF_WIDTH);
+  double bsy = round(f.shake_y * pw / WP_REF_WIDTH);
+  if (gl_logo && !whole && !cf.logo_box && !ring && !text &&
+      f.media_alpha <= 0 && !out->hexed[0] && !out->hexed[1]) {
+    if (fabs(f.level - out->bar_level) < 0.5 / 255 &&
+        fabs(f.percent - out->bar_percent) < 0.01 && bsx == out->bar_sx &&
+        bsy == out->bar_sy) {
+      if (wp_ticking())
+        request_frame(out);
+      wl_surface_commit(out->surface);
+      out->last_draw = now;
+      wp_count_frame(now);
+      return;
+    }
+    bar_only = true;
+  }
   struct wp_rect r[WP_REGIONS];
-  wp_regions(wp_config(), pw, ph, ring, text, r);
+  wp_regions_ex(wp_config(), pw, ph, ring, text, cf.logo_gpu, cf.logo_box, r);
   cairo_t *cr = cairo_create(b->cairo);
   if (bar_only) {
     cairo_rectangle(cr, r[0].x, r[0].y, r[0].w, r[0].h);
@@ -371,8 +495,13 @@ static void draw(struct output *out, bool full) {
   out->cpu_bright[i] = bright;
   out->shook[i] = shaking;
   out->still[i] = wp_dozing();
+  out->logoed[i] = !cf.logo_gpu;
+  out->streaked[i] = streaking;
+  out->hexed[i] = f.media_alpha > 0;
   out->bar_level = f.level;
   out->bar_percent = f.percent;
+  out->bar_sx = bsx;
+  out->bar_sy = bsy;
 
   if (out->scale120 && out->viewport) {
     wl_surface_set_buffer_scale(out->surface, 1);
@@ -471,6 +600,8 @@ static void destroy_surface(struct output *out) {
   strips_destroy(out);
   strip_destroy(&out->map);
   out->under = false;
+  strip_destroy(&out->logo);
+  out->lgpu = out->logo_on = false;
   if (out->surface)
     wl_clear_input(wl, out->surface);
   if (out->frame_cb)
