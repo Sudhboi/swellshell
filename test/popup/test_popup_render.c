@@ -6,8 +6,8 @@
 #include <string.h>
 
 #include "../png.h"
+#include "info.h"
 #include "module.h"
-#include "popup/info.h"
 #include "popup/render.h"
 
 extern const struct swell_module popup_module;

@@ -1,6 +1,7 @@
-/* System information shown in the popup. */
-#ifndef SWELL_POPUP_INFO_H
-#define SWELL_POPUP_INFO_H
+/* System information shown in the popup (and, on an empty workspace, in
+ * the wallpaper). */
+#ifndef SWELL_INFO_H
+#define SWELL_INFO_H
 
 #include <stdbool.h>
 #include <time.h>

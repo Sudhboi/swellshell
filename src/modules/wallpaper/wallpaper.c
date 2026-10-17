@@ -10,7 +10,11 @@
  * requested and no timer is armed: the last frame stays on screen and the
  * module costs nothing; that includes the PipeWire capture, which is torn
  * down (it is while dozing too). Moving
- * the pointer over the wallpaper spins the logo faster. */
+ * the pointer over the wallpaper spins the logo faster.
+ *
+ * On an empty workspace the popup hands its timeline over (peek.h) and the
+ * wallpaper draws its contents instead of the panel (render_peek.c); the
+ * screensaver gives way while they show. */
 #include "wallpaper.h"
 
 #include <fcntl.h>
@@ -28,8 +32,9 @@
 #include "ipc.h"
 #include "loop.h"
 #include "module.h"
-#include "wm.h"
+#include "peek.h"
 #include "util.h"
+#include "wm.h"
 
 static struct {
   struct swell *sw;
@@ -75,6 +80,9 @@ static struct {
   bool show_black;    /* a power-off's black frame has been drawn */
   struct loop_timer *hold_timer;
 
+  /* the popup's timeline while its contents are drawn here, else NULL */
+  const struct peek *peek;
+
   /* the topo map: shown on an empty workspace, faded out under windows */
   double map_alpha;
   int64_t map_last; /* ms of its last step */
@@ -111,7 +119,10 @@ static bool show_holding(void) {
 
 bool wp_showing(void) { return w.show != WP_SHOW_NONE; }
 
-static double map_target(void) { return w.ws_empty && !w.saving ? 1 : 0; }
+/* The screensaver gives way to the popup's contents. */
+static bool saver_on(void) { return w.saving && !w.peek; }
+
+static double map_target(void) { return w.ws_empty && !saver_on() ? 1 : 0; }
 
 /* The map is fading out or in (only the topo style has one). */
 static bool map_fading(void) {
@@ -122,7 +133,7 @@ bool wp_ticking(void) {
   if (show_holding())
     return false;
   return w.animating || w.dozing || w.saving || w.saver_mix > 0 ||
-         wp_showing() || map_fading();
+         wp_showing() || map_fading() || w.peek;
 }
 
 static bool viz_showing(void) {
@@ -151,6 +162,13 @@ static bool reacting(void) {
 int wp_fps_cap(void) {
   if (wp_showing() || map_fading())
     return 0;
+  if (w.peek) {
+    /* Smooth while it pops, expands or the hold ring runs. */
+    struct peek_values v;
+    peek_values(w.peek, now_ms(), &v);
+    if (v.more)
+      return 0;
+  }
   if (w.saving)
     return w.cfg.saver_fps;
   if (w.boost > 0.05)
@@ -250,7 +268,7 @@ static void advance_map(int64_t now) {
 
 /* Ease the snowflake off the centre (saving) or back, and wander on. */
 static void advance_saver(double dt) {
-  double target = w.saving ? 1 : 0;
+  double target = saver_on() ? 1 : 0;
   double step = w.cfg.saver_fade_ms > 0 ? dt * 1000 / w.cfg.saver_fade_ms : 1;
   w.saver_mix = target > w.saver_mix ? fmin(w.saver_mix + step, target)
                                      : fmax(w.saver_mix - step, target);
@@ -369,6 +387,21 @@ static void show_frame(int64_t now, struct wp_frame *f) {
   f->fade = 1 - u;
 }
 
+void wp_peek_frame(const struct peek *pk, bool ws_empty, int64_t now,
+                   struct wp_frame *f) {
+  f->peek = NULL;
+  f->peek_pop = f->peek_expand = f->peek_hold = 0;
+  if (!pk || !ws_empty)
+    return;
+  struct peek_values v;
+  peek_values(pk, now, &v);
+  f->peek = pk->info;
+  f->peek_low_pct = pk->battery_low_pct;
+  f->peek_pop = v.pop;
+  f->peek_expand = v.expand;
+  f->peek_hold = v.hold;
+}
+
 void wp_frame_at(int64_t now, struct wp_frame *f) {
   if (w.animating) {
     double dt = advance(now, false);
@@ -442,6 +475,8 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
     f->rings[i].radius = w.rings[i].age * w.cfg.topo_ring_speed;
     f->rings[i].size = w.rings[i].size * life * life;
   }
+  wp_peek_frame(w.peek, w.ws_empty, now, f);
+  f->peek_area = false;
   show_frame(now, f);
 }
 
@@ -611,6 +646,31 @@ static void on_bus(const struct bus_event *ev, void *data) {
     wp_surfaces_draw(false); /* and every draw asks for the next frame */
 }
 
+/* ---- the popup's contents ---- */
+
+/* The popup asks before it shows: only over the plain empty workspace,
+ * not in a show. */
+static bool peek_want(void) { return w.ws_empty && !wp_showing(); }
+
+static void peek_update(const struct peek *pk) {
+  bool was_ticking = wp_ticking();
+  w.peek = pk;
+  if (!was_ticking) {
+    w.last = w.map_last = now_ms();
+    w.fps_start = w.last;
+    w.fps_frames = 0;
+  }
+  /* A tick or new info shows in the next frame anyway; a still wallpaper
+   * needs this one (and every draw asks for the next while ticking). */
+  if (!was_ticking || !pk)
+    wp_surfaces_draw(false);
+}
+
+static const struct peek_sink peek_sink = {
+    .want = peek_want,
+    .update = peek_update,
+};
+
 /* ---- idle ---- */
 
 static void idled(void *data, struct ext_idle_notification_v1 *n) {
@@ -735,6 +795,7 @@ bool wp_init(struct swell *sw, const void *cfg) {
   wp_surfaces_init(sw->wl); /* a frozen first frame on every output */
 
   bus_subscribe(on_bus, NULL);
+  peek_set_sink(&peek_sink);
   int empty = wm_focused_empty();
   if (empty < 0 && sw->wm != WM_NONE) {
     wm_emit_focused_state(); /* the answer arrives through on_bus */
@@ -788,6 +849,8 @@ void wp_reconfigure(const void *cfg) {
 
 void wp_finish(void) {
   bus_unsubscribe(on_bus, NULL);
+  peek_set_sink(NULL);
+  w.peek = NULL;
   wp_surfaces_finish();
   wp_gl_finish();
   wp_render_finish();

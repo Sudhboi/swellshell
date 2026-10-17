@@ -2,7 +2,8 @@
  * that drops down from the top while the popup shows its details. It
  * follows the popup's bus events: playerctl is polled from popup.show, the
  * panel drops down on popup.expand if a player has a track, and goes back
- * up on popup.hide. `swell media show` shows it by hand too, and
+ * up on popup.hide (not while the popup is in the wallpaper, which shows
+ * the track itself). `swell media show` shows it by hand too, and
  * `swell media play-pause` pauses or resumes the track, showing the panel
  * for flash_ms with the new state. */
 #include "media.h"
@@ -281,7 +282,18 @@ static void on_player(void *data) {
     layer_surface_redraw(m.surf);
 }
 
+/* The popup's contents are in the wallpaper (which shows the track). */
+static bool in_wallpaper(const struct bus_event *ev) {
+  for (char *const *e = ev->env; e && *e; ++e)
+    if (!strcmp(*e, "SWELL_POPUP_IN=wallpaper"))
+      return true;
+  return false;
+}
+
 static void on_bus(const struct bus_event *ev, void *data) {
+  if (!strncmp(ev->name, "popup.", 6) && strcmp(ev->name, "popup.hide") &&
+      in_wallpaper(ev))
+    return;
   if (!strcmp(ev->name, "popup.show")) {
     m.popup_shown = true;
     m.popup_expanded = false;

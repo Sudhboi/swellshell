@@ -7,3 +7,6 @@ test('core-dump-roundtrip', test_dump)
 
 test_niri = executable('test_niri', 'test_niri.c', dependencies: core_dep)
 test('core-niri', test_niri)
+
+test_peek = executable('test_peek', 'test_peek.c', dependencies: core_dep)
+test('core-peek', test_peek)

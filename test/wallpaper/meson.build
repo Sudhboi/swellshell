@@ -12,3 +12,8 @@ test_wallpaper_gl = executable('test_wallpaper_gl',
   'test_wallpaper_gl.c', dependencies: modules_dep)
 test('wallpaper gl', test_wallpaper_gl,
   args: [meson.current_build_dir()])
+
+test_wallpaper_peek = executable('test_wallpaper_peek',
+  'test_wallpaper_peek.c', dependencies: modules_dep)
+test('wallpaper peek', test_wallpaper_peek,
+  args: [meson.current_build_dir()])

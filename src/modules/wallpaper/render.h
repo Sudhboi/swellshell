@@ -64,6 +64,11 @@ void wp_draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
                  double cy, double r, double rp, const struct wp_frame *f);
 void wp_render_hex_finish(void);
 
+/* render_peek.c */
+void wp_draw_peek(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
+                  const struct wp_frame *f);
+void wp_render_peek_finish(void);
+
 /* render_viz.c */
 /* The farthest any ring bar reaches, px. */
 double wp_ring_outer(const struct wallpaper_config *c, double r, double k);

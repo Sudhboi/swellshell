@@ -7,35 +7,8 @@
 #include <string.h>
 
 #include "draw.h"
+#include "icons.h"
 
-/* Nerd Font icons, UTF-8 */
-static const char *const ICON_BAT[] = {
-    /* 0, 10, 20 .. 100 % */
-    "\U000F008E", "\U000F007A", "\U000F007B", "\U000F007C",
-    "\U000F007D", "\U000F007E", "\U000F007F", "\U000F0080",
-    "\U000F0081", "\U000F0082", "\U000F0079",
-};
-static const char *const ICON_BAT_CHG[] = {
-    "\U000F089F", "\U000F089C", "\U000F0086", "\U000F0087",
-    "\U000F0088", "\U000F089D", "\U000F0089", "\U000F089E",
-    "\U000F008A", "\U000F008B", "\U000F0085",
-};
-static const char ICON_BAT_NONE[] = "\U000F0091";
-static const char ICON_VOL_HIGH[] = "\U000F057E";
-static const char ICON_VOL_MED[] = "\U000F0580";
-static const char ICON_VOL_LOW[] = "\U000F057F";
-static const char ICON_MUTED[] = "\U000F0581";
-static const char ICON_BRIGHT[] = "\U000F00E0";
-static const char *const ICON_WIFI[] = {
-    /* weakest .. strongest */
-    "\U000F091F",
-    "\U000F0922",
-    "\U000F0925",
-    "\U000F0928",
-};
-static const char ICON_WIRED[] = "\U000F0200";
-static const char ICON_OFFLINE[] = "\U000F0319";
-static const char ICON_NET_UNK[] = "\U000F06F5";
 static const char ELLIPSIS[] = "…";
 
 /* The config of the frame being drawn (set by popup_render). Every size is
@@ -205,24 +178,6 @@ static double draw_clock(cairo_t *cr, const struct info *in,
   return base;
 }
 
-static const char *battery_icon(const struct info *in) {
-  if (!in->has_battery)
-    return ICON_BAT_NONE;
-  int b = in->battery < 0 ? 0 : in->battery > 100 ? 100 : in->battery;
-  int i = (b + 5) / 10;
-  return in->charging ? ICON_BAT_CHG[i] : ICON_BAT[i];
-}
-
-static const char *volume_icon(const struct info *in) {
-  if (in->muted)
-    return ICON_MUTED;
-  if (in->volume >= 66)
-    return ICON_VOL_HIGH;
-  if (in->volume >= 33)
-    return ICON_VOL_MED;
-  return ICON_VOL_LOW;
-}
-
 /* A run of text pieces drawn side by side; icons are spaced by their ink
  * width since Nerd Font glyphs overhang their advance. */
 struct piece {
@@ -282,9 +237,9 @@ static double draw_levels(cairo_t *cr, const struct info *in, double top) {
 
   bool low =
       in->has_battery && !in->charging && in->battery <= C->battery_low_pct;
-  draw_level(cr, C->pad, cw, base, battery_icon(in), in->has_battery,
+  draw_level(cr, C->pad, cw, base, icon_battery(in), in->has_battery,
              in->battery, low ? C->warn : C->text, false);
-  draw_level(cr, C->pad + cw, cw, base, volume_icon(in), in->has_volume,
+  draw_level(cr, C->pad + cw, cw, base, icon_volume(in), in->has_volume,
              in->volume, in->muted ? C->muted : C->text, in->muted);
   draw_level(cr, C->pad + 2 * cw, cw, base, ICON_BRIGHT, in->has_brightness,
              in->brightness, C->text, false);
@@ -325,9 +280,9 @@ static void draw_minis(cairo_t *cr, const struct info *in) {
   bool low =
       in->has_battery && !in->charging && in->battery <= C->battery_low_pct;
   double step = cap / 3.0, cy = C->pad + step / 2.0;
-  draw_mini(cr, cy, battery_icon(in), in->has_battery, in->battery,
+  draw_mini(cr, cy, icon_battery(in), in->has_battery, in->battery,
             low ? C->warn : C->dim);
-  draw_mini(cr, cy + step, volume_icon(in), in->has_volume, in->volume,
+  draw_mini(cr, cy + step, icon_volume(in), in->has_volume, in->volume,
             in->muted ? C->muted : C->dim);
   draw_mini(cr, cy + 2 * step, ICON_BRIGHT, in->has_brightness, in->brightness,
             C->dim);
@@ -342,8 +297,7 @@ static void draw_net(cairo_t *cr, const struct info *in, double base) {
   switch (in->net) {
   case NET_WIFI: {
     int s = in->net_signal;
-    int i = s < 0 ? 3 : s >= 75 ? 3 : s >= 50 ? 2 : s >= 25 ? 1 : 0;
-    p[0] = (struct piece){ICON_WIFI[i], C->text, true};
+    p[0] = (struct piece){icon_wifi(s), C->text, true};
     p[1] = (struct piece){name ? name : "wifi", C->text, false};
     if (s >= 0) {
       snprintf(sig, sizeof sig, "  %d%%", s);

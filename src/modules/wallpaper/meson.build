@@ -6,6 +6,7 @@ wallpaper_src = files(
   'render.c',
   'render_hex.c',
   'render_logo.c',
+  'render_peek.c',
   'render_viz.c',
   'settings.c',
   'show.c',

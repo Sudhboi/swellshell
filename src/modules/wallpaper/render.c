@@ -323,6 +323,7 @@ void wp_render_finish(void) {
   wp_render_logo_finish();
   wp_render_viz_finish();
   text_cache_free();
+  wp_render_peek_finish();
   wp_render_hex_finish();
   wp_topo_finish();
   wp_logo_finish();
@@ -339,6 +340,12 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
     for (int i = 0; i < WP_REGIONS; ++i)
       if (r[i].w > 0 && r[i].h > 0)
         cairo_rectangle(cr, r[i].x, r[i].y, r[i].w, r[i].h);
+    if (f->peek_area) {
+      struct wp_rect pr[WP_PEEK_REGIONS];
+      wp_peek_regions(c, pw, ph, pr);
+      for (int i = 0; i < WP_PEEK_REGIONS; ++i)
+        cairo_rectangle(cr, pr[i].x, pr[i].y, pr[i].w, pr[i].h);
+    }
     cairo_clip(cr);
   }
   cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
@@ -394,6 +401,7 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
     wp_draw_edges(cr, c, pw, ph, f);
 
   draw_text(cr, c, pw, ph, f);
+  wp_draw_peek(cr, c, pw, ph, f);
   draw_bar(cr, c, pw, f);
   if (f->over > 0)
     wp_draw_streaks(cr, c, cx, cy, r, k, f);

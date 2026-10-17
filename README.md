@@ -5,7 +5,7 @@ A small shell for sway and niri in one daemon. It merges five earlier tools and 
 | module | was | what it does |
 |---|---|---|
 | `osd` | nixosd | volume/brightness OSD with a rotating Nix snowflake |
-| `popup` | popup | hold-to-peek panel: clock, date, levels, network, CPU/RAM, workspaces |
+| `popup` | popup | hold-to-peek panel: clock, date, levels, network, CPU/RAM, workspaces (on an empty workspace drawn into the wallpaper instead, in its colours; `[popup] wallpaper = false` keeps the panel) |
 | `media` | (new) | what's playing (cover, title, artist, album, progress) in a panel at the top while the popup shows its details |
 | `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav (sway only; niri has its own) |
 | `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n (on niri: `next`/`prev`/`goto` map to niri's own actions) |
@@ -60,7 +60,7 @@ Hook `on` patterns are globs (`window.*`). Commands run through `sh -c` in a sin
 | `window.new`, `.close`, `.focus`, `.title`, `.move`, `.fullscreen`, `.floating`, `.urgent`, `.mark` | window events; `SWELL_CON_ID` (niri: the window id), `SWELL_APP_ID`, `SWELL_TITLE`; niri has no `.fullscreen` or `.mark` |
 | `output.change` | outputs changed (sway only) |
 | `osd.show`, `osd.hide` | `SWELL_OSD_KIND`, `SWELL_OSD_LEVEL`, `SWELL_OSD_MUTED` |
-| `popup.show`, `popup.hide`, `popup.expand` | |
+| `popup.show`, `popup.hide`, `popup.expand` | `SWELL_POPUP_IN` (`panel` or `wallpaper`) |
 | `media.show`, `media.hide` | `SWELL_MEDIA_TITLE`, `SWELL_MEDIA_ARTIST`, `SWELL_MEDIA_PLAYER` |
 | `overview.open`, `overview.close` | swell's overview on sway, niri's own on niri |
 | `workspaces.renumber` | the workspaces were renamed to 1..n (sway only) |

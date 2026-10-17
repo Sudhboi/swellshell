@@ -4,6 +4,7 @@
 #ifndef SWELL_POPUP_H
 #define SWELL_POPUP_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Every tunable; the defaults (popup.c) are popup's config.h and the layout
@@ -26,6 +27,7 @@ struct popup_config {
       row_step, sec_gap, icon_gap, mini_font, mini_gap;
   double ws_h, ws_min_w, ws_text_pad, ws_gap, gap_ws, wsc_min_w, wsc_max_w,
       wsc_inset, wsc_arrow, ws_arrow_w, hold_h;
+  bool wallpaper; /* on an empty workspace the wallpaper shows it */
 };
 
 /* The layer surface is anchored to the bottom and includes the gap; the

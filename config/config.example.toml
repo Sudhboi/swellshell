@@ -241,6 +241,8 @@ wsc_arrow = 4.0
 ws_arrow_w = 16.0
 # thickness of the line that traces the border until the expand; 0 hides it
 hold_h = 1.0
+# on an empty workspace, show the contents in the wallpaper instead of the panel
+wallpaper = true
 
 [media]
 # false turns the module off
@@ -699,6 +701,26 @@ media_max_width = 1400.0
 media_fade_ms = 400
 # opacity of the details and the hexagon while paused
 media_paused_alpha = 0.5
+# font of the popup's contents, shown in the wallpaper on an empty workspace (popup's `wallpaper`)
+peek_font = "IosevkaTerm Nerd Font"
+# their clock, px
+peek_clock_size = 220.0
+# its seconds, px
+peek_seconds_size = 72.0
+# the date, px
+peek_date_size = 52.0
+# levels, network, stats and workspaces, px
+peek_row_size = 40.0
+# widest column each side of the snowflake, px
+peek_max_width = 720.0
+# how far they slide in from the sides as they show, px
+peek_slide = 60.0
+# the hold ring's distance past the snowflake (at its biggest pulse), px
+peek_ring_gap = 36.0
+# its width, px (0: no ring while holding)
+peek_ring_width = 5.0
+# low battery and urgent workspaces
+peek_warn = "#ff5a5a"
 # launch animation: the lambdas fly in and lock together, when the daemon starts on an empty workspace (once per login)
 intro = true
 # each lambda's flight

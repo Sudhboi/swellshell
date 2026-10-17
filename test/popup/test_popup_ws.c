@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "popup/info.h"
+#include "info.h"
 
 static struct wm_workspace ws(const char *name, int num, bool focused,
                                 bool urgent) {

@@ -65,6 +65,7 @@ struct output {
   bool streaked[2]; /* the buffer holds speed lines */
   bool hexed[2];    /* the buffer holds the hexagon (cover, progress) */
   bool wandered[2]; /* the buffer holds something off the centre */
+  bool peeked[2];   /* the buffer holds the popup's contents */
   double bar_sx, bar_sy; /* the shake of the last commit, px */
   double bar_fade;       /* of the last commit */
   int width, height; /* logical, from configure */
@@ -139,6 +140,7 @@ static int get_buffer(struct output *out, int pw, int ph, uint32_t format) {
       out->texted[i] = false;
       out->still[i] = false;
       out->wandered[i] = false;
+      out->peeked[i] = false;
     }
     return i;
   }
@@ -416,8 +418,12 @@ static void draw(struct output *out, bool full) {
   /* Dozing, once both buffers hold the frozen frame, only the bar is
    * repainted, and nothing at all while it looks the same (the bar sits at
    * bar_min for much of each period): the timer paces until it changes. */
+  /* The popup's contents: repainted while they show, and once more in
+   * each buffer that still holds them. */
+  bool peeking = f.peek && f.peek_pop > 0;
+  bool peek_area = peeking || out->peeked[0] || out->peeked[1];
   bool bar_only = wp_dozing() && !whole && !map_due && !logo_due &&
-                  out->still[0] && out->still[1];
+                  !peek_area && out->still[0] && out->still[1];
   if (bar_only && fabs(f.level - out->bar_level) < 0.5 / 255 &&
       fabs(f.percent - out->bar_percent) < 0.01 &&
       f.bar_fade == out->bar_fade) {
@@ -458,6 +464,7 @@ static void draw(struct output *out, bool full) {
   }
   struct wp_frame cf = f;
   cf.map_under = under;
+  cf.peek_area = peek_area;
   if (gpu)
     cf.nbars = 0;
   /* While a buffer holds the CPU's snowflake or speed lines, the whole
@@ -476,7 +483,7 @@ static void draw(struct output *out, bool full) {
    * (or moved with a shake); otherwise commit the GPU's surfaces alone. */
   double bsx = round(f.shake_x * pw / WP_REF_WIDTH);
   double bsy = round(f.shake_y * pw / WP_REF_WIDTH);
-  if (gl_logo && !whole && !cf.logo_box && !ring && !text &&
+  if (gl_logo && !whole && !cf.logo_box && !ring && !text && !peek_area &&
       f.media_alpha <= 0 && !out->hexed[0] && !out->hexed[1]) {
     /* (A faded bar's pulse shows nothing.) */
     bool bar_gone = f.bar_fade >= 1 && out->bar_fade >= 1;
@@ -514,6 +521,7 @@ static void draw(struct output *out, bool full) {
   out->streaked[i] = streaking;
   out->hexed[i] = f.media_alpha > 0;
   out->wandered[i] = wandering;
+  out->peeked[i] = peeking;
   out->bar_fade = f.bar_fade;
   out->bar_level = f.level;
   out->bar_percent = f.percent;
@@ -531,11 +539,19 @@ static void draw(struct output *out, bool full) {
    * the bar and the logo can differ from what the compositor has. */
   if (whole)
     wl_surface_damage_buffer(out->surface, 0, 0, pw, ph);
-  else
+  else {
     for (int k = 0; k < (bar_only ? 1 : WP_REGIONS); ++k)
       if (r[k].w > 0 && r[k].h > 0)
         wl_surface_damage_buffer(out->surface, r[k].x, r[k].y, r[k].w,
                                  r[k].h);
+    if (peek_area) {
+      struct wp_rect pr[WP_PEEK_REGIONS];
+      wp_peek_regions(wp_config(), pw, ph, pr);
+      for (int k = 0; k < WP_PEEK_REGIONS; ++k)
+        wl_surface_damage_buffer(out->surface, pr[k].x, pr[k].y, pr[k].w,
+                                 pr[k].h);
+    }
+  }
   if (wp_ticking())
     request_frame(out);
   wl_surface_commit(out->surface);

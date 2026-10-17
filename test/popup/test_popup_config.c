@@ -29,7 +29,8 @@ int main(int argc, char **argv) {
                   "background = \"#103010\"\n"
                   "border = \"#ff0000\"\n"
                   "row_step = 60.5\n"
-                  "font_clock = 90\n");
+                  "font_clock = 90\n"
+                  "wallpaper = false\n");
   assert(doc.loaded);
   cfg_apply(cfg_section(&doc, "popup"), "popup", popup_module.fields,
             popup_module.nfields, &cfg, NULL);
@@ -37,6 +38,8 @@ int main(int argc, char **argv) {
   assert(cfg.width == 700 && cfg.height == 600 && cfg.font_clock == 90);
   assert(cfg.row_step == 60.5 && cfg.background == 0x103010ffu);
   assert(cfg.pad == def.pad && cfg.gap_rows == def.gap_rows);
+  /* On an empty workspace the wallpaper shows the contents by default. */
+  assert(def.wallpaper && !cfg.wallpaper);
   assert(popup_surface_height(&cfg) == 600 + def.bottom_gap);
 
   struct info in;

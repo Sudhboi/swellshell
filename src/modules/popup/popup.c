@@ -2,23 +2,26 @@
  * from the bottom with a big clock; held for expand_delay_ms it grows to the
  * full details (date, levels, network, stats, workspaces); the media
  * module drops its panel down at the top then.
- * `swell popup hide` slides it back down. */
+ * `swell popup hide` slides it back down.
+ * On an empty workspace (with `wallpaper`) the wallpaper draws the same
+ * contents instead of the panel: the timeline (peek.h) is handed to it.
+ * If a window opens meanwhile, the panel takes over where it was. */
 #include "popup.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-#include "anim.h"
 #include "bus.h"
 #include "info.h"
 #include "loop.h"
 #include "module.h"
+#include "peek.h"
 #include "render.h"
 #include "surface.h"
-#include "wm.h"
 #include "util.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
+#include "wm.h"
 
 static const struct popup_config defaults = {
     .namespace = "popup",
@@ -73,14 +76,14 @@ static const struct popup_config defaults = {
     .wsc_arrow = 4,
     .ws_arrow_w = 16,
     .hold_h = 1,
+    .wallpaper = true,
 };
 
 #define S struct popup_config
 static const struct cfg_field fields[] = {
     CFG_STRING(S, namespace, "layer-shell namespace of the surface"),
     CFG_INT(S, width, 1, 4096, "panel width, logical px"),
-    CFG_INT(S, height, 1, 4096,
-            "tallest panel and the surface height"),
+    CFG_INT(S, height, 1, 4096, "tallest panel and the surface height"),
     CFG_INT(S, pad, 0, 1024, "inner padding of the panel"),
     CFG_INT(S, bottom_gap, 0, 1024,
             "gap between the bottom edge (or bar) and the panel"),
@@ -137,6 +140,9 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, hold_h, 0, 1024,
                "thickness of the line that traces the border until the "
                "expand; 0 hides it"),
+    CFG_BOOL(S, wallpaper,
+             "on an empty workspace, show the contents in the wallpaper "
+             "instead of the panel"),
 };
 #undef S
 
@@ -147,49 +153,70 @@ static struct {
   struct loop_timer *tick;   /* CLOCK_REALTIME, just after each second */
   struct loop_timer *expand; /* expand_delay_ms after show */
   struct info info;
-  int64_t pop_at;          /* ms, CLOCK_MONOTONIC: start of the pop tween */
-  double pop_from, pop_to; /* 0 -> 1 open, x -> 0 close */
-  bool closing;            /* surface is destroyed once the close ends */
-  int64_t expand_at;       /* ms, 0 until the details are revealed */
-  int64_t hold_at;         /* ms: expand timer armed, 0 while not running */
-  double hold;             /* hold line, kept as it was when it stopped */
+  /* the timeline; the surface is destroyed once a close ends */
+  struct peek pk;
+  bool in_wallpaper; /* the wallpaper draws it, there is no surface */
 } p;
 
-static double tween(int64_t t0, int ms, int64_t now, bool *more) {
-  return ease_out_cubic(anim_progress(t0, ms, now, more));
-}
-
-static int pop_ms(void) { return p.closing ? p.cfg.close_ms : p.cfg.pop_ms; }
-
-static double pop_value(int64_t now, bool *more) {
-  double t = tween(p.pop_at, pop_ms(), now, more);
-  return p.pop_from + (p.pop_to - p.pop_from) * t;
-}
-
-/* How far the expand delay has run (linear, so the hold line runs at the
- * pace of the wait). */
-static double hold_value(int64_t now, bool *more) {
-  if (!p.hold_at)
-    return p.hold;
-  return anim_progress(p.hold_at, p.cfg.expand_delay_ms, now, more);
-}
-
-/* Stop the hold line where it is. */
-static void stop_hold(void) {
-  bool more = false;
-  p.hold = hold_value(now_ms(), &more);
-  p.hold_at = 0;
+/* The timeline's copy of the config. */
+static void sync_peek(void) {
+  p.pk.info = &p.info;
+  p.pk.battery_low_pct = p.cfg.battery_low_pct;
+  p.pk.pop_ms = p.cfg.pop_ms;
+  p.pk.close_ms = p.cfg.close_ms;
+  p.pk.expand_ms = p.cfg.expand_ms;
+  p.pk.expand_delay_ms = p.cfg.expand_delay_ms;
+  p.pk.hold_line = p.cfg.hold_h > 0;
 }
 
 static bool draw(cairo_t *cr, void *data) {
-  int64_t now = now_ms();
-  bool more = false;
-  double pop = pop_value(now, &more);
-  double expand =
-      p.expand_at ? tween(p.expand_at, p.cfg.expand_ms, now, &more) : 0;
-  double hold = p.cfg.hold_h > 0 ? hold_value(now, &more) : 0;
-  popup_render(cr, &p.cfg, &p.info, pop, expand, hold);
-  return more;
+  struct peek_values v;
+  peek_values(&p.pk, now_ms(), &v);
+  popup_render(cr, &p.cfg, &p.info, v.pop, v.expand, v.hold);
+  return v.more;
+}
+
+static void show_surface(void);
+
+/* Shown, or closing: on the panel or in the wallpaper. */
+static bool present(void) {
+  return layer_surface_shown(p.surf) || p.in_wallpaper;
+}
+
+static void emit(const char *name) {
+  bus_emit(name,
+           p.in_wallpaper ? "SWELL_POPUP_IN=wallpaper" : "SWELL_POPUP_IN=panel",
+           NULL);
+}
+
+/* The wallpaper can't draw it any more (a window opened, or it went away):
+ * the panel takes over where it was. A close just ends. */
+static void to_panel(void) {
+  const struct peek_sink *s = peek_get_sink();
+  p.in_wallpaper = false;
+  if (s)
+    s->update(NULL);
+  if (p.pk.closing) {
+    p.pk.closing = false;
+    return;
+  }
+  show_surface();
+  layer_surface_redraw(p.surf);
+  emit("popup.show");
+  if (p.pk.expand_at)
+    emit("popup.expand");
+}
+
+static void redraw(void) {
+  if (p.in_wallpaper) {
+    const struct peek_sink *s = peek_get_sink();
+    if (s)
+      s->update(&p.pk);
+    else
+      to_panel();
+  } else if (layer_surface_shown(p.surf)) {
+    layer_surface_redraw(p.surf);
+  }
 }
 
 static void show_surface(void) {
@@ -233,96 +260,93 @@ static bool refresh_workspaces(void) {
   return info_set_workspaces(&p.info, ws, n);
 }
 
-/* Start a pop tween from wherever the current one is. */
-static void retarget_pop(double to, bool closing) {
-  bool more = false;
-  int64_t now = now_ms();
-  p.pop_from = pop_value(now, &more);
-  p.pop_to = to;
-  p.pop_at = now;
-  p.closing = closing;
-}
-
-static bool visible(void) { return layer_surface_shown(p.surf) && !p.closing; }
+static bool visible(void) { return present() && !p.pk.closing; }
 
 static void set_shown(bool show) {
   if (show == visible())
     return;
+  int64_t now = now_ms();
   if (show) {
-    if (!layer_surface_shown(p.surf)) {
-      p.pop_at = now_ms();
-      p.pop_from = 0;
-      p.expand_at = 0;
-      show_surface();
+    bool fresh = !present();
+    if (fresh) {
+      const struct peek_sink *s = peek_get_sink();
+      p.in_wallpaper = p.cfg.wallpaper && s && s->want();
+      if (!p.in_wallpaper)
+        show_surface();
     }
     /* Reopening mid-close resumes from the current position and keeps the
      * details if they were already revealed. */
-    retarget_pop(1, false);
-    info_refresh(&p.info, p.cfg.refresh_ms, p.cfg.command_timeout_ms);
-    wm_workspaces_invalidate();
-    refresh_workspaces();
-    if (!p.expand_at) {
+    sync_peek();
+    if (peek_open(&p.pk, fresh, now))
       loop_timer_arm(p.expand, p.cfg.expand_delay_ms > 0
                                    ? p.cfg.expand_delay_ms
                                    : 1, 0);
-      p.hold_at = p.cfg.expand_delay_ms > 0 ? now_ms() : 0;
-      p.hold = 0;
-    }
+    info_refresh(&p.info, p.cfg.refresh_ms, p.cfg.command_timeout_ms);
+    wm_workspaces_invalidate();
+    refresh_workspaces();
   } else {
-    retarget_pop(0, true);
+    peek_close(&p.pk, now);
     loop_timer_disarm(p.expand);
-    /* The line slides away as far as it got. */
-    stop_hold();
   }
   arm_tick(show);
-  layer_surface_redraw(p.surf);
-  bus_emit(show ? "popup.show" : "popup.hide", NULL);
+  redraw();
+  emit(show ? "popup.show" : "popup.hide");
 }
 
 static void on_tick(struct loop_timer *t, void *data) {
-  if (!layer_surface_shown(p.surf))
+  if (!present())
     return;
   info_refresh(&p.info, p.cfg.refresh_ms, p.cfg.command_timeout_ms);
   refresh_workspaces();
-  layer_surface_redraw(p.surf);
+  redraw();
 }
 
 static void on_expand(struct loop_timer *t, void *data) {
   if (!visible())
     return;
-  p.expand_at = now_ms();
-  /* Full, then faded out by the expand. */
-  p.hold_at = 0;
-  p.hold = 1;
-  layer_surface_redraw(p.surf);
-  bus_emit("popup.expand", NULL);
+  peek_expand(&p.pk, now_ms());
+  redraw();
+  emit("popup.expand");
 }
 
 /* Command output lands even when hidden; redraw only if shown. */
 static void on_info_changed(void *data) {
-  if (layer_surface_shown(p.surf))
-    layer_surface_redraw(p.surf);
+  if (present())
+    redraw();
 }
 
-/* Workspace events keep the strip current while shown. */
+/* Workspace events keep the strip current while shown. A window on the
+ * workspace takes the wallpaper's contents away: the panel shows them. */
 static void on_bus(const struct bus_event *ev, void *data) {
-  if (strncmp(ev->name, "workspace.", 10) != 0 ||
-      !layer_surface_shown(p.surf))
+  if (strncmp(ev->name, "workspace.", 10) != 0 || !present())
     return;
+  if (p.in_wallpaper && !strcmp(ev->name, "workspace.occupied")) {
+    refresh_workspaces();
+    to_panel();
+    return;
+  }
   if (refresh_workspaces())
-    layer_surface_redraw(p.surf);
+    redraw();
 }
 
-/* Destroy the surface once the close tween has run. The timeout ends a
- * close even if no frame callbacks arrive (e.g. the output is off). */
+/* Destroy the surface (or take the contents from the wallpaper) once the
+ * close tween has run. The timeout ends a close even if no frame callbacks
+ * arrive (e.g. the output is off). */
 static int prepare(void *data) {
-  if (!p.closing)
+  int64_t left = peek_close_left(&p.pk, now_ms());
+  if (left < 0)
     return -1;
-  int64_t left = p.pop_at + p.cfg.close_ms - now_ms();
   if (left > 0)
     return (int)left;
-  layer_surface_hide(p.surf);
-  p.closing = false;
+  if (p.in_wallpaper) {
+    const struct peek_sink *s = peek_get_sink();
+    p.in_wallpaper = false;
+    if (s)
+      s->update(NULL);
+  } else {
+    layer_surface_hide(p.surf);
+  }
+  p.pk.closing = false;
   return -1;
 }
 
@@ -334,6 +358,7 @@ static bool init(struct swell *sw, const void *cfg) {
   memset(&p, 0, sizeof(p));
   p.sw = sw;
   p.cfg = *(const struct popup_config *)cfg;
+  sync_peek();
   p.info.cpu = -1;
   p.info.net_signal = -1;
   p.surf = layer_surface_create(sw->wl, draw, NULL);
@@ -350,12 +375,17 @@ static bool init(struct swell *sw, const void *cfg) {
 
 static void reconfigure(const void *cfg) {
   p.cfg = *(const struct popup_config *)cfg;
+  sync_peek();
+  if (p.in_wallpaper) {
+    redraw();
+    return;
+  }
   if (!layer_surface_shown(p.surf))
     return;
   /* New sizes need a new surface: re-show it, or finish a close now. */
   layer_surface_hide(p.surf);
-  if (p.closing) {
-    p.closing = false;
+  if (p.pk.closing) {
+    p.pk.closing = false;
     return;
   }
   show_surface();
@@ -364,6 +394,10 @@ static void reconfigure(const void *cfg) {
 }
 
 static void finish(void) {
+  const struct peek_sink *s = peek_get_sink();
+  if (p.in_wallpaper && s)
+    s->update(NULL);
+  p.in_wallpaper = false;
   if (p.sw->wm != WM_NONE)
     bus_unsubscribe(on_bus, NULL);
   info_finish();

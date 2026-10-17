@@ -11,6 +11,7 @@
 
 #include <cairo.h>
 
+#include "info.h"
 #include "wl.h"
 
 /* Geometry is given in pixels of a 2880 px wide output (the laptop panel
@@ -171,6 +172,15 @@ struct wallpaper_config {
   double media_max_width; /* reference px, ellipsised past it */
   int media_fade_ms;
   double media_paused_alpha;
+  /* the popup's contents, drawn here instead of its panel on an empty
+   * workspace: the clock and stats left of the snowflake, the levels right
+   * of it, the workspaces at the bottom, the hold traced round it */
+  char peek_font[128];
+  double peek_clock_size, peek_seconds_size, peek_date_size, peek_row_size;
+  double peek_max_width; /* of each side's column, reference px */
+  double peek_slide;     /* in from the screen's sides, reference px */
+  double peek_ring_gap, peek_ring_width; /* the hold ring, reference px */
+  uint32_t peek_warn;                    /* low battery, urgent workspaces */
   /* the launch animation: the lambdas fly in and lock together, once per
    * login session, when the daemon starts on an empty workspace */
   bool intro;
@@ -236,6 +246,11 @@ struct wp_frame {
   } rings[WP_RINGS];
   bool spec_on;           /* the map moves with spec */
   float spec[2][WP_SPEC]; /* 0..1, bass first; [0] left, [1] right */
+  /* the popup's contents (peek.h), NULL: none */
+  const struct info *peek;
+  int peek_low_pct; /* battery at or below this (discharging) warns */
+  double peek_pop, peek_expand, peek_hold; /* peek_values(), 0..1 */
+  bool peek_area; /* repaint wp_peek_regions() too (a buffer holds them) */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
 };
@@ -304,6 +319,12 @@ const struct wp_topo_grid *wp_topo_heights(const struct wallpaper_config *c,
 void wp_topo_finish(void);
 /* How bright the map shows in frame f: windows and shows dim it, 0..1. */
 double wp_map_brightness(const struct wp_frame *f);
+/* render_peek.c: the buffer areas the popup's contents can cover in a pw x
+ * ph buffer: the left column (clock, date, network, stats), the right one
+ * (levels), the hold ring's box round the snowflake, the workspace strip. */
+#define WP_PEEK_REGIONS 4
+void wp_peek_regions(const struct wallpaper_config *c, int pw, int ph,
+                     struct wp_rect out[WP_PEEK_REGIONS]);
 /* Free wp_render()'s cache. */
 void wp_render_finish(void);
 
@@ -542,6 +563,11 @@ bool wp_ticking(void);
 bool wp_showing(void);
 /* The frame rate cap right now (0: none). */
 int wp_fps_cap(void);
+/* Fill f's peek fields from the popup's timeline pk (NULL: none) at now;
+ * none with a window open (ws_empty false). */
+struct peek;
+void wp_peek_frame(const struct peek *pk, bool ws_empty, int64_t now,
+                   struct wp_frame *f);
 /* Advance the animation to now (monotonic ms) and give the frame. */
 void wp_frame_at(int64_t now, struct wp_frame *f);
 /* A frame was presented (for the fps count in `status`). */
