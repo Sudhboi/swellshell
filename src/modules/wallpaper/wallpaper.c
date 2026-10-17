@@ -3,7 +3,9 @@
  *
  * It animates only while the focused workspace is empty (workspace.empty /
  * workspace.occupied on the bus) and the user is not idle
- * (ext-idle-notify-v1). Idle on an empty workspace it dozes: only the
+ * (ext-idle-notify-v1). Idle on an empty workspace the screensaver
+ * (idle_saver) fades the rest out and the snowflake wanders round the
+ * screen, so nothing stays put to burn in; without it, it dozes: only the
  * battery bar pulses (idle_bar_pulse). Otherwise no frame callbacks are
  * requested and no timer is armed: the last frame stays on screen and the
  * module costs nothing; that includes the PipeWire capture, which is torn
@@ -37,6 +39,10 @@ static const struct wallpaper_config defaults = {
     .idle_timeout_s = 300,
     .battery_bar = true,
     .idle_bar_pulse = true,
+    .idle_saver = true,
+    .saver_speed = 60,
+    .saver_fps = 20,
+    .saver_fade_ms = 1200,
     .battery_interval_s = 30,
     .background = 0x000000ffu,
     .bar = 0xffffffffu,
@@ -203,6 +209,17 @@ static const struct cfg_field fields[] = {
     CFG_BOOL(S, idle_bar_pulse,
              "the battery bar keeps pulsing while idle on an empty workspace "
              "(the rest stays frozen; an open window freezes it too)"),
+    CFG_BOOL(S, idle_saver,
+             "idle on an empty workspace: the map, bar and title fade out and "
+             "the snowflake wanders round the screen (burn-in protection; the "
+             "bar doesn't pulse then)"),
+    CFG_DOUBLE(S, saver_speed, 0, 10000,
+               "how fast the idle snowflake wanders, reference px/s"),
+    CFG_INT(S, saver_fps, 0, 1000,
+            "frame rate cap while the idle snowflake wanders (0 = the display "
+            "rate)"),
+    CFG_INT(S, saver_fade_ms, 0, 60000,
+            "the snowflake easing off the centre when idle, and back"),
     CFG_INT(S, battery_interval_s, 1, 3600,
             "battery re-read period while animating"),
     CFG_COLOR(S, background, "background"),
@@ -508,6 +525,9 @@ static struct {
   struct wallpaper_config cfg;
   bool ws_empty, idle, animating;
   bool dozing; /* idle on an empty workspace: only the bar pulses */
+  bool saving; /* idle on an empty workspace: the snowflake wanders */
+  double saver_mix; /* 0 (centred, all shown) .. 1 (wandering) */
+  double saver_t;   /* s along the wander */
 
   /* battery: percent is the target, -1 when no battery was found */
   int battery;
@@ -564,6 +584,7 @@ static struct {
 const struct wallpaper_config *wp_config(void) { return &w.cfg; }
 bool wp_animating(void) { return w.animating; }
 bool wp_dozing(void) { return w.dozing; }
+bool wp_saving(void) { return w.saving; }
 
 #define SHOW_RETURN_MS 800
 
@@ -580,7 +601,7 @@ static bool show_holding(void) {
 
 bool wp_showing(void) { return w.show != WP_SHOW_NONE; }
 
-static double map_target(void) { return w.ws_empty ? 1 : 0; }
+static double map_target(void) { return w.ws_empty && !w.saving ? 1 : 0; }
 
 /* The map is fading out or in (only the topo style has one). */
 static bool map_fading(void) {
@@ -590,7 +611,8 @@ static bool map_fading(void) {
 bool wp_ticking(void) {
   if (show_holding())
     return false;
-  return w.animating || w.dozing || wp_showing() || map_fading();
+  return w.animating || w.dozing || w.saving || w.saver_mix > 0 ||
+         wp_showing() || map_fading();
 }
 
 static bool viz_showing(void) {
@@ -619,6 +641,8 @@ static bool reacting(void) {
 int wp_fps_cap(void) {
   if (wp_showing() || map_fading())
     return 0;
+  if (w.saving)
+    return w.cfg.saver_fps;
   if (w.boost > 0.05)
     return w.cfg.fps_spin;
   return viz_showing() || reacting() ? w.cfg.fps_audio : w.cfg.fps;
@@ -712,6 +736,35 @@ static void advance_map(int64_t now) {
   double step = dt * 1000 / w.cfg.topo_fade_ms;
   w.map_alpha = target > w.map_alpha ? fmin(w.map_alpha + step, target)
                                      : fmax(w.map_alpha - step, target);
+}
+
+/* Ease the snowflake off the centre (saving) or back, and wander on. */
+static void advance_saver(double dt) {
+  double target = w.saving ? 1 : 0;
+  double step = w.cfg.saver_fade_ms > 0 ? dt * 1000 / w.cfg.saver_fade_ms : 1;
+  w.saver_mix = target > w.saver_mix ? fmin(w.saver_mix + step, target)
+                                     : fmax(w.saver_mix - step, target);
+  w.saver_t = w.saver_mix > 0 ? fmod(w.saver_t + dt, 86400) : 0;
+}
+
+static double smooth(double t) { return t * t * (3 - 2 * t); }
+
+/* A triangle wave through 0 at p = 0, rising: the bounce off two edges. */
+static double bounce(double p) { return 2 / M_PI * asin(sin(2 * M_PI * p)); }
+
+/* Where the wander is: -1..1 of the way to each edge. The rates follow the
+ * reference panel (16:10), so the snowflake moves about saver_speed. */
+static void wander(double *x, double *y) {
+  *x = *y = 0;
+  if (w.saver_mix <= 0 || w.cfg.saver_speed <= 0)
+    return;
+  double r = wp_logo_reach(&w.cfg, (int)WP_REF_WIDTH);
+  double tx = fmax(WP_REF_WIDTH / 2 - r, 1);
+  double ty = fmax(WP_REF_WIDTH * 5 / 16 - r, 1);
+  /* One full bounce is four runs from the middle to an edge. */
+  double m = smooth(w.saver_mix);
+  *x = m * bounce(w.saver_t * w.cfg.saver_speed / (4 * tx));
+  *y = m * bounce(w.saver_t * w.cfg.saver_speed / (4 * ty));
 }
 
 /* Move the bars on by dt towards the latest audio (silence without any). */
@@ -814,6 +867,9 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
     double dt = advance(now, false);
     advance_viz(dt);
     advance_media(now, dt);
+    advance_saver(dt);
+  } else if (w.saving) {
+    advance_saver(advance(now, false));
   } else if (w.dozing)
     advance(now, true);
   f->percent = shown_percent();
@@ -835,11 +891,16 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   double shake = w.cfg.react_shake ? w.cfg.react_shake_px * w.react.shake : 0;
   f->shake_x = shake * sin(2 * M_PI * 11 * w.react.shake_t);
   f->shake_y = shake * sin(2 * M_PI * 14 * w.react.shake_t + 1.3);
-  f->media_alpha = w.media_alpha;
-  /* Idle, the hexagon (cover and progress) goes; the title stays. */
-  f->progress = w.animating ? w.progress : -1;
-  f->chase = w.animating && w.chasing ? w.chase : -1;
-  f->art = w.animating && w.cfg.media_art ? wp_media_art(&f->art_id) : NULL;
+  wander(&f->wander_x, &f->wander_y);
+  /* The screensaver fades the title and the bar out. */
+  double saver = smooth(w.saver_mix);
+  f->media_alpha = w.media_alpha * (1 - saver);
+  /* Idle, the hexagon (cover and progress) goes; the title stays. Off the
+   * centre it goes too. */
+  bool hex = w.animating && w.saver_mix <= 0;
+  f->progress = hex ? w.progress : -1;
+  f->chase = hex && w.chasing ? w.chase : -1;
+  f->art = hex && w.cfg.media_art ? wp_media_art(&f->art_id) : NULL;
   f->title = w.title;
   f->artist = w.artist;
   f->over = over();
@@ -852,7 +913,8 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
           w.viz.bars[s][i] * wp_viz_wobble(&w.cfg, s, i, w.viz_time), 1);
   for (int k = 0; k < 6; ++k)
     f->lambda_fade[k] = 0;
-  f->logo_shrink = f->bar_fade = f->flash = f->fade = f->bg_fade = 0;
+  f->logo_shrink = f->flash = f->fade = f->bg_fade = 0;
+  f->bar_fade = saver;
   f->crt_w = f->crt_h = f->crt_alpha = 0;
   advance_map(now);
   f->map_fade = 1 - w.map_alpha;
@@ -946,13 +1008,22 @@ static void arm_idle_fallback(void) {
 
 static void update_animating(void) {
   bool want = w.ws_empty && !w.idle;
-  bool doze =
-      w.ws_empty && w.idle && w.cfg.battery_bar && w.cfg.idle_bar_pulse;
-  if (want == w.animating && doze == w.dozing)
+  bool save = w.ws_empty && w.idle && w.cfg.idle_saver;
+  bool doze = w.ws_empty && w.idle && !save && w.cfg.battery_bar &&
+              w.cfg.idle_bar_pulse;
+  if (want == w.animating && doze == w.dozing && save == w.saving)
     return;
   bool was_animating = w.animating, was_ticking = wp_ticking();
+  bool was_saving = w.saving;
   w.animating = want;
   w.dozing = doze;
+  w.saving = save;
+  if (save && !was_saving)
+    bus_emit("wallpaper.saver", NULL);
+  /* A window over the wandering snowflake: the plain wallpaper, centred. */
+  bool recentre = !w.ws_empty && w.saver_mix > 0;
+  if (recentre)
+    w.saver_mix = w.saver_t = 0;
   /* The bar (fill and pulse) moves in both states, so the battery is read
    * in both. */
   if (wp_ticking() && !was_ticking) {
@@ -985,8 +1056,8 @@ static void update_animating(void) {
     return;
   }
   if (!was_animating) {
-    if (doze || cleared)
-      wp_surfaces_draw(false); /* start the bar's frames */
+    if (doze || save || cleared || recentre)
+      wp_surfaces_draw(false); /* start the bar's (or saver's) frames */
     return;
   }
   loop_timer_disarm(w.idle_timer);
@@ -1000,12 +1071,12 @@ static void update_animating(void) {
   w.nrings = 0;
   w.spin_glow = 0;
   w.playing = 0;
-  if (!doze)
+  if (!doze && !save)
     w.fps = 0;
   /* A window opened (or the user idled) mid-spin or mid-song: don't
    * leave the brightened logo, the bars or the hexagon as the frozen
    * frame. Dozing draws on for the bar. */
-  if (glowing || doze || cleared || w.media_alpha > 0)
+  if (glowing || doze || save || cleared || w.media_alpha > 0)
     wp_surfaces_draw(false);
   bus_emit("wallpaper.freeze", NULL);
 }
@@ -1174,7 +1245,8 @@ static void reconfigure(const void *cfg) {
     setup_idle();
     update_animating();
   } else if (old.idle_bar_pulse != w.cfg.idle_bar_pulse ||
-             old.battery_bar != w.cfg.battery_bar) {
+             old.battery_bar != w.cfg.battery_bar ||
+             old.idle_saver != w.cfg.idle_saver) {
     update_animating();
   }
   if (old.battery_interval_s != w.cfg.battery_interval_s && w.animating) {
@@ -1219,12 +1291,16 @@ static void finish(void) {
   w.show = WP_SHOW_NONE;
   w.animating = false;
   w.dozing = false;
+  w.saving = false;
+  w.saver_mix = w.saver_t = 0;
 }
 
 static int command(int argc, char **argv, struct reply *r) {
   if (argc == 0 || strcmp(argv[0], "status") == 0) {
     reply_printf(r, "state: %s\n",
-                 w.animating ? "animating"
+                 w.animating ? (w.saver_mix > 0 ? "animating (back from the saver)"
+                                                : "animating")
+                 : w.saving  ? "saver (the snowflake wanders)"
                  : w.dozing  ? "dozing (only the bar pulses)"
                              : "frozen");
     reply_printf(r, "workspace: %s\n", w.ws_empty ? "empty" : "occupied");

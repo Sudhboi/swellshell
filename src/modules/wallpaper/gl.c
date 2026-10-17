@@ -694,8 +694,10 @@ void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform2f(g.l_step, sx, sy);
   glUniform1f(g.l_bh, bh);
   /* As cairo: shaken by whole pixels. */
-  double cx = pw / 2.0 + round(f->shake_x * k);
-  double cy = ph / 2.0 + round(f->shake_y * k);
+  double dx, dy;
+  wp_logo_offset(c, pw, ph, f, &dx, &dy);
+  double cx = pw / 2.0 + dx + round(f->shake_x * k);
+  double cy = ph / 2.0 + dy + round(f->shake_y * k);
   glUniform2f(g.l_centre, cx, cy);
   glUniform2f(g.l_rot, cos(f->angle), sin(f->angle));
   glUniform1f(g.l_inv_s, 1 / s);

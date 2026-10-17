@@ -273,7 +273,7 @@ static void check_map(const char *dir) {
 static cairo_surface_t *gpu_logo(const struct wallpaper_config *c,
                                  const struct wp_frame *f, const char *dir,
                                  const char *name) {
-  struct wp_rect r = wp_logo_box(c, W, H);
+  struct wp_rect r = wp_logo_box(c, W, H, f);
   GLuint fbo, rb;
   glGenFramebuffers(1, &fbo);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -333,7 +333,9 @@ static long box_light(cairo_surface_t *s, struct wp_rect r) {
 static void compare_logo(const struct wallpaper_config *c,
                          const struct wp_frame *f, const char *dir,
                          const char *name) {
-  struct wp_rect r = wp_logo_box(c, W, H);
+  struct wp_rect r = wp_logo_box(c, W, H, f);
+  double dx, dy;
+  wp_logo_offset(c, W, H, f, &dx, &dy);
   cairo_surface_t *gs = gpu_logo(c, f, dir, name);
   cairo_surface_t *cs = render(c, f);
   int bg = lum(cs, r.x + 1, r.y + 1);
@@ -360,8 +362,8 @@ static void compare_logo(const struct wallpaper_config *c,
       for (int s = 0; s < 2; ++s) {
         uint32_t v = s ? b : a;
         int rr = (v >> 16) & 0xff, bb = v & 0xff;
-        bool tl = x < W / 2 - 80 && y < H / 2 - 80;
-        bool br = x > W / 2 + 80 && y > H / 2 + 80;
+        bool tl = x < W / 2 + dx - 80 && y < H / 2 + dy - 80;
+        bool br = x > W / 2 + dx + 80 && y > H / 2 + dy + 80;
         /* Lit outline pixels: pink (red over blue) or blue. */
         if (lum(s ? gs : cs, x, y) < bg + 150)
           continue;
@@ -436,9 +438,27 @@ static void check_logo(const char *dir) {
   struct wp_frame w = f;
   w.map_fade = 0.6;
   compare_logo(&c, &w, dir, "wallpaper_gl_logo_window");
+  /* The idle screensaver: dimmed as with a window, off the centre. */
+  struct wp_frame v = w;
+  v.map_fade = 1;
+  v.angle = 0.7;
+  v.wander_x = 0.83;
+  v.wander_y = -0.61;
+  compare_logo(&c, &v, dir, "wallpaper_gl_logo_wander");
+  /* At the far corners its box just fits, unclipped. */
+  struct wp_rect mid = wp_logo_box(&c, W, H, NULL);
+  for (int s = -1; s <= 1; s += 2) {
+    struct wp_frame e = f;
+    e.wander_x = e.wander_y = s;
+    struct wp_rect b = wp_logo_box(&c, W, H, &e);
+    assert(b.w == mid.w && b.h == mid.h);
+    assert(s < 0 ? b.x >= 0 && b.x <= 3 && b.y >= 0 && b.y <= 3
+                 : b.x + b.w <= W && b.x + b.w >= W - 3 &&
+                       b.y + b.h <= H && b.y + b.h >= H - 3);
+  }
 
   /* A window open: the snowflake (over black) under half as bright. */
-  struct wp_rect r = wp_logo_box(&c, W, H);
+  struct wp_rect r = wp_logo_box(&c, W, H, NULL);
   w.map_fade = 1;
   cairo_surface_t *a = gpu_logo(&c, &f, dir, NULL);
   cairo_surface_t *b = gpu_logo(&c, &w, dir, NULL);

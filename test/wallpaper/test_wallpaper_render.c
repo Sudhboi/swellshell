@@ -412,7 +412,7 @@ static void test_topo(const char *dir) {
   wp_regions_ex(c, W, H, false, false, true, true, rb);
   assert(rl[1].w < 0.5 * rg[1].w && rl[1].w > 0.7 * c->logo_radius);
   assert(memcmp(&rb[1], &rg[1], sizeof rb[1]) == 0);
-  struct wp_rect box = wp_logo_box(c, W, H);
+  struct wp_rect box = wp_logo_box(c, W, H, NULL);
   assert(box.x <= rg[1].x + rg[1].w / 2 - c->logo_radius * 1.1 &&
          box.w < rg[1].w);
   /* A partial repaint over a buffer that held the CPU's snowflake (with

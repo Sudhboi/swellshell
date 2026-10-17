@@ -60,11 +60,13 @@ struct output {
   bool lgpu;            /* the GPU draws it (but in shows and slides) */
   struct strip logo;    /* surface NULL until the GPU first draws it */
   bool logo_on;         /* it holds a snowflake, not nothing */
-  double logo_key[8];   /* the frame it was drawn from, NAN: redraw */
+  double logo_key[10];  /* the frame it was drawn from, NAN: redraw */
   bool logoed[2];   /* the buffer holds the CPU's snowflake */
   bool streaked[2]; /* the buffer holds speed lines */
   bool hexed[2];    /* the buffer holds the hexagon (cover, progress) */
+  bool wandered[2]; /* the buffer holds something off the centre */
   double bar_sx, bar_sy; /* the shake of the last commit, px */
+  double bar_fade;       /* of the last commit */
   int width, height; /* logical, from configure */
   uint32_t scale120;  /* preferred fractional scale, 0 if unknown */
   bool configured;
@@ -136,6 +138,7 @@ static int get_buffer(struct output *out, int pw, int ph, uint32_t format) {
       out->ringed[i] = false;
       out->texted[i] = false;
       out->still[i] = false;
+      out->wandered[i] = false;
     }
     return i;
   }
@@ -303,8 +306,8 @@ static bool logo_draw(struct output *out, int pw, int ph,
   static const struct wp_frame none = {.logo_shrink = 1};
   struct strip *st = &out->logo;
   double ox, oy, sx, sy;
-  int placed = strip_place(out, st, wp_logo_box(wp_config(), pw, ph), pw, &ox,
-                           &oy, &sx, &sy);
+  int placed = strip_place(out, st, wp_logo_box(wp_config(), pw, ph, f), pw,
+                           &ox, &oy, &sx, &sy);
   if (placed <= 0)
     return placed == 0;
   out->logo_on = f != NULL;
@@ -313,9 +316,10 @@ static bool logo_draw(struct output *out, int pw, int ph,
 }
 
 /* What the GPU's snowflake is drawn from. */
-static void logo_key(const struct wp_frame *f, double key[8]) {
-  double k[8] = {f->angle, f->pulse,   f->glow,    f->over,
-                 f->flash, f->map_fade, f->shake_x, f->shake_y};
+static void logo_key(const struct wp_frame *f, double key[10]) {
+  double k[10] = {f->angle,   f->pulse,   f->glow,     f->over,
+                  f->flash,   f->map_fade, f->shake_x, f->shake_y,
+                  f->wander_x, f->wander_y};
   memcpy(key, k, sizeof(k));
 }
 
@@ -397,7 +401,14 @@ static void draw(struct output *out, bool full) {
   /* The GPU's snowflake, but in shows and while the lambdas slide (the
    * CPU draws those, and the GPU's surface shows nothing). */
   bool gl_logo = lgpu && !showing && wp_logo_whole(&f);
-  double key[8];
+  /* Off the centre, what the buffer draws round the snowflake (all of it on
+   * the CPU, speed lines on the GPU) leaves the regions: draw whole, and
+   * again once it's back. */
+  bool off = f.wander_x != 0 || f.wander_y != 0;
+  bool wandering = off && (!gl_logo || f.over > 0);
+  if (wandering || out->wandered[i])
+    whole = true;
+  double key[10];
   logo_key(&f, key);
   bool logo_due = gl_logo ? !out->logo_on || memcmp(key, out->logo_key,
                                                     sizeof(key)) != 0
@@ -408,7 +419,8 @@ static void draw(struct output *out, bool full) {
   bool bar_only = wp_dozing() && !whole && !map_due && !logo_due &&
                   out->still[0] && out->still[1];
   if (bar_only && fabs(f.level - out->bar_level) < 0.5 / 255 &&
-      fabs(f.percent - out->bar_percent) < 0.01) {
+      fabs(f.percent - out->bar_percent) < 0.01 &&
+      f.bar_fade == out->bar_fade) {
     int fps = wp_fps_cap();
     loop_timer_arm(out->fps_timer, fps > 0 ? 1000 / fps : 16, 0);
     return;
@@ -466,9 +478,12 @@ static void draw(struct output *out, bool full) {
   double bsy = round(f.shake_y * pw / WP_REF_WIDTH);
   if (gl_logo && !whole && !cf.logo_box && !ring && !text &&
       f.media_alpha <= 0 && !out->hexed[0] && !out->hexed[1]) {
-    if (fabs(f.level - out->bar_level) < 0.5 / 255 &&
-        fabs(f.percent - out->bar_percent) < 0.01 && bsx == out->bar_sx &&
-        bsy == out->bar_sy) {
+    /* (A faded bar's pulse shows nothing.) */
+    bool bar_gone = f.bar_fade >= 1 && out->bar_fade >= 1;
+    if ((bar_gone || (fabs(f.level - out->bar_level) < 0.5 / 255 &&
+                      fabs(f.percent - out->bar_percent) < 0.01 &&
+                      f.bar_fade == out->bar_fade)) &&
+        bsx == out->bar_sx && bsy == out->bar_sy) {
       if (wp_ticking())
         request_frame(out);
       wl_surface_commit(out->surface);
@@ -498,6 +513,8 @@ static void draw(struct output *out, bool full) {
   out->logoed[i] = !cf.logo_gpu;
   out->streaked[i] = streaking;
   out->hexed[i] = f.media_alpha > 0;
+  out->wandered[i] = wandering;
+  out->bar_fade = f.bar_fade;
   out->bar_level = f.level;
   out->bar_percent = f.percent;
   out->bar_sx = bsx;

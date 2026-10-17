@@ -28,6 +28,12 @@ struct wallpaper_config {
   int idle_timeout_s; /* 0: never freeze for idleness */
   bool battery_bar;    /* the battery bar at the top */
   bool idle_bar_pulse; /* idle on an empty workspace: the bar still pulses */
+  /* idle on an empty workspace: the rest fades out and the snowflake
+   * wanders round the screen (burn-in protection; no dozing then) */
+  bool idle_saver;
+  double saver_speed; /* reference px/s */
+  int saver_fps;      /* cap while it wanders, 0: the display rate */
+  int saver_fade_ms;  /* the fade into it and back */
   int battery_interval_s;
   /* colours */
   uint32_t background, bar, logo, logo_alt;
@@ -187,6 +193,9 @@ struct wp_frame {
   double pulse;    /* logo growth, 0..1 of react_pulse_scale */
   double slide[6]; /* lambda k moved out by this x logo radius */
   double shake_x, shake_y; /* everything moved by this, reference px */
+  /* the snowflake (and what's round it) moved off the centre by this, -1..1
+   * of the way to the screen's edges (wp_logo_offset) */
+  double wander_x, wander_y;
   double media_alpha; /* the details (title, artist, hexagon), 0: none */
   const char *title, *artist;
   double progress; /* 0..1 of the way round from the top, -1: none */
@@ -285,10 +294,18 @@ double wp_map_brightness(const struct wp_frame *f);
 /* Free wp_render()'s cache. */
 void wp_render_finish(void);
 
+/* The snowflake's reach from its centre in a pw buffer px wide: pulsed,
+ * shaken, with its shadow and glow, px. */
+double wp_logo_reach(const struct wallpaper_config *c, int pw);
+/* Where frame f's wander puts the snowflake's centre in a pw x ph buffer,
+ * from the middle, in whole px (0, 0 for f NULL). */
+void wp_logo_offset(const struct wallpaper_config *c, int pw, int ph,
+                    const struct wp_frame *f, double *dx, double *dy);
 /* The topo snowflake drawn by the GPU (gl.c), from these. */
-/* The buffer area it can cover in a pw x ph buffer: pulsed, shaken, with
- * its shadow and glow. */
-struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph);
+/* The buffer area it can cover in a pw x ph buffer in frame f (NULL: in
+ * the middle). */
+struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph,
+                           const struct wp_frame *f);
 /* Frame f's snowflake is one the GPU can draw: every lambda in place and
  * opaque, full size (not in a show, not sliding). */
 bool wp_logo_whole(const struct wp_frame *f);
@@ -493,6 +510,8 @@ const struct wallpaper_config *wp_config(void);
 bool wp_animating(void);
 /* Idle on an empty workspace: the bar pulses, the rest is frozen. */
 bool wp_dozing(void);
+/* Idle on an empty workspace with idle_saver: the snowflake wanders. */
+bool wp_saving(void);
 /* Animating or dozing or playing a show: frames are wanted. */
 bool wp_ticking(void);
 /* A show (or its black after power-off) is on screen: frames are drawn

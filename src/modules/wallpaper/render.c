@@ -1133,7 +1133,7 @@ bool wp_logo_mask(const struct wallpaper_config *c, int pw, int which,
   return true;
 }
 
-struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph) {
+double wp_logo_reach(const struct wallpaper_config *c, int pw) {
   double k = pw / WP_REF_WIDTH;
   double sh = c->react_shake ? ceil(c->react_shake_px * pw / WP_REF_WIDTH) : 0;
   /* Pulsed to the most; the shadow (offset, blurred), the glow and the
@@ -1142,9 +1142,26 @@ struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph) {
                     fmax(c->topo_edge_width, c->topo_window_edge_width) / 2) *
                    k +
                6;
-  double r = (c->logo_radius * k + ext) * (1 + c->react_pulse_scale) + sh;
-  return clamp_rect(pw / 2.0 - r, ph / 2.0 - r, pw / 2.0 + r, ph / 2.0 + r, pw,
-                    ph);
+  return (c->logo_radius * k + ext) * (1 + c->react_pulse_scale) + sh;
+}
+
+void wp_logo_offset(const struct wallpaper_config *c, int pw, int ph,
+                    const struct wp_frame *f, double *dx, double *dy) {
+  *dx = *dy = 0;
+  if (!f || (f->wander_x == 0 && f->wander_y == 0))
+    return;
+  /* Its box (padded 1 px) stays whole on screen, so it keeps its size. */
+  double r = wp_logo_reach(c, pw) + 2;
+  *dx = round(f->wander_x * fmax(floor(pw / 2.0 - r), 0));
+  *dy = round(f->wander_y * fmax(floor(ph / 2.0 - r), 0));
+}
+
+struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph,
+                           const struct wp_frame *f) {
+  double r = wp_logo_reach(c, pw), dx, dy;
+  wp_logo_offset(c, pw, ph, f, &dx, &dy);
+  double cx = pw / 2.0 + dx, cy = ph / 2.0 + dy;
+  return clamp_rect(cx - r, cy - r, cx + r, cy + r, pw, ph);
 }
 
 bool wp_logo_whole(const struct wp_frame *f) {
@@ -1284,17 +1301,23 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   /* A shake moves everything over the background, by whole pixels so the
    * cached tiles stay sharp. */
   cairo_translate(cr, round(f->shake_x * k), round(f->shake_y * k));
-  double cx = pw / 2.0, cy = ph / 2.0;
+  /* The snowflake, and what's drawn round it, wander while idle. */
+  double dx, dy;
+  wp_logo_offset(c, pw, ph, f, &dx, &dy);
+  double cx = pw / 2.0 + dx, cy = ph / 2.0 + dy;
   /* over the background, first */
   /* (Under topo the snowflake's outline glows instead.) */
+  cairo_save(cr);
+  cairo_translate(cr, dx, dy);
   if (!topo)
     paint_bloom(cr, c, pw, ph, r, fmax(f->over, f->flash));
+  if (f->nbars > 0 && !c->viz_edges)
+    draw_ring(cr, c, pw, ph, r, k, f);
+  cairo_restore(cr);
   if (f->nbars > 0 && c->viz_edges && c->viz_edge_smooth)
     draw_edges_smooth(cr, c, pw, ph, f);
   else if (f->nbars > 0 && c->viz_edges)
     draw_edges(cr, c, pw, ph, f);
-  else if (f->nbars > 0)
-    draw_ring(cr, c, pw, ph, r, k, f);
 
   draw_text(cr, c, pw, ph, f);
   draw_bar(cr, c, pw, f);

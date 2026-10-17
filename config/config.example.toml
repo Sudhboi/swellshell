@@ -409,6 +409,14 @@ idle_timeout_s = 300
 battery_bar = true
 # the battery bar keeps pulsing while idle on an empty workspace (the rest stays frozen; an open window freezes it too)
 idle_bar_pulse = true
+# idle on an empty workspace: the map, bar and title fade out and the snowflake wanders round the screen (burn-in protection; the bar doesn't pulse then)
+idle_saver = true
+# how fast the idle snowflake wanders, reference px/s
+saver_speed = 60.0
+# frame rate cap while the idle snowflake wanders (0 = the display rate)
+saver_fps = 20
+# the snowflake easing off the centre when idle, and back
+saver_fade_ms = 1200
 # battery re-read period while animating
 battery_interval_s = 30
 # background
