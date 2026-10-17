@@ -51,6 +51,12 @@ struct wallpaper_config {
   /* the outline, from the top left to the bottom right */
   uint32_t topo_edge_a, topo_edge_mid, topo_edge_b;
   double topo_edge_width;   /* reference px */
+  /* the snowflake with a window open (it eases there with the map) */
+  uint32_t topo_window_fill;
+  double topo_window_edge_alpha; /* x the outline's alpha */
+  double topo_window_edge_width; /* reference px */
+  double topo_neon_alpha;   /* the outline's glow at the fastest spin */
+  double topo_neon_px;      /* its width, ref px */
   double topo_shadow_px;    /* the shadow's offset down and right, ref px */
   double topo_shadow_alpha; /* 0..1 */
   int topo_fade_ms; /* the map fading out and in as windows come and go */

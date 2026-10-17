@@ -105,7 +105,9 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
   if (wp_topo(c))
     r = fmax(r, c->logo_radius * k * (1 + c->react_pulse_scale) *
                         (1 + c->react_slide_dist) +
-                    (1.8 * c->topo_shadow_px + c->topo_edge_width / 2) * k +
+                    (fmax(1.8 * c->topo_shadow_px, 0.75 * c->topo_neon_px) +
+                     c->topo_edge_width / 2) *
+                        k +
                     4);
   if (ring && !c->viz_edges)
     r = fmax(r, ring_outer(c, c->logo_radius * k, k) + 1);
@@ -185,7 +187,6 @@ static struct {
   cairo_surface_t *tile;
   int x, y; /* buffer position */
   int pw, ph, step;
-  bool topo; /* transparent around the bloom, drawn over the map */
   uint32_t background, bloom;
   double logo_radius, bloom_radius, bloom_alpha;
 } bloom_cache;
@@ -203,8 +204,7 @@ static void paint_bloom(cairo_t *cr, const struct wallpaper_config *c,
     return;
   double cx = pw / 2.0, cy = ph / 2.0;
   if (!bloom_cache.tile || bloom_cache.pw != pw || bloom_cache.ph != ph ||
-      bloom_cache.step != step || bloom_cache.topo != wp_topo(c) ||
-      bloom_cache.background != c->background ||
+      bloom_cache.step != step || bloom_cache.background != c->background ||
       bloom_cache.bloom != c->bloom ||
       bloom_cache.logo_radius != c->logo_radius ||
       bloom_cache.bloom_radius != c->bloom_radius ||
@@ -213,16 +213,13 @@ static void paint_bloom(cairo_t *cr, const struct wallpaper_config *c,
     double outer = r * (1 + (c->bloom_radius - 1) * step / BLOOM_STEPS);
     int x0 = (int)floor(cx - outer) - 1, y0 = (int)floor(cy - outer) - 1;
     int size = (int)ceil(cx + outer) + 1 - x0;
-    bool topo = wp_topo(c);
-    bloom_cache.tile = cairo_image_surface_create(
-        topo ? CAIRO_FORMAT_ARGB32 : CAIRO_FORMAT_RGB24, size, size);
+    bloom_cache.tile =
+        cairo_image_surface_create(CAIRO_FORMAT_RGB24, size, size);
     cairo_t *tc = cairo_create(bloom_cache.tile);
-    if (!topo) {
-      set_rgba(tc, c->background, 1.0);
-      cairo_set_operator(tc, CAIRO_OPERATOR_SOURCE);
-      cairo_paint(tc);
-      cairo_set_operator(tc, CAIRO_OPERATOR_OVER);
-    }
+    set_rgba(tc, c->background, 1.0);
+    cairo_set_operator(tc, CAIRO_OPERATOR_SOURCE);
+    cairo_paint(tc);
+    cairo_set_operator(tc, CAIRO_OPERATOR_OVER);
     draw_bloom(tc, c, cx - x0, cy - y0, r, (double)step / BLOOM_STEPS);
     cairo_destroy(tc);
     bloom_cache.x = x0;
@@ -230,7 +227,6 @@ static void paint_bloom(cairo_t *cr, const struct wallpaper_config *c,
     bloom_cache.pw = pw;
     bloom_cache.ph = ph;
     bloom_cache.step = step;
-    bloom_cache.topo = topo;
     bloom_cache.background = c->background;
     bloom_cache.bloom = c->bloom;
     bloom_cache.logo_radius = c->logo_radius;
@@ -238,8 +234,7 @@ static void paint_bloom(cairo_t *cr, const struct wallpaper_config *c,
     bloom_cache.bloom_alpha = c->bloom_alpha;
   }
   cairo_save(cr);
-  if (!bloom_cache.topo)
-    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+  cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
   cairo_set_source_surface(cr, bloom_cache.tile, bloom_cache.x,
                            bloom_cache.y);
   int size = cairo_image_surface_get_width(bloom_cache.tile);
@@ -248,8 +243,15 @@ static void paint_bloom(cairo_t *cr, const struct wallpaper_config *c,
   cairo_restore(cr);
 }
 
+static void topo_edges(const struct wallpaper_config *c,
+                       const struct wp_frame *f, uint32_t edge[3]);
+static cairo_pattern_t *topo_edge_pattern(const uint32_t edge[3], double cx,
+                                          double cy, double e, double a,
+                                          bool solid);
+
 /* Arcs circling the logo, turning with it: bright at the leading end and
- * fading along a tail that lengthens with the overspeed. */
+ * fading along a tail that lengthens with the overspeed. Under topo they
+ * take the snowflake's outline colours, fixed to the screen. */
 static void draw_streaks(cairo_t *cr, const struct wallpaper_config *c,
                          double cx, double cy, double r, double k,
                          const struct wp_frame *f) {
@@ -259,6 +261,10 @@ static void draw_streaks(cairo_t *cr, const struct wallpaper_config *c,
     return;
   cairo_set_line_width(cr, c->streak_width * k);
   cairo_set_line_cap(cr, CAIRO_LINE_CAP_BUTT);
+  uint32_t edge[3];
+  bool topo = wp_topo(c);
+  if (topo)
+    topo_edges(c, f, edge);
   for (int i = 0; i < n; ++i) {
     /* Spread evenly, nudged off a regular pattern by the ring. */
     int ring = (i * 2) % 3;
@@ -269,14 +275,22 @@ static void draw_streaks(cairo_t *cr, const struct wallpaper_config *c,
       /* Segment s spans from s/segs to (s+1)/segs of the way back. */
       double a0 = head - f->dir * l * s / segs;
       double a1 = head - f->dir * l * (s + 1) / segs;
-      set_rgba(cr, c->streak,
-               c->streak_alpha * f->over * (1 - (double)s / segs));
+      double a = c->streak_alpha * f->over * (1 - (double)s / segs);
+      cairo_pattern_t *p = NULL;
+      if (topo) {
+        p = topo_edge_pattern(edge, cx, cy, r * STREAK_OUTER, a, true);
+        cairo_set_source(cr, p);
+      } else {
+        set_rgba(cr, c->streak, a);
+      }
       cairo_new_path(cr);
       if (f->dir > 0)
         cairo_arc(cr, cx, cy, rr, a1, a0);
       else
         cairo_arc(cr, cx, cy, rr, a0, a1);
       cairo_stroke(cr);
+      if (p)
+        cairo_pattern_destroy(p);
     }
   }
 }
@@ -933,12 +947,12 @@ static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
 struct shadow {
   cairo_surface_t *mask; /* A8 */
   double x, y;           /* its top left, px from the snowflake's centre */
-  double r, blur;        /* resting radius, blur radius, px */
+  double r, blur, line;  /* resting radius, blur radius, outline width, px */
 };
-static struct shadow shadow_cache[2];
+static struct shadow shadow_cache[4];
 
 static void shadow_cache_free(void) {
-  for (int i = 0; i < 2; ++i) {
+  for (int i = 0; i < 4; ++i) {
     if (shadow_cache[i].mask)
       cairo_surface_destroy(shadow_cache[i].mask);
     shadow_cache[i].mask = NULL;
@@ -979,37 +993,90 @@ static void silhouette(cairo_t *cr, double r, bool whole) {
   cairo_restore(cr);
 }
 
-static const struct shadow *shadow_mask(int which, double r, double blur) {
+/* which: 0 = the six lambdas' silhouette, 1 = lambda 0's; 2 and 3 the same
+ * as outlines line px wide (the topo glow). */
+static const struct shadow *shadow_mask(int which, double r, double blur,
+                                        double line) {
   struct shadow *sc = &shadow_cache[which];
-  if (sc->mask && sc->r == r && sc->blur == blur)
+  if (sc->mask && sc->r == r && sc->blur == blur && sc->line == line)
     return sc;
   if (sc->mask)
     cairo_surface_destroy(sc->mask);
   cairo_surface_t *probe = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
   cairo_t *pc = cairo_create(probe);
-  silhouette(pc, r, which == 0);
+  silhouette(pc, r, which % 2 == 0);
   double x0, y0, x1, y1;
   cairo_path_extents(pc, &x0, &y0, &x1, &y1);
   cairo_destroy(pc);
   cairo_surface_destroy(probe);
   int b = (int)ceil(blur / 3);
-  double pad = 3 * b + 2;
+  double pad = 3 * b + line / 2 + 2;
   x0 = floor(x0 - pad);
   y0 = floor(y0 - pad);
   int w = (int)ceil(x1 + pad - x0), h = (int)ceil(y1 + pad - y0);
   cairo_surface_t *m = cairo_image_surface_create(CAIRO_FORMAT_A8, w, h);
   cairo_t *mc = cairo_create(m);
   cairo_translate(mc, -x0, -y0);
-  silhouette(mc, r, which == 0);
-  cairo_fill(mc);
+  silhouette(mc, r, which % 2 == 0);
+  if (which >= 2) {
+    cairo_set_line_width(mc, line);
+    cairo_set_line_join(mc, CAIRO_LINE_JOIN_ROUND);
+    cairo_stroke(mc);
+  } else {
+    cairo_fill(mc);
+  }
   cairo_destroy(mc);
   cairo_surface_flush(m);
   if (b > 0)
     blur_a8(cairo_image_surface_get_data(m), w, h,
             cairo_image_surface_get_stride(m), b);
   cairo_surface_mark_dirty(m);
-  *sc = (struct shadow){m, x0, y0, r, blur};
+  *sc = (struct shadow){m, x0, y0, r, blur, line};
   return sc;
+}
+
+/* Paint a mask (resting radius r0) under each lambda, turned, pulsed to r
+ * and slid with them, offset ox, oy: black at alpha a, or the outline's
+ * colours (fixed to the screen) when edge. One mask for the lot when whole. */
+static void paint_lambda_mask(cairo_t *cr, const struct shadow *m, bool whole,
+                              const struct wp_frame *f, const double alpha[6],
+                              double cx, double cy, double ox, double oy,
+                              double r0, double r, const uint32_t *edge,
+                              double a) {
+  double dx, dy;
+  nixlogo_lambda_dir(&dx, &dy);
+  for (int i = 0; i < (whole ? 1 : 6); ++i) {
+    if (alpha[i] <= 0)
+      continue;
+    cairo_save(cr);
+    cairo_pattern_t *src = NULL;
+    if (edge) {
+      /* Set before the turn, so the colours stay put. */
+      src = topo_edge_pattern(edge, cx, cy, 0.6 * r, a * alpha[i], true);
+      cairo_set_source(cr, src);
+      cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
+    }
+    cairo_translate(cr, cx + ox, cy + oy);
+    cairo_rotate(cr, f->angle + i * M_PI / 3);
+    cairo_scale(cr, r, r);
+    cairo_translate(cr, dx * f->slide[i], dy * f->slide[i]);
+    cairo_scale(cr, 1 / r0, 1 / r0);
+    if (!edge)
+      cairo_set_source_rgba(cr, 0, 0, 0, a * alpha[i]);
+    /* It's blurred: for the dark shadow the nearest pixel is as good as
+     * any filter; the bright glow shows grain without a bilinear one. */
+    cairo_pattern_t *mp = cairo_pattern_create_for_surface(m->mask);
+    cairo_matrix_t mm;
+    cairo_matrix_init_translate(&mm, -m->x, -m->y);
+    cairo_pattern_set_matrix(mp, &mm);
+    cairo_pattern_set_filter(mp,
+                             edge ? CAIRO_FILTER_BILINEAR : CAIRO_FILTER_NEAREST);
+    cairo_mask(cr, mp);
+    cairo_pattern_destroy(mp);
+    if (src)
+      cairo_pattern_destroy(src);
+    cairo_restore(cr);
+  }
 }
 
 /* The topo style's snowflake (resting radius r0, now r): dark glass
@@ -1024,42 +1091,40 @@ static void draw_glass_logo(cairo_t *cr, const struct wallpaper_config *c,
     alpha[i] = 1 - fmin(fmax(f->lambda_fade[i], 0), 1);
   double s = r / r0; /* sizes follow the pulse and the shrink */
 
+  /* One mask for the lot unless the lambdas slide or fade apart. */
+  bool whole = true;
+  for (int i = 0; i < 6; ++i)
+    whole = whole && f->slide[i] == 0 && alpha[i] == 1;
   double sd = c->topo_shadow_px * k * s;
   if (sd > 0 && c->topo_shadow_alpha > 0) {
-    /* One mask for the lot unless the lambdas slide or fade apart. */
-    bool whole = true;
-    for (int i = 0; i < 6; ++i)
-      whole = whole && f->slide[i] == 0 && alpha[i] == 1;
     const struct shadow *m =
-        shadow_mask(whole ? 0 : 1, r0, c->topo_shadow_px * k);
-    double dx, dy;
-    nixlogo_lambda_dir(&dx, &dy);
-    for (int i = 0; i < (whole ? 1 : 6); ++i) {
-      if (alpha[i] <= 0)
-        continue;
-      cairo_save(cr);
-      cairo_translate(cr, cx + 0.7 * sd, cy + 0.7 * sd);
-      cairo_rotate(cr, f->angle + i * M_PI / 3);
-      cairo_scale(cr, r, r);
-      cairo_translate(cr, dx * f->slide[i], dy * f->slide[i]);
-      cairo_scale(cr, 1 / r0, 1 / r0);
-      cairo_set_source_rgba(cr, 0, 0, 0, c->topo_shadow_alpha * alpha[i]);
-      /* It's blurred: the nearest pixel is as good as any filter. */
-      cairo_pattern_t *mp = cairo_pattern_create_for_surface(m->mask);
-      cairo_matrix_t mm;
-      cairo_matrix_init_translate(&mm, -m->x, -m->y);
-      cairo_pattern_set_matrix(mp, &mm);
-      cairo_pattern_set_filter(mp, CAIRO_FILTER_NEAREST);
-      cairo_mask(cr, mp);
-      cairo_pattern_destroy(mp);
-      cairo_restore(cr);
-    }
+        shadow_mask(whole ? 0 : 1, r0, c->topo_shadow_px * k, 0);
+    paint_lambda_mask(cr, m, whole, f, alpha, cx, cy, 0.7 * sd, 0.7 * sd, r0,
+                      r, NULL, c->topo_shadow_alpha);
   }
 
-  uint32_t fill = mix(c->topo_logo_fill, c->topo_logo_glow, f->glow);
+  /* Toned down as the map fades for a window. */
+  double win = fmin(fmax(f->map_fade, 0), 1);
+  uint32_t fill = mix(mix(c->topo_logo_fill, c->topo_logo_glow, f->glow),
+                      c->topo_window_fill, win);
   uint32_t edge[3];
   topo_edges(c, f, edge);
-  double ew = c->topo_edge_width * k * s;
+  double ea = 1 + (c->topo_window_edge_alpha - 1) * win;
+
+  /* Past spin_visible_max (and in the intro's flash) the outline glows:
+   * a blurred outline, cached, under the glass. */
+  double neon =
+      c->topo_neon_alpha * fmin(fmax(fmax(f->over, f->flash), 0), 1);
+  double np = c->topo_neon_px * k;
+  if (neon > 0 && np > 0) {
+    const struct shadow *m = shadow_mask(whole ? 2 : 3, r0, np / 2, np * 0.4);
+    paint_lambda_mask(cr, m, whole, f, alpha, cx, cy, 0, 0, r0, r, edge,
+                      neon);
+  }
+  double ew =
+      (c->topo_edge_width + (c->topo_window_edge_width - c->topo_edge_width) *
+                                win) *
+      k * s;
   cairo_set_line_join(cr, CAIRO_LINE_JOIN_MITER);
   /* The lambdas alike (all of them, but in a show) in one path. */
   bool done[6] = {false};
@@ -1085,7 +1150,8 @@ static void draw_glass_logo(cairo_t *cr, const struct wallpaper_config *c,
     }
     cairo_fill_preserve(cr);
     /* Over the lambdas' extent (not the bounding box's corners). */
-    cairo_pattern_t *p = topo_edge_pattern(edge, cx, cy, 0.6 * r, a, false);
+    cairo_pattern_t *p =
+        topo_edge_pattern(edge, cx, cy, 0.6 * r, a * ea, false);
     cairo_set_source(cr, p);
     cairo_set_line_width(cr, ew);
     cairo_stroke(cr);
@@ -1150,7 +1216,9 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   cairo_translate(cr, round(f->shake_x * k), round(f->shake_y * k));
   double cx = pw / 2.0, cy = ph / 2.0;
   /* over the background, first */
-  paint_bloom(cr, c, pw, ph, r, fmax(f->over, f->flash));
+  /* (Under topo the snowflake's outline glows instead.) */
+  if (!topo)
+    paint_bloom(cr, c, pw, ph, r, fmax(f->over, f->flash));
   if (f->nbars > 0 && c->viz_edges && c->viz_edge_smooth)
     draw_edges_smooth(cr, c, pw, ph, f);
   else if (f->nbars > 0 && c->viz_edges)

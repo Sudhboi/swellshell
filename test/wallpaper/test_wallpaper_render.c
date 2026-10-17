@@ -294,6 +294,17 @@ static void test_topo(const char *dir) {
       }
     }
   assert(lines > 1000);
+  /* With the window the snowflake is toned down: far dimmer. */
+  long lit[2] = {0};
+  for (int y = rg[1].y; y < rg[1].y + rg[1].h; y += 2)
+    for (int x = rg[1].x; x < rg[1].x + rg[1].w; x += 2)
+      for (int i = 0; i < 2; ++i) {
+        uint32_t v = px(i ? b : a, x, y);
+        lit[i] += ((v >> 16) & 0xff) + ((v >> 8) & 0xff) + (v & 0xff);
+      }
+  fprintf(stderr, "snowflake light: %ld empty, %ld with a window\n", lit[0],
+          lit[1]);
+  assert(lit[1] * 2 < lit[0]);
   cairo_surface_destroy(a);
   cairo_surface_destroy(b);
 

@@ -442,7 +442,7 @@ topo_new_map = true
 # the map's colours run this many degrees clockwise from left to right
 topo_angle = 0.0
 # contour lines from the lowest ground to the highest
-topo_levels = 16
+topo_levels = 10
 # every this many'th contour line is wider (0 = none)
 topo_index_every = 4
 # the hills' size, px
@@ -450,11 +450,11 @@ topo_scale = 1500.0
 # how much the hills meander
 topo_warp = 0.9
 # contour line width, px
-topo_line_width = 4.0
+topo_line_width = 3.0
 # the wider contour lines' width, x topo_line_width
 topo_index_width = 1.5
 # contour line opacity
-topo_line_alpha = 0.9
+topo_line_alpha = 0.55
 # the glass snowflake's fill (its alpha lets the lines show through)
 topo_logo_fill = "#2c2f40e0"
 # the glass snowflake's fill when it glows (music, spin)
@@ -466,7 +466,17 @@ topo_edge_mid = "#fab387"
 # the glass snowflake's outline at the bottom right
 topo_edge_b = "#89b4fa"
 # the glass snowflake's outline width, px
-topo_edge_width = 6.0
+topo_edge_width = 4.0
+# the glass snowflake's fill with a window open (it eases there as the map fades)
+topo_window_fill = "#14151c90"
+# the outline's opacity with a window open, x its colours' alpha
+topo_window_edge_alpha = 0.5
+# the outline's width with a window open, px
+topo_window_edge_width = 3.0
+# the glass snowflake's outline glows past spin_visible_max (topo's bloom; 0 = none)
+topo_neon_alpha = 1.0
+# that glow's width, px
+topo_neon_px = 64.0
 # the glass snowflake's shadow, px down and right
 topo_shadow_px = 22.0
 # the shadow's darkness
@@ -527,13 +537,13 @@ spin_decay_s = 1.2
 spin_hold_ms = 200
 # fastest the snowflake visibly turns, degrees/s; more speed shows as a bloom and speed lines
 spin_visible_max = 200.0
-# glow behind the snowflake past spin_visible_max
+# glow behind the snowflake past spin_visible_max (classic; topo: topo_neon_alpha)
 bloom = "#808080"
 # bloom radius at the fastest spin (x logo_radius)
 bloom_radius = 1.6
 # bloom opacity at the fastest spin
 bloom_alpha = 0.25
-# speed lines around the snowflake
+# speed lines around the snowflake (classic; topo uses the outline colours)
 streak = "#a0a0a0"
 # speed lines (0 = none)
 streak_count = 9
