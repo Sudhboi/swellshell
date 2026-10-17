@@ -38,6 +38,7 @@ struct wallpaper_config {
   uint32_t topo_bg_left, topo_bg_right; /* the background, left to right */
   uint32_t topo_line_left, topo_line_mid, topo_line_right; /* the lines */
   int topo_seed;          /* which map */
+  bool topo_new_map;      /* a random topo_seed per daemon start */
   int topo_levels;        /* contour lines from the lowest to the highest */
   int topo_index_every;   /* every this many'th line is wider, 0 = none */
   double topo_scale;      /* the hills' size, reference px */

@@ -51,6 +51,7 @@ static const struct wallpaper_config defaults = {
     .topo_line_mid = 0xa6e3a1ffu,
     .topo_line_right = 0x89dceaffu,
     .topo_seed = 7,
+    .topo_new_map = true,
     .topo_levels = 16,
     .topo_index_every = 4,
     .topo_scale = 1500,
@@ -214,6 +215,8 @@ static const struct cfg_field fields[] = {
     CFG_COLOR(S, topo_line_mid, "contour lines in the middle"),
     CFG_COLOR(S, topo_line_right, "contour lines at the right"),
     CFG_INT(S, topo_seed, 0, 1000000, "which contour map (any number)"),
+    CFG_BOOL(S, topo_new_map,
+             "a new contour map each time swell starts (ignores topo_seed)"),
     CFG_INT(S, topo_levels, 1, 200,
             "contour lines from the lowest ground to the highest"),
     CFG_INT(S, topo_index_every, 0, 200,
@@ -1079,6 +1082,16 @@ static void check_style(void) {
          w.cfg.style);
 }
 
+/* topo_new_map: one seed per daemon, so reloads keep the map. */
+static void pick_seed(void) {
+  static int seed;
+  if (!w.cfg.topo_new_map)
+    return;
+  if (!seed)
+    seed = 1 + (int)(drand48() * 1000000);
+  w.cfg.topo_seed = seed;
+}
+
 static bool init(struct swell *sw, const void *cfg) {
   if (!sw->wl->layer_shell) {
     warn("wallpaper: the compositor lacks wlr-layer-shell");
@@ -1095,6 +1108,7 @@ static bool init(struct swell *sw, const void *cfg) {
   w.idle_timer = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_idle_timer, NULL);
   w.hold_timer = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_hold_timer, NULL);
   srand48(now_ms() ^ getpid());
+  pick_seed();
   int pct;
   bool charging;
   w.battery = battery_read(&pct, &charging) ? (pct > 100 ? 100 : pct) : -1;
@@ -1120,6 +1134,7 @@ static bool init(struct swell *sw, const void *cfg) {
 static void reconfigure(const void *cfg) {
   struct wallpaper_config old = w.cfg;
   w.cfg = *(const struct wallpaper_config *)cfg;
+  pick_seed();
   if (strcmp(old.style, w.cfg.style))
     check_style();
   if (old.idle_timeout_s != w.cfg.idle_timeout_s) {
@@ -1192,6 +1207,9 @@ static int command(int argc, char **argv, struct reply *r) {
                  w.override >= 0 ? " (override)" : "", shown_percent());
     reply_printf(r, "fps: %.1f\n", wp_ticking() ? w.fps : 0.0);
     reply_printf(r, "spin: x%.2f\n", 1 + w.boost);
+    if (wp_topo(&w.cfg))
+      reply_printf(r, "topo seed: %d%s\n", w.cfg.topo_seed,
+                   w.cfg.topo_new_map ? " (new each start)" : "");
     reply_printf(r, "audio: %s\n", w.cfg.viz ? wp_audio_state() : "disabled");
     if (w.cfg.viz && w.cfg.viz_edges && w.cfg.viz_edge_smooth)
       reply_printf(r, "viz render: %s\n", wp_surfaces_viz_renderer());
