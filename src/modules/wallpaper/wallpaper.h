@@ -138,6 +138,7 @@ struct wallpaper_config {
   uint32_t media_line, media_track; /* the progress line, the rest */
   double media_line_width;          /* reference px */
   double media_hex_size;  /* of the snowflake's hole, 0..1 */
+  bool media_title;       /* the title and artist under the logo */
   char media_font[128];
   double media_title_size, media_artist_size; /* reference px */
   uint32_t media_text, media_dim;             /* title, artist */

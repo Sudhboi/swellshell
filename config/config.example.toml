@@ -643,6 +643,8 @@ media_art = true
 media_art_alpha = 0.5
 # the hexagon's size, of the snowflake's hole
 media_hex_size = 0.9
+# show the title and artist under the snowflake (false: only the cover and progress)
+media_title = true
 # font of the title and artist
 media_font = "IosevkaTerm Nerd Font"
 # title size, px

@@ -352,7 +352,8 @@ static void draw(struct output *out, bool full) {
   bool ring = cf.nbars > 0 || out->ringed[0] || out->ringed[1];
   /* The same for the title and artist: a buffer still holding them is
    * cleared once they're gone. */
-  bool text = f.media_alpha > 0 || out->texted[0] || out->texted[1];
+  bool texting = f.media_alpha > 0 && wp_config()->media_title;
+  bool text = texting || out->texted[0] || out->texted[1];
   struct wp_rect r[WP_REGIONS];
   wp_regions(wp_config(), pw, ph, ring, text, r);
   cairo_t *cr = cairo_create(b->cairo);
@@ -365,7 +366,7 @@ static void draw(struct output *out, bool full) {
   cairo_surface_flush(b->cairo);
   out->stale[i] = false;
   out->ringed[i] = cf.nbars > 0;
-  out->texted[i] = f.media_alpha > 0;
+  out->texted[i] = texting;
   out->showed[i] = showing;
   out->cpu_bright[i] = bright;
   out->shook[i] = shaking;

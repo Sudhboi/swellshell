@@ -154,6 +154,7 @@ static const struct wallpaper_config defaults = {
     .media_track = 0x262626ffu,
     .media_line_width = 6,
     .media_hex_size = 0.9,
+    .media_title = true,
     .media_font = "IosevkaTerm Nerd Font",
     .media_title_size = 44,
     .media_artist_size = 32,
@@ -423,6 +424,9 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, media_art_alpha, 0, 1, "the cover's opacity"),
     CFG_DOUBLE(S, media_hex_size, 0, 1,
                "the hexagon's size, of the snowflake's hole"),
+    CFG_BOOL(S, media_title,
+             "show the title and artist under the snowflake (false: only the "
+             "cover and progress)"),
     CFG_STRING(S, media_font, "font of the title and artist"),
     CFG_DOUBLE(S, media_title_size, 1, 1000, "title size, px"),
     CFG_DOUBLE(S, media_artist_size, 1, 1000, "artist size, px"),

@@ -659,7 +659,7 @@ static double text_line(cairo_t *cr, PangoLayout *l,
 
 static void draw_text(cairo_t *cr, const struct wallpaper_config *c, int pw,
                       int ph, const struct wp_frame *f) {
-  if (f->media_alpha <= 0 || !f->title)
+  if (!c->media_title || f->media_alpha <= 0 || !f->title)
     return;
   const char *artist = f->artist ? f->artist : "";
   double x, y, w, h;
@@ -1061,7 +1061,8 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   cairo_save(cr);
   if (!full) {
     struct wp_rect r[WP_REGIONS];
-    wp_regions(c, pw, ph, ring || f->nbars > 0, text || f->media_alpha > 0, r);
+    wp_regions(c, pw, ph, ring || f->nbars > 0,
+               text || (c->media_title && f->media_alpha > 0), r);
     for (int i = 0; i < WP_REGIONS; ++i)
       if (r[i].w > 0 && r[i].h > 0)
         cairo_rectangle(cr, r[i].x, r[i].y, r[i].w, r[i].h);
