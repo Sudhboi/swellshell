@@ -35,6 +35,7 @@ static const struct wallpaper_config defaults = {
     .fps_spin = 0,
     .fps_audio = 0,
     .idle_timeout_s = 300,
+    .battery_bar = true,
     .idle_bar_pulse = true,
     .battery_interval_s = 30,
     .background = 0x000000ffu,
@@ -190,6 +191,7 @@ static const struct cfg_field fields[] = {
             "rate)"),
     CFG_INT(S, idle_timeout_s, 0, 86400,
             "freeze after this long without input (0 = never)"),
+    CFG_BOOL(S, battery_bar, "the pulsing battery bar at the top"),
     CFG_BOOL(S, idle_bar_pulse,
              "the battery bar keeps pulsing while idle on an empty workspace "
              "(the rest stays frozen; an open window freezes it too)"),
@@ -414,8 +416,11 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, media_chase_ms, 100, 60000,
             "without a track length, the running line moves a sixth of the "
             "way round in this long"),
-    CFG_COLOR(S, media_line, "the progress line"),
-    CFG_COLOR(S, media_track, "the rest of the hexagon's border"),
+    CFG_COLOR(S, media_line,
+              "the progress line (classic; topo uses the outline's colours)"),
+    CFG_COLOR(S, media_track,
+              "the rest of the hexagon's border (classic; topo: the outline's "
+              "colours, as faint)"),
     CFG_DOUBLE(S, media_line_width, 0, 100,
                "the progress line's width, px (0 = no line)"),
     CFG_BOOL(S, media_art,
@@ -909,7 +914,8 @@ static void arm_idle_fallback(void) {
 
 static void update_animating(void) {
   bool want = w.ws_empty && !w.idle;
-  bool doze = w.ws_empty && w.idle && w.cfg.idle_bar_pulse;
+  bool doze =
+      w.ws_empty && w.idle && w.cfg.battery_bar && w.cfg.idle_bar_pulse;
   if (want == w.animating && doze == w.dozing)
     return;
   bool was_animating = w.animating, was_ticking = wp_ticking();
@@ -1119,7 +1125,8 @@ static void reconfigure(const void *cfg) {
   if (old.idle_timeout_s != w.cfg.idle_timeout_s) {
     setup_idle();
     update_animating();
-  } else if (old.idle_bar_pulse != w.cfg.idle_bar_pulse) {
+  } else if (old.idle_bar_pulse != w.cfg.idle_bar_pulse ||
+             old.battery_bar != w.cfg.battery_bar) {
     update_animating();
   }
   if (old.battery_interval_s != w.cfg.battery_interval_s && w.animating) {

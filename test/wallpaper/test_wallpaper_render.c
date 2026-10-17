@@ -323,6 +323,11 @@ static void test_topo(const char *dir) {
   b = render(c, tf, dir, "wallpaper_topo_text");
   cairo_surface_destroy(b);
 
+  /* The progress line in the outline's colours. */
+  tf.progress = 0.4;
+  b = render(c, tf, dir, "wallpaper_topo_progress");
+  cairo_surface_destroy(b);
+
   test_shows(c, dir, "wallpaper_topo");
 }
 
@@ -365,6 +370,24 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(render(c, f, dir, "wallpaper_100_rest"));
   f = (struct wp_frame){.percent = 3, .level = 1, .angle = M_PI / 7};
   cairo_surface_destroy(render(c, f, dir, "wallpaper_3_turned"));
+
+  /* battery_bar off: nothing in the bar's box. */
+  {
+    struct wallpaper_config nb = *c;
+    nb.battery_bar = false;
+    f = (struct wp_frame){.percent = 100, .level = 1, .angle = 0};
+    cairo_surface_t *on = render(c, f, dir, NULL);
+    cairo_surface_t *off = render(&nb, f, dir, NULL);
+    int lit = 0;
+    for (int y = r[0].y; y < r[0].y + r[0].h; ++y)
+      for (int x = r[0].x; x < r[0].x + r[0].w; ++x) {
+        lit += px(on, x, y) != 0;
+        assert(px(off, x, y) == 0);
+      }
+    assert(lit > 0);
+    cairo_surface_destroy(on);
+    cairo_surface_destroy(off);
+  }
 
   /* The overspeed bloom, speed lines and glow change only the logo tile. */
   f = (struct wp_frame){.percent = 50, .level = 1, .angle = 0};

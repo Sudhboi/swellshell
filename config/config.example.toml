@@ -405,6 +405,8 @@ fps_spin = 0
 fps_audio = 0
 # freeze after this long without input (0 = never)
 idle_timeout_s = 300
+# the pulsing battery bar at the top
+battery_bar = true
 # the battery bar keeps pulsing while idle on an empty workspace (the rest stays frozen; an open window freezes it too)
 idle_bar_pulse = true
 # battery re-read period while animating
@@ -631,9 +633,9 @@ media_interval_ms = 2000
 media_progress = true
 # without a track length, the running line moves a sixth of the way round in this long
 media_chase_ms = 2000
-# the progress line
+# the progress line (classic; topo uses the outline's colours)
 media_line = "#b4b4b4"
-# the rest of the hexagon's border
+# the rest of the hexagon's border (classic; topo: the outline's colours, as faint)
 media_track = "#262626"
 # the progress line's width, px (0 = no line)
 media_line_width = 6.0

@@ -26,6 +26,7 @@ struct wallpaper_config {
   int fps_spin;       /* cap while the pointer speeds the logo up */
   int fps_audio;      /* cap while the visualiser shows */
   int idle_timeout_s; /* 0: never freeze for idleness */
+  bool battery_bar;    /* the battery bar at the top */
   bool idle_bar_pulse; /* idle on an empty workspace: the bar still pulses */
   int battery_interval_s;
   /* colours */

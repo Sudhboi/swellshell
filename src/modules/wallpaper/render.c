@@ -561,6 +561,8 @@ static void draw_edges_smooth(cairo_t *cr, const struct wallpaper_config *c,
  * gap, a pill filled to percent, all at the pulse brightness. */
 static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
                      const struct wp_frame *f) {
+  if (!c->battery_bar)
+    return;
   double k = pw / WP_REF_WIDTH;
   double x, y, w, h;
   bar_box(c, pw, &x, &y, &w, &h);
@@ -820,10 +822,57 @@ static void hex_trace(cairo_t *cr, double hr, double t0, double t1) {
   cairo_line_to(cr, x, y);
 }
 
+/* The glass snowflake's outline colours, lit towards white by its glow. */
+static void topo_edges(const struct wallpaper_config *c,
+                       const struct wp_frame *f, uint32_t edge[3]) {
+  double lit = 0.35 * fmin(fmax(f->glow, 0), 1);
+  edge[0] = mix(c->topo_edge_a, 0xffffffffu, lit);
+  edge[1] = mix(c->topo_edge_mid, 0xffffffffu, lit);
+  edge[2] = mix(c->topo_edge_b, 0xffffffffu, lit);
+}
+
+/* The outline's gradient, top left to bottom right, from cx - e, cy - e to
+ * cx + e, cy + e: each colour's alpha times a, or opaque times a when
+ * solid. */
+static cairo_pattern_t *topo_edge_pattern(const uint32_t edge[3], double cx,
+                                          double cy, double e, double a,
+                                          bool solid) {
+  cairo_pattern_t *p =
+      cairo_pattern_create_linear(cx - e, cy - e, cx + e, cy + e);
+  for (int t = 0; t < 3; ++t)
+    cairo_pattern_add_color_stop_rgba(p, t / 2.0, col_r(edge[t]),
+                                      col_g(edge[t]), col_b(edge[t]),
+                                      (solid ? 1 : col_a(edge[t])) * a);
+  return p;
+}
+
+/* Stroke the hexagon's path (radius r, drawn turned by angle about the
+ * snowflake's centre, the origin) in col, or in the outline's gradient
+ * across it when edge. */
+static void stroke_hex(cairo_t *cr, const uint32_t *edge, uint32_t col,
+                       double angle, double r, double a, bool solid) {
+  if (!edge) {
+    set_rgba(cr, col, a);
+    cairo_stroke(cr);
+    return;
+  }
+  /* The gradient doesn't turn: set it unturned (the path is kept). */
+  cairo_save(cr);
+  cairo_rotate(cr, -angle);
+  cairo_pattern_t *p = topo_edge_pattern(edge, 0, 0, r * M_SQRT1_2, a, solid);
+  cairo_set_source(cr, p);
+  cairo_stroke(cr);
+  cairo_pattern_destroy(p);
+  cairo_restore(cr);
+}
+
 /* What's playing, in the snowflake's hole (resting radius r, now rp): the
  * cover in grey, with a line round its border, clockwise from the top, as
  * far as the track has played. Without a track length a sixth of it runs
- * round. The hexagon, the cover and the line turn with the snowflake. */
+ * round. The hexagon, the cover and the line turn with the snowflake.
+ * Under topo the line takes the outline's colours (fixed to the screen,
+ * spread across the hexagon):
+ * the track as faint as the outline, the progress opaque, like the bar. */
 static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
                      double cy, double r, double rp,
                      const struct wp_frame *f) {
@@ -855,9 +904,13 @@ static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
     cairo_set_line_width(cr, lw);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_MITER);
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_BUTT);
+    bool topo = wp_topo(c);
+    uint32_t edge[3];
+    if (topo)
+      topo_edges(c, f, edge);
     hex_path(cr, hl);
-    set_rgba(cr, c->media_track, alpha);
-    cairo_stroke(cr);
+    stroke_hex(cr, topo ? edge : NULL, c->media_track, f->angle, hr, alpha,
+               false);
     if (f->progress > 0) {
       hex_trace(cr, hl, 0, fmin(f->progress, 1));
     } else if (f->progress < 0) {
@@ -866,8 +919,8 @@ static void draw_hex(cairo_t *cr, const struct wallpaper_config *c, double cx,
       if (t1 > 1)
         hex_trace(cr, hl, 0, t1 - 1);
     }
-    set_rgba(cr, c->media_line, alpha);
-    cairo_stroke(cr);
+    stroke_hex(cr, topo ? edge : NULL, c->media_line, f->angle, hr, alpha,
+               true);
   }
   cairo_restore(cr);
 }
@@ -1003,10 +1056,8 @@ static void draw_glass_logo(cairo_t *cr, const struct wallpaper_config *c,
   }
 
   uint32_t fill = mix(c->topo_logo_fill, c->topo_logo_glow, f->glow);
-  double lit = 0.35 * fmin(fmax(f->glow, 0), 1);
-  uint32_t edge[3] = {mix(c->topo_edge_a, 0xffffffffu, lit),
-                      mix(c->topo_edge_mid, 0xffffffffu, lit),
-                      mix(c->topo_edge_b, 0xffffffffu, lit)};
+  uint32_t edge[3];
+  topo_edges(c, f, edge);
   double ew = c->topo_edge_width * k * s;
   cairo_set_line_join(cr, CAIRO_LINE_JOIN_MITER);
   /* The lambdas alike (all of them, but in a show) in one path. */
@@ -1033,13 +1084,7 @@ static void draw_glass_logo(cairo_t *cr, const struct wallpaper_config *c,
     }
     cairo_fill_preserve(cr);
     /* Over the lambdas' extent (not the bounding box's corners). */
-    double e = 0.6 * r;
-    cairo_pattern_t *p =
-        cairo_pattern_create_linear(cx - e, cy - e, cx + e, cy + e);
-    for (int t = 0; t < 3; ++t)
-      cairo_pattern_add_color_stop_rgba(p, t / 2.0, col_r(edge[t]),
-                                        col_g(edge[t]), col_b(edge[t]),
-                                        col_a(edge[t]) * a);
+    cairo_pattern_t *p = topo_edge_pattern(edge, cx, cy, 0.6 * r, a, false);
     cairo_set_source(cr, p);
     cairo_set_line_width(cr, ew);
     cairo_stroke(cr);
