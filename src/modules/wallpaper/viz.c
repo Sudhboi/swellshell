@@ -174,6 +174,36 @@ void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
     }
 }
 
+void wp_viz_spectrum(const float *bars, int n, float *out) {
+  float raw[WP_SPEC];
+  for (int j = 0; j < WP_SPEC; ++j) {
+    if (n <= 0) {
+      raw[j] = 0;
+      continue;
+    }
+    /* Each band averages the bars it covers, or between two when they are
+     * fewer than the bands. */
+    double a = (double)j * n / WP_SPEC, b = (double)(j + 1) * n / WP_SPEC;
+    if (b - a < 1) {
+      double x = fmin(fmax((a + b) / 2 - 0.5, 0), n - 1);
+      int i = (int)x;
+      int i1 = i + 1 < n ? i + 1 : i;
+      raw[j] = (float)(bars[i] + (bars[i1] - bars[i]) * (x - i));
+      continue;
+    }
+    double sum = 0;
+    int i0 = (int)a, i1 = (int)ceil(b);
+    for (int i = i0; i < i1 && i < n; ++i)
+      sum += bars[i];
+    raw[j] = (float)(sum / (i1 - i0));
+  }
+  /* Softened, so the lines bend rather than kink. */
+  for (int j = 0; j < WP_SPEC; ++j) {
+    float l = raw[j > 0 ? j - 1 : j], r = raw[j + 1 < WP_SPEC ? j + 1 : j];
+    out[j] = fminf(fmaxf((l + 2 * raw[j] + r) / 4, 0), 1);
+  }
+}
+
 /* Move x towards target with time constant up (rising) or down (falling). */
 static double follow(double x, double target, double up, double down,
                      double dt) {

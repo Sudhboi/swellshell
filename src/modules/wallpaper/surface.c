@@ -53,7 +53,7 @@ struct output {
   bool under;
   struct strip map;     /* surface NULL unless under */
   double map_bright;    /* as last drawn, -1: not drawn since a change */
-  bool map_moved;       /* the last map frame had rings or sway */
+  bool map_moved;       /* the last map frame had rings, sway or the spectrum */
   double cpu_bright[2]; /* the cairo map's brightness in each buffer */
   bool shook[2];        /* the cairo map in each buffer is shaken */
   /* The topo snowflake on the GPU, on a subsurface over the logo's box. */
@@ -392,7 +392,7 @@ static void draw(struct output *out, bool full) {
   /* The map fading: the GPU redraws it, or cairo the whole buffer. */
   double bright = wp_map_brightness(&f);
   bool shaking = f.shake_x != 0 || f.shake_y != 0;
-  bool moving = f.nrings > 0 || f.sway > 0 || shaking;
+  bool moving = f.nrings > 0 || f.sway > 0 || f.spec_on || shaking;
   bool map_due = under && (out->map_bright != bright || moving ||
                            out->map_moved || !out->map.surface);
   if (!under && wp_topo(wp_config()) &&

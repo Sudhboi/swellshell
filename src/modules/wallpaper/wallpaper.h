@@ -74,6 +74,17 @@ struct wallpaper_config {
   double topo_ring_speed;  /* ref px/s */
   int topo_ring_ms;        /* each ring's life */
   double topo_sway_px;     /* at full loudness, ref px */
+  /* the spectrum moves them too (GPU only): round the snowflake each
+   * angle bulges by its band (bass at the bottom, the left channel on the
+   * left), out on the map the distance from the snowflake picks the band
+   * (the ripple), and each line brightens by the band of its place along
+   * the colour gradient */
+  double topo_spectrum_px;    /* the bulge at full level, ref px */
+  double topo_spectrum_reach; /* it fades this far past the logo, ref px */
+  double topo_ripple_px;      /* the ripple at full level, ref px */
+  double topo_ripple_span;    /* bass at the logo, treble this far out */
+  double topo_light;          /* x the lines' alpha added at full level */
+  double topo_light_width;    /* x their width added at full level */
   uint32_t topo_text, topo_text_dim; /* title, artist over the map */
   double topo_text_backdrop; /* the dark glow behind them, 0..1 */
   /* bar, reference px */
@@ -179,6 +190,9 @@ struct wallpaper_config {
 
 #define WP_RINGS 8
 #define WP_RINGS_STR "8"
+/* Bands per channel the map's spectrum has (the bars resampled). */
+#define WP_SPEC 32
+#define WP_SPEC_STR "32"
 
 /* One frame's worth of animation state. */
 struct wp_frame {
@@ -220,6 +234,8 @@ struct wp_frame {
     double radius; /* ref px from the logo's centre */
     double size;   /* 0..1, already faded with age */
   } rings[WP_RINGS];
+  bool spec_on;           /* the map moves with spec */
+  float spec[2][WP_SPEC]; /* 0..1, bass first; [0] left, [1] right */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
 };
@@ -357,6 +373,8 @@ struct wp_viz {
  * left and right channel (NULL: silence). */
 void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
                  const float (*db)[WP_VIZ_MAX], double dt);
+/* The n bars (bass first) resampled and smoothed to WP_SPEC bands. */
+void wp_viz_spectrum(const float *bars, int n, float *out);
 /* What the logo reacts to, from the bars. */
 struct wp_react {
   double loud;           /* smoothed mean bar level, 0..1 (for the glow) */

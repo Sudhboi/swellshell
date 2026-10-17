@@ -428,6 +428,14 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   bool waves = wp_topo(&w.cfg) && w.cfg.topo_waves;
   f->sway = waves ? fmin(w.react.loud * w.playing, 1) : 0;
   f->time = w.viz_time;
+  f->spec_on = waves && viz_showing() &&
+               (w.cfg.topo_spectrum_px > 0 || w.cfg.topo_ripple_px > 0 ||
+                w.cfg.topo_light > 0 || w.cfg.topo_light_width > 0);
+  for (int s = 0; s < 2; ++s)
+    if (f->spec_on)
+      wp_viz_spectrum(w.viz.bars[s], w.cfg.viz_bars, f->spec[s]);
+    else
+      memset(f->spec[s], 0, sizeof(f->spec[s]));
   f->nrings = waves ? w.nrings : 0;
   for (int i = 0; i < f->nrings; ++i) {
     double life = 1 - w.rings[i].age * 1000 / w.cfg.topo_ring_ms;

@@ -30,10 +30,11 @@ static struct {
   /* the topo map */
   GLuint map_prog, map_tex;
   unsigned map_grid; /* the grid in map_tex */
-  GLint m_heights, m_gsize, m_cell, m_origin, m_step, m_bh, m_levels,
-      m_every, m_lw, m_iw, m_line0, m_line1, m_line2, m_bg0, m_bg1, m_bright,
-      m_axis0, m_axis, m_rings, m_nrings, m_centre, m_ring_px, m_ring_w,
-      m_sway, m_time, m_k, m_gorigin, m_shake;
+  GLint m_heights, m_gsize, m_cell, m_origin, m_step, m_bh, m_levels, m_every,
+      m_lw, m_iw, m_line0, m_line1, m_line2, m_bg0, m_bg1, m_bright, m_axis0,
+      m_axis, m_rings, m_nrings, m_centre, m_ring_px, m_ring_w, m_sway, m_time,
+      m_k, m_gorigin, m_shake, m_spec, m_spec_on, m_logo_r, m_spec_px,
+      m_spec_reach, m_ripple_px, m_ripple_span, m_light, m_light_w;
   /* the topo snowflake */
   GLuint logo_prog, logo_tex[3]; /* distance field, shadow, glow */
   unsigned logo_ids[3];          /* what's in them */
@@ -122,7 +123,11 @@ static const char *fs_src =
 /* The topo map: the contour lines of the height grid, antialiased by the
  * heights' screen derivative, over the background, dimmed by bright. Rings
  * (centre-relative radius, size) push the lines outwards as they pass; the
- * sway moves them gently. q: the pixel in the cairo buffer's coordinates. */
+ * sway moves them gently. The spectrum (bass first, left then right) bulges
+ * them out round the logo by angle (bass at the bottom, each channel on
+ * its side), ripples them out over the map by distance, and lights each
+ * line by its place along the gradient. q: the pixel in the cairo buffer's
+ * coordinates. */
 static const char *map_fs_src =
     "#version 300 es\n"
     "precision highp float;\n"
@@ -130,8 +135,11 @@ static const char *map_fs_src =
     "uniform highp sampler2D heights;\n"
     "uniform ivec2 gsize;\n"
     "uniform float cell, bh, levels, lw, iw, bright, ring_px, ring_w,\n"
-    "    sway, time, k;\n"
+    "    sway, time, k, logo_r, spec_px, spec_reach, ripple_px, ripple_span,\n"
+    "    light, light_w;\n"
     "uniform int every, nrings;\n"
+    "uniform bool spec_on;\n"
+    "uniform float spec[2 * " WP_SPEC_STR "];\n"
     "uniform vec2 origin, stp, centre, shake;\n"
     "uniform vec2 axis0, axis;\n"
     "uniform float gorigin;\n"
@@ -150,6 +158,17 @@ static const char *map_fs_src =
     "  return mix(mix(at(i), at(i + ivec2(1, 0)), t.x),\n"
     "             mix(at(i + ivec2(0, 1)), at(i + ivec2(1, 1)), t.x), t.y);\n"
     "}\n"
+    "float band(int ch, float t) {\n"
+    "  float x = clamp(t, 0.0, 1.0) * float(" WP_SPEC_STR " - 1);\n"
+    "  int i = min(int(x), " WP_SPEC_STR " - 2);\n"
+    "  float f = x - float(i);\n"
+    "  f = f * f * (3.0 - 2.0 * f);\n"
+    "  int o = ch * " WP_SPEC_STR ";\n"
+    "  return mix(spec[o + i], spec[o + i + 1], f);\n"
+    "}\n"
+    "float bands(float t, float side) {\n"
+    "  return mix(band(0, t), band(1, t), side);\n"
+    "}\n"
     "void main() {\n"
     "  vec2 q = origin + vec2(gl_FragCoord.x, bh - gl_FragCoord.y) * stp -\n"
     "           shake;\n"
@@ -161,6 +180,22 @@ static const char *map_fs_src =
     "    float fall = exp(-u * u) * (1.0 - smoothstep(1.5, 2.1, abs(u)));\n"
     "    p -= d / l * rings[r].y * ring_px * fall;\n"
     "  }\n"
+    "  float x = clamp(dot(q - axis0, axis), 0.0, 1.0);\n"
+    "  float lit = 0.0;\n"
+    "  if (spec_on) {\n"
+    "    vec2 d = q - centre;\n"
+    "    float l = max(length(d), 1e-3);\n"
+    "    float out_ = max(l - logo_r, 0.0);\n"
+    "    float side = smoothstep(-40.0 * k, 40.0 * k, d.x);\n"
+    "    float up = atan(abs(d.x), d.y) / 3.14159265;\n"
+    "    float push = bands(up, side) * spec_px * exp(-out_ / spec_reach);\n"
+    "    float t = out_ / ripple_span;\n"
+    "    push += bands(t, side) * ripple_px * (1.0 - smoothstep(0.85, 1.0, "
+    "t))\n"
+    "            * smoothstep(0.0, 0.08, t);\n"
+    "    p -= d / l * push * smoothstep(0.0, logo_r * 0.6, l);\n"
+    "    lit = (band(0, x) + band(1, x)) * 0.5;\n"
+    "  }\n"
     "  if (sway > 0.0) {\n"
     "    float wl = 420.0 * k;\n"
     "    p += sway * vec2(sin(q.y / wl + time * 1.7),\n"
@@ -171,13 +206,13 @@ static const char *map_fs_src =
     "  float li = floor(v + 0.5);\n"
     "  float dist = abs(v - li) / fw;\n"
     "  bool index = every > 0 && int(li) % every == every / 2;\n"
-    "  float w = lw * (index ? iw : 1.0);\n"
+    "  float w = lw * (index ? iw : 1.0) * (1.0 + light_w * lit);\n"
     "  float cov = li < 0.0 || li >= levels ? 0.0\n"
     "            : clamp(w * 0.5 - dist + 0.5, 0.0, 1.0);\n"
-    "  float x = clamp(dot(q - axis0, axis), 0.0, 1.0);\n"
     "  vec4 lc = x < 0.5 ? mix(line0, line1, x * 2.0)\n"
     "                    : mix(line1, line2, x * 2.0 - 1.0);\n"
-    "  vec3 c = mix(mix(bg0, bg1, x), lc.rgb, cov * lc.a);\n"
+    "  float a = min(lc.a * (1.0 + light * lit), 1.0);\n"
+    "  vec3 c = mix(mix(bg0, bg1, x), lc.rgb, cov * a);\n"
     "  color = vec4(c * bright, 1.0);\n"
     "}\n";
 
@@ -285,6 +320,8 @@ static bool build_program(void) {
   M(every), M(lw), M(iw), M(line0), M(line1), M(line2), M(bg0), M(bg1);
   M(bright), M(rings), M(nrings), M(centre), M(ring_px), M(ring_w);
   M(sway), M(time), M(k), M(gorigin), M(shake), M(axis0), M(axis);
+  M(spec), M(spec_on), M(logo_r), M(spec_px), M(spec_reach), M(ripple_px);
+  M(ripple_span), M(light), M(light_w);
 #undef M
   g.m_step = glGetUniformLocation(g.map_prog, "stp");
 
@@ -629,6 +666,15 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform1f(g.m_ring_w, c->topo_ring_width * k);
   glUniform1f(g.m_sway, f->sway * c->topo_sway_px * k);
   glUniform1f(g.m_time, f->time);
+  glUniform1i(g.m_spec_on, f->spec_on);
+  glUniform1fv(g.m_spec, 2 * WP_SPEC, f->spec[0]);
+  glUniform1f(g.m_logo_r, c->logo_radius * k);
+  glUniform1f(g.m_spec_px, c->topo_spectrum_px * k);
+  glUniform1f(g.m_spec_reach, c->topo_spectrum_reach * k);
+  glUniform1f(g.m_ripple_px, c->topo_ripple_px * k);
+  glUniform1f(g.m_ripple_span, c->topo_ripple_span * k);
+  glUniform1f(g.m_light, c->topo_light);
+  glUniform1f(g.m_light_w, c->topo_light_width);
   glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 

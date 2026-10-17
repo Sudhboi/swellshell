@@ -491,7 +491,7 @@ topo_shadow_px = 22.0
 topo_shadow_alpha = 0.6
 # the map fades out when a window opens on the workspace and back in when the last one goes
 topo_fade_ms = 600
-# the contour lines move with the music instead of the edge visualiser: bass kicks send rings out from the snowflake, loudness sways them (needs viz and a GPU; without one they stay still)
+# the contour lines move with the music instead of the edge visualiser: bass kicks send rings out from the snowflake, loudness sways them, the spectrum bends and lights them (needs viz and a GPU; without one they stay still)
 topo_waves = true
 # how far a ring moves the lines at the hardest kick, px
 topo_ring_px = 28.0
@@ -503,6 +503,18 @@ topo_ring_speed = 1600.0
 topo_ring_ms = 1800
 # how far the lines sway at full loudness, px
 topo_sway_px = 10.0
+# the lines round the snowflake bulge out by the spectrum, each angle by its band (bass at the bottom, left channel on the left), this far at full level, px (0 = off)
+topo_spectrum_px = 120.0
+# how far past the snowflake that bulge fades out, px
+topo_spectrum_reach = 500.0
+# the spectrum ripples out over the map, the distance from the snowflake picking the band: lines move this far at full level, px (0 = off)
+topo_ripple_px = 45.0
+# the ripple's bass sits at the snowflake, its treble this far out, px
+topo_ripple_span = 1400.0
+# the lines brighten with the band of their place along the colour gradient (bass on its left, treble on its right), their alpha gaining up to this x itself (0 = off)
+topo_light = 1.5
+# and widen by up to this x their width
+topo_light_width = 1.0
 # title over the map
 topo_text = "#f0f0f0"
 # artist over the map

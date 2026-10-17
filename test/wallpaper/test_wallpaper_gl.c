@@ -209,6 +209,40 @@ static void check_map(const char *dir) {
   assert(in > 500 && out == 0);
   cairo_surface_destroy(rm);
 
+  /* The spectrum: silent, nothing moves; playing, the lines bulge round the
+   * logo, ripple out on the map and brighten. */
+  struct wp_frame pf = f;
+  pf.spec_on = true;
+  cairo_surface_t *qm = gpu_map(c, &pf, dir, NULL);
+  for (int y = 0; y < H; y += 5)
+    for (int x = 0; x < W; x += 5)
+      assert(abs(lum(gm, x, y) - lum(qm, x, y)) <= 2);
+  cairo_surface_destroy(qm);
+  float bars[2][48];
+  for (int s = 0; s < 2; ++s)
+    for (int i = 0; i < 48; ++i)
+      bars[s][i] = (float)(s ? 0.9 - 0.6 * i / 47.0 : 0.3 + 0.6 * i / 47.0);
+  for (int s = 0; s < 2; ++s)
+    wp_viz_spectrum(bars[s], 48, pf.spec[s]);
+  qm = gpu_map(c, &pf, dir, "wallpaper_gl_map_spectrum");
+  long near_logo = 0, far = 0, lit_gm = 0, lit_qm = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3) {
+      double r = hypot(x - W / 2.0, y - H / 2.0);
+      bool differ = abs(lum(gm, x, y) - lum(qm, x, y)) > 60;
+      if (r < 500)
+        near_logo += differ;
+      else if (r > 700)
+        far += differ;
+      lit_gm += lum(gm, x, y);
+      lit_qm += lum(qm, x, y);
+    }
+  fprintf(stderr,
+          "spectrum: %ld changed near the logo, %ld far, light %ld -> %ld\n",
+          near_logo, far, lit_gm, lit_qm);
+  assert(near_logo > 500 && far > 500 && lit_qm * 10 > lit_gm * 13);
+  cairo_surface_destroy(qm);
+
   /* Shaken: the same lines, moved by whole pixels (the derivatives' pixel
    * pairs shift, so antialiasing may differ a little), and lines along the
    * edges it uncovers, from past them. */

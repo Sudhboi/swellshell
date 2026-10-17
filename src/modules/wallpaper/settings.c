@@ -60,6 +60,12 @@ static const struct wallpaper_config defaults = {
     .topo_ring_speed = 1600,
     .topo_ring_ms = 1800,
     .topo_sway_px = 10,
+    .topo_spectrum_px = 120,
+    .topo_spectrum_reach = 500,
+    .topo_ripple_px = 45,
+    .topo_ripple_span = 1400,
+    .topo_light = 1.5,
+    .topo_light_width = 1,
     .topo_text = 0xf0f0f0ffu,
     .topo_text_dim = 0xb8b8b8ffu,
     .topo_text_backdrop = 0.9,
@@ -261,7 +267,8 @@ static const struct cfg_field fields[] = {
     CFG_BOOL(S, topo_waves,
              "the contour lines move with the music instead of the edge "
              "visualiser: bass kicks send rings out from the snowflake, "
-             "loudness sways them (needs viz and a GPU; without one they "
+             "loudness sways them, the spectrum bends and lights them (needs "
+             "viz and a GPU; without one they "
              "stay still)"),
     CFG_DOUBLE(S, topo_ring_px, 0, 1000,
                "how far a ring moves the lines at the hardest kick, px"),
@@ -270,6 +277,25 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, topo_ring_ms, 1, 60000, "how long a ring lasts"),
     CFG_DOUBLE(S, topo_sway_px, 0, 1000,
                "how far the lines sway at full loudness, px"),
+    CFG_DOUBLE(S, topo_spectrum_px, 0, 1000,
+               "the lines round the snowflake bulge out by the spectrum, each "
+               "angle by its band (bass at the bottom, left channel on the "
+               "left), this far at full level, px (0 = off)"),
+    CFG_DOUBLE(S, topo_spectrum_reach, 1, 10000,
+               "how far past the snowflake that bulge fades out, px"),
+    CFG_DOUBLE(S, topo_ripple_px, 0, 1000,
+               "the spectrum ripples out over the map, the distance from the "
+               "snowflake picking the band: lines move this far at full "
+               "level, px (0 = off)"),
+    CFG_DOUBLE(S, topo_ripple_span, 1, 100000,
+               "the ripple's bass sits at the snowflake, its treble this far "
+               "out, px"),
+    CFG_DOUBLE(S, topo_light, 0, 10,
+               "the lines brighten with the band of their place along the "
+               "colour gradient (bass on its left, treble on its right), "
+               "their alpha gaining up to this x itself (0 = off)"),
+    CFG_DOUBLE(S, topo_light_width, 0, 10,
+               "and widen by up to this x their width"),
     CFG_COLOR(S, topo_text, "title over the map"),
     CFG_COLOR(S, topo_text_dim, "artist over the map"),
     CFG_DOUBLE(S, topo_text_backdrop, 0, 1,
