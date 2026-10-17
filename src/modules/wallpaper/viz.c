@@ -236,6 +236,8 @@ void wp_react_step(struct wp_react *r, const struct wp_viz *v,
     r->pulse = fmax(r->pulse, size); /* a soft kick doesn't cut a big one */
     r->kick = fmax(r->kick, c->react_spin_kick); /* quick hits don't stack */
     r->since_kick = 0;
+    r->kicks++;
+    r->kick_size = size;
     r->held = true;
     r->bass_peak = bass;
   }

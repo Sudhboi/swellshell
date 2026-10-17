@@ -45,6 +45,14 @@ struct output {
   bool showed[2]; /* holds a launch or power-off frame */
   double bar_level, bar_percent; /* of the last commit */
   struct strip strips[2]; /* left, right; surface NULL unless shown */
+  /* The topo style with a GPU: the map on a subsurface under the buffers,
+   * which leave it clear (ARGB). */
+  bool under;
+  struct strip map;     /* surface NULL unless under */
+  double map_bright;    /* as last drawn, -1: not drawn since a change */
+  bool map_moved;       /* the last map frame had rings or sway */
+  double cpu_bright[2]; /* the cairo map's brightness in each buffer */
+  bool shook[2];        /* the cairo map in each buffer is shaken */
   int width, height; /* logical, from configure */
   uint32_t scale120;  /* preferred fractional scale, 0 if unknown */
   bool configured;
@@ -99,17 +107,17 @@ static int output_scale_px(struct output *out, int logical) {
   return logical * (out->so->scale > 0 ? out->so->scale : 1);
 }
 
-static int get_buffer(struct output *out, int pw, int ph) {
+static int get_buffer(struct output *out, int pw, int ph, uint32_t format) {
   for (int i = 0; i < 2; ++i) {
     struct buffer *b = out->bufs[i];
     if (b && b->busy)
       continue;
-    if (b && (b->width != pw || b->height != ph)) {
+    if (b && (b->width != pw || b->height != ph || b->format != format)) {
       buffer_destroy(b);
       b = out->bufs[i] = NULL;
     }
     if (!b) {
-      b = out->bufs[i] = buffer_create(wl->shm, pw, ph, WL_SHM_FORMAT_XRGB8888);
+      b = out->bufs[i] = buffer_create(wl->shm, pw, ph, format);
       if (!b)
         return -1;
       out->stale[i] = true;
@@ -211,6 +219,45 @@ static bool strips_draw(struct output *out, int pw, int ph,
   return true;
 }
 
+/* ---- the GPU's topo map ---- */
+
+static bool gpu_map(void) {
+  const struct wallpaper_config *c = wp_config();
+  return wp_topo(c) && c->viz_gpu && !gl_broken && wl->subcompositor &&
+         wp_gl_init(wl->display);
+}
+
+/* Draw the map over the whole output, under the buffers. False if the GPU
+ * failed. */
+static bool map_draw(struct output *out, int pw, int ph,
+                     const struct wp_frame *f) {
+  struct strip *st = &out->map;
+  bool fractional = out->scale120 && out->viewport;
+  if (!st->surface) {
+    st->surface = wl_compositor_create_surface(wl->compositor);
+    st->sub = wl_subcompositor_get_subsurface(wl->subcompositor, st->surface,
+                                              out->surface);
+    wl_subsurface_place_below(st->sub, out->surface);
+    struct wl_region *none = wl_compositor_create_region(wl->compositor);
+    wl_surface_set_input_region(st->surface, none);
+    wl_region_destroy(none);
+    if (fractional)
+      st->viewport = wp_viewporter_get_viewport(wl->viewporter, st->surface);
+    st->win = wp_gl_win_create(st->surface, pw, ph);
+    if (!st->win)
+      return false;
+  } else if (pw != st->bw || ph != st->bh) {
+    wp_gl_win_resize(st->win, pw, ph);
+  }
+  st->bw = pw;
+  st->bh = ph;
+  if (st->viewport)
+    wp_viewport_set_destination(st->viewport, out->width, out->height);
+  else
+    wl_surface_set_buffer_scale(st->surface, pw / out->width);
+  return wp_gl_map(st->win, wp_config(), pw, ph, f, 0, 0, 1, 1, pw, ph);
+}
+
 const char *wp_surfaces_viz_renderer(void) {
   if (!wp_config()->viz_gpu)
     return "cpu";
@@ -226,7 +273,17 @@ static void draw(struct output *out, bool full) {
   int ph = output_scale_px(out, out->height);
   if (full)
     out->stale[0] = out->stale[1] = true;
-  int i = get_buffer(out, pw, ph);
+  bool under = gpu_map();
+  if (under != out->under) {
+    out->under = under;
+    out->stale[0] = out->stale[1] = true;
+    if (!under)
+      strip_destroy(&out->map);
+  }
+  if (full || out->map.bw != pw || out->map.bh != ph)
+    out->map_bright = -1;
+  int i = get_buffer(out, pw, ph,
+                     under ? WL_SHM_FORMAT_ARGB8888 : WL_SHM_FORMAT_XRGB8888);
   if (i < 0) {
     /* Both busy; one is released by the time the next frame is due. */
     out->retry = true;
@@ -246,10 +303,20 @@ static void draw(struct output *out, bool full) {
   bool showing = wp_showing();
   if (showing || out->showed[i])
     whole = true;
+  /* The map fading: the GPU redraws it, or cairo the whole buffer. */
+  double bright = wp_map_brightness(&f);
+  bool shaking = f.shake_x != 0 || f.shake_y != 0;
+  bool moving = f.nrings > 0 || f.sway > 0 || shaking;
+  bool map_due = under && (out->map_bright != bright || moving ||
+                           out->map_moved || !out->map.surface);
+  if (!under && wp_topo(wp_config()) &&
+      (out->cpu_bright[i] != bright || shaking || out->shook[i]))
+    whole = true;
   /* Dozing, once both buffers hold the frozen frame, only the bar is
    * repainted, and nothing at all while it looks the same (the bar sits at
    * bar_min for much of each period): the timer paces until it changes. */
-  bool bar_only = wp_dozing() && !whole && out->still[0] && out->still[1];
+  bool bar_only = wp_dozing() && !whole && !map_due && out->still[0] &&
+                  out->still[1];
   if (bar_only && fabs(f.level - out->bar_level) < 0.5 / 255 &&
       fabs(f.percent - out->bar_percent) < 0.01) {
     int fps = wp_fps_cap();
@@ -268,7 +335,18 @@ static void draw(struct output *out, bool full) {
   }
   if (!gpu)
     strips_destroy(out);
+  if (map_due) {
+    if (!map_draw(out, pw, ph, &f)) {
+      warn("wallpaper: GPU drawing failed; the map is back on the CPU");
+      gl_broken = true;
+      draw(out, true); /* again, on the CPU */
+      return;
+    }
+    out->map_bright = bright;
+    out->map_moved = moving;
+  }
   struct wp_frame cf = f;
+  cf.map_under = under;
   if (gpu)
     cf.nbars = 0;
   bool ring = cf.nbars > 0 || out->ringed[0] || out->ringed[1];
@@ -289,6 +367,8 @@ static void draw(struct output *out, bool full) {
   out->ringed[i] = cf.nbars > 0;
   out->texted[i] = f.media_alpha > 0;
   out->showed[i] = showing;
+  out->cpu_bright[i] = bright;
+  out->shook[i] = shaking;
   out->still[i] = wp_dozing();
   out->bar_level = f.level;
   out->bar_percent = f.percent;
@@ -388,6 +468,8 @@ static void create_surface(struct output *out) {
 static void destroy_surface(struct output *out) {
   loop_timer_disarm(out->fps_timer);
   strips_destroy(out);
+  strip_destroy(&out->map);
+  out->under = false;
   if (out->surface)
     wl_clear_input(wl, out->surface);
   if (out->frame_cb)

@@ -18,4 +18,12 @@ void nixlogo_draw_ex(cairo_t *cr, double cx, double cy, double r,
                      double angle, uint32_t dark, uint32_t light, double alpha,
                      const double *slide, const double *fade);
 
+/* Append lambda k's outline (k = 0 dark) to the path, in snowflake units:
+ * centred on the origin, outer radius 1, unrotated, moved slide outwards
+ * along its own direction. */
+void nixlogo_lambda_path(cairo_t *cr, int k, double slide);
+/* The unrotated lambda 0's outward direction, a unit vector: slide moves
+ * lambda k along it turned by k x 60 degrees. */
+void nixlogo_lambda_dir(double *dx, double *dy);
+
 #endif

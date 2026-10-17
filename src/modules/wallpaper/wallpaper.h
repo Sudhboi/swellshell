@@ -31,6 +31,36 @@ struct wallpaper_config {
   /* colours */
   uint32_t background, bar, logo, logo_alt;
   uint32_t logo_glow, logo_glow_alt; /* the logo at the fastest spin */
+  /* the look: "topo" (contour lines over a dark gradient, a glass
+   * snowflake) or "classic" (black, the solid snowflake above) */
+  char style[16];
+  uint32_t topo_bg_left, topo_bg_right; /* the background, left to right */
+  uint32_t topo_line_left, topo_line_mid, topo_line_right; /* the lines */
+  int topo_seed;          /* which map */
+  int topo_levels;        /* contour lines from the lowest to the highest */
+  int topo_index_every;   /* every this many'th line is wider, 0 = none */
+  double topo_scale;      /* the hills' size, reference px */
+  double topo_warp;       /* how much the hills meander, 0..2 */
+  double topo_line_width; /* reference px */
+  double topo_index_width; /* x topo_line_width */
+  double topo_line_alpha;
+  uint32_t topo_logo_fill, topo_logo_glow; /* the glass, at rest and lit */
+  /* the outline, from the top left to the bottom right */
+  uint32_t topo_edge_a, topo_edge_mid, topo_edge_b;
+  double topo_edge_width;   /* reference px */
+  double topo_shadow_px;    /* the shadow's offset down and right, ref px */
+  double topo_shadow_alpha; /* 0..1 */
+  int topo_fade_ms; /* the map fading out and in as windows come and go */
+  /* the lines move with the music (GPU only): bass kicks send rings out
+   * from the logo, loudness sways them */
+  bool topo_waves;
+  double topo_ring_px;     /* how far a ring moves the lines, ref px */
+  double topo_ring_width;  /* ref px */
+  double topo_ring_speed;  /* ref px/s */
+  int topo_ring_ms;        /* each ring's life */
+  double topo_sway_px;     /* at full loudness, ref px */
+  uint32_t topo_text, topo_text_dim; /* title, artist over the map */
+  double topo_text_backdrop; /* the dark glow behind them, 0..1 */
   /* bar, reference px */
   double bar_top, bar_width, bar_height, bar_border, bar_gap;
   /* bar pulse: the shape at 50 %; the period scales with the percent */
@@ -132,6 +162,9 @@ struct wallpaper_config {
   uint32_t crt_color;
 };
 
+#define WP_RINGS 8
+#define WP_RINGS_STR "8"
+
 /* One frame's worth of animation state. */
 struct wp_frame {
   double percent; /* bar fill, 0..100 */
@@ -156,6 +189,16 @@ struct wp_frame {
   double flash;          /* a bloom without speed lines, 0..1 */
   double crt_w, crt_h, crt_alpha; /* the CRT's line or dot, reference px */
   double fade;           /* black over everything, 0..1 */
+  double bg_fade;        /* black over the topo map only, 0..1 */
+  double map_fade;       /* the topo map taken away (windows), 0..1 */
+  bool map_under; /* the GPU draws the map under the buffer: leave it clear */
+  double sway;    /* the map's sway, 0..1 (loudness) */
+  double time;    /* s, drives the sway */
+  int nrings;
+  struct wp_ring {
+    double radius; /* ref px from the logo's centre */
+    double size;   /* 0..1, already faded with age */
+  } rings[WP_RINGS];
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
 };
@@ -194,6 +237,27 @@ struct wp_edge_curve {
 };
 void wp_edge_curve(const struct wallpaper_config *c, int pw, int ph,
                    const struct wp_frame *f, int s, struct wp_edge_curve *e);
+/* topo.c: the topo style's background */
+/* The style isn't "classic". */
+bool wp_topo(const struct wallpaper_config *c);
+/* The contour map for a pw x ph buffer (RGB24), cached per size and config;
+ * owned by topo.c. */
+cairo_surface_t *wp_topo_background(const struct wallpaper_config *c, int pw,
+                                    int ph);
+/* The landscape the map's lines are drawn from: nx x ny heights (0..1,
+ * row by row) cell buffer px apart from (origin, origin), past the
+ * buffer's edges all round; id changes with it. */
+struct wp_topo_grid {
+  int nx, ny;
+  double cell, origin;
+  float *h;
+  unsigned id;
+};
+const struct wp_topo_grid *wp_topo_heights(const struct wallpaper_config *c,
+                                           int pw, int ph);
+void wp_topo_finish(void);
+/* How bright the map shows in frame f: windows and shows dim it, 0..1. */
+double wp_map_brightness(const struct wp_frame *f);
 /* Free wp_render()'s cache. */
 void wp_render_finish(void);
 
@@ -229,6 +293,8 @@ struct wp_react {
   double shake;          /* 1 on a big bass hit, easing back to 0 */
   double shake_t;        /* s since the shake started */
   bool held; /* a kick fired and the bass hasn't fallen from its peak */
+  unsigned kicks;   /* counts the kicks */
+  double kick_size; /* the last one's, react_pulse_min..1 */
   double slices[6];      /* per lambda, bass (0) to treble (5), 0..1 */
 };
 /* Follow the bars v by dt seconds. */
@@ -304,6 +370,16 @@ void wp_gl_edge_draw(const struct wallpaper_config *c, int pw, int ph,
 bool wp_gl_edge(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
                 int ph, const struct wp_frame *f, int s, double ox, double oy,
                 double sx, double sy, int bw, int bh);
+
+/* Draw the topo map of a pw x ph cairo buffer into the bound bw x bh
+ * framebuffer, opaque, placed as wp_gl_edge_draw()'s strips. */
+void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
+                    const struct wp_frame *f, double ox, double oy, double sx,
+                    double sy, int bw, int bh);
+/* The same into w, then swap. */
+bool wp_gl_map(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
+               int ph, const struct wp_frame *f, double ox, double oy,
+               double sx, double sy, int bw, int bh);
 
 /* surface.c: one background layer surface per output */
 void wp_surfaces_init(struct swell_wl *wl);

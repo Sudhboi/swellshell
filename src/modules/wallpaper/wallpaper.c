@@ -43,6 +43,38 @@ static const struct wallpaper_config defaults = {
     .logo_alt = 0x111111ffu,
     .logo_glow = 0x5a5a5affu,
     .logo_glow_alt = 0x444444ffu,
+    .style = "topo",
+    .topo_bg_left = 0x000000ffu,
+    .topo_bg_right = 0x000000ffu,
+    .topo_line_left = 0xf5b88affu,
+    .topo_line_mid = 0xa6e3a1ffu,
+    .topo_line_right = 0x89dceaffu,
+    .topo_seed = 7,
+    .topo_levels = 16,
+    .topo_index_every = 4,
+    .topo_scale = 1500,
+    .topo_warp = 0.9,
+    .topo_line_width = 4,
+    .topo_index_width = 1.5,
+    .topo_line_alpha = 0.9,
+    .topo_logo_fill = 0x14151c90u,
+    .topo_logo_glow = 0x22243290u,
+    .topo_edge_a = 0xf5c2e780u,
+    .topo_edge_mid = 0xfab38780u,
+    .topo_edge_b = 0x89b4fa80u,
+    .topo_edge_width = 3,
+    .topo_shadow_px = 22,
+    .topo_shadow_alpha = 0.6,
+    .topo_fade_ms = 600,
+    .topo_waves = true,
+    .topo_ring_px = 28,
+    .topo_ring_width = 160,
+    .topo_ring_speed = 1600,
+    .topo_ring_ms = 1800,
+    .topo_sway_px = 10,
+    .topo_text = 0xf0f0f0ffu,
+    .topo_text_dim = 0xb8b8b8ffu,
+    .topo_text_backdrop = 0.9,
     .bar_top = 10,
     .bar_width = 600,
     .bar_height = 10,
@@ -170,6 +202,59 @@ static const struct cfg_field fields[] = {
               "snowflake at the fastest spin (it brightens with the speed)"),
     CFG_COLOR(S, logo_glow_alt,
               "snowflake at the fastest spin, every other lambda"),
+    CFG_STRING(S, style,
+               "the look: \"topo\" (rainbow contour lines, a glass "
+               "snowflake) or \"classic\" (black, the solid snowflake)"),
+    CFG_COLOR(S, topo_bg_left, "topo background at the left (needs topo)"),
+    CFG_COLOR(S, topo_bg_right, "topo background at the right"),
+    CFG_COLOR(S, topo_line_left, "contour lines at the left"),
+    CFG_COLOR(S, topo_line_mid, "contour lines in the middle"),
+    CFG_COLOR(S, topo_line_right, "contour lines at the right"),
+    CFG_INT(S, topo_seed, 0, 1000000, "which contour map (any number)"),
+    CFG_INT(S, topo_levels, 1, 200,
+            "contour lines from the lowest ground to the highest"),
+    CFG_INT(S, topo_index_every, 0, 200,
+            "every this many'th contour line is wider (0 = none)"),
+    CFG_DOUBLE(S, topo_scale, 10, 100000, "the hills' size, px"),
+    CFG_DOUBLE(S, topo_warp, 0, 2, "how much the hills meander"),
+    CFG_DOUBLE(S, topo_line_width, 0, 100, "contour line width, px"),
+    CFG_DOUBLE(S, topo_index_width, 1, 10,
+               "the wider contour lines' width, x topo_line_width"),
+    CFG_DOUBLE(S, topo_line_alpha, 0, 1, "contour line opacity"),
+    CFG_COLOR(S, topo_logo_fill,
+              "the glass snowflake's fill (its alpha lets the lines show "
+              "through)"),
+    CFG_COLOR(S, topo_logo_glow,
+              "the glass snowflake's fill when it glows (music, spin)"),
+    CFG_COLOR(S, topo_edge_a, "the glass snowflake's outline at the top left"),
+    CFG_COLOR(S, topo_edge_mid,
+              "the glass snowflake's outline across the middle"),
+    CFG_COLOR(S, topo_edge_b,
+              "the glass snowflake's outline at the bottom right"),
+    CFG_DOUBLE(S, topo_edge_width, 0, 100,
+               "the glass snowflake's outline width, px"),
+    CFG_DOUBLE(S, topo_shadow_px, 0, 500,
+               "the glass snowflake's shadow, px down and right"),
+    CFG_DOUBLE(S, topo_shadow_alpha, 0, 1, "the shadow's darkness"),
+    CFG_INT(S, topo_fade_ms, 0, 10000,
+            "the map fades out when a window opens on the workspace and back "
+            "in when the last one goes"),
+    CFG_BOOL(S, topo_waves,
+             "the contour lines move with the music instead of the edge "
+             "visualiser: bass kicks send rings out from the snowflake, "
+             "loudness sways them (needs viz and a GPU; without one they "
+             "stay still)"),
+    CFG_DOUBLE(S, topo_ring_px, 0, 1000,
+               "how far a ring moves the lines at the hardest kick, px"),
+    CFG_DOUBLE(S, topo_ring_width, 1, 10000, "a ring's width, px"),
+    CFG_DOUBLE(S, topo_ring_speed, 1, 100000, "how fast rings spread, px/s"),
+    CFG_INT(S, topo_ring_ms, 1, 60000, "how long a ring lasts"),
+    CFG_DOUBLE(S, topo_sway_px, 0, 1000,
+               "how far the lines sway at full loudness, px"),
+    CFG_COLOR(S, topo_text, "title over the map"),
+    CFG_COLOR(S, topo_text_dim, "artist over the map"),
+    CFG_DOUBLE(S, topo_text_backdrop, 0, 1,
+               "the dark glow behind the title and artist, hiding the lines"),
     CFG_DOUBLE(S, bar_top, 0, 10000,
                "bar top edge (px on a 2880 px wide output; all sizes scale "
                "with the output width)"),
@@ -250,8 +335,9 @@ static const struct cfg_field fields[] = {
                "width of the line along the smooth curve, px (0 = none; needs "
                "viz_edge_smooth)"),
     CFG_BOOL(S, viz_gpu,
-             "draw the smooth edge curve with the GPU (EGL); falls back to "
-             "the CPU if that fails (needs viz_edge_smooth)"),
+             "draw the smooth edge curve (needs viz_edge_smooth) and the "
+             "topo map, with its waves, with the GPU (EGL); falls back to "
+             "the CPU if that fails"),
     CFG_DOUBLE(S, viz_radius, 0, 10,
                "the line the ring's bars grow from, both ways (x "
                "logo_radius)"),
@@ -418,6 +504,16 @@ static struct {
   bool show_black;    /* a power-off's black frame has been drawn */
   struct loop_timer *hold_timer;
 
+  /* the topo map: shown on an empty workspace, faded out under windows */
+  double map_alpha;
+  int64_t map_last; /* ms of its last step */
+  /* rings spreading from bass kicks (topo_waves) */
+  struct {
+    double age, size; /* s; react_pulse_min..1 */
+  } rings[WP_RINGS];
+  int nrings;
+  unsigned kicks_seen;
+
   /* measured frame rate */
   int64_t fps_start;
   int fps_frames;
@@ -442,10 +538,18 @@ static bool show_holding(void) {
 }
 
 bool wp_showing(void) { return w.show != WP_SHOW_NONE; }
+
+static double map_target(void) { return w.ws_empty ? 1 : 0; }
+
+/* The map is fading out or in (only the topo style has one). */
+static bool map_fading(void) {
+  return wp_topo(&w.cfg) && fabs(w.map_alpha - map_target()) > 1e-6;
+}
+
 bool wp_ticking(void) {
   if (show_holding())
     return false;
-  return w.animating || w.dozing || wp_showing();
+  return w.animating || w.dozing || wp_showing() || map_fading();
 }
 
 static bool viz_showing(void) {
@@ -461,7 +565,7 @@ static bool viz_showing(void) {
 static bool reacting(void) {
   if (w.react.loud > 1e-3 || w.react.pulse > 0 || w.react.kick > 0 ||
       w.react.shake > 0 ||
-      w.spin_glow > 1e-3 || w.playing > 1e-3)
+      w.spin_glow > 1e-3 || w.playing > 1e-3 || w.nrings > 0)
     return true;
   for (int k = 0; k < 6; ++k)
     if (w.react.slices[k] > 1e-3)
@@ -472,7 +576,7 @@ static bool reacting(void) {
 /* The resting spin is slow enough for a low rate; a pointer-boosted one
  * and moving bars need more frames to look smooth. */
 int wp_fps_cap(void) {
-  if (wp_showing())
+  if (wp_showing() || map_fading())
     return 0;
   if (w.boost > 0.05)
     return w.cfg.fps_spin;
@@ -535,6 +639,40 @@ static double advance(int64_t now, bool bar_only) {
 
 static double spin_glow(void);
 
+/* Age the rings by dt and start one on a new kick. */
+static void advance_rings(double dt) {
+  int n = 0;
+  for (int i = 0; i < w.nrings; ++i) {
+    w.rings[i].age += dt;
+    if (w.rings[i].age * 1000 < w.cfg.topo_ring_ms)
+      w.rings[n++] = w.rings[i];
+  }
+  w.nrings = n;
+  if (w.react.kicks == w.kicks_seen)
+    return;
+  w.kicks_seen = w.react.kicks;
+  if (!wp_topo(&w.cfg) || !w.cfg.topo_waves)
+    return;
+  if (w.nrings == WP_RINGS) /* the oldest makes way */
+    memmove(w.rings, w.rings + 1, sizeof(w.rings[0]) * --w.nrings);
+  w.rings[w.nrings].age = 0;
+  w.rings[w.nrings++].size = w.react.kick_size;
+}
+
+/* Fade the map towards the workspace's state. */
+static void advance_map(int64_t now) {
+  double dt = fmin(fmax((now - w.map_last) / 1000.0, 0), 0.1);
+  w.map_last = now;
+  double target = map_target();
+  if (w.cfg.topo_fade_ms <= 0 || !wp_topo(&w.cfg)) {
+    w.map_alpha = target;
+    return;
+  }
+  double step = dt * 1000 / w.cfg.topo_fade_ms;
+  w.map_alpha = target > w.map_alpha ? fmin(w.map_alpha + step, target)
+                                     : fmax(w.map_alpha - step, target);
+}
+
 /* Move the bars on by dt towards the latest audio (silence without any). */
 static void advance_viz(double dt) {
   if (dt <= 0)
@@ -549,6 +687,7 @@ static void advance_viz(double dt) {
   wp_viz_step(&w.viz, &w.cfg, fresh ? (const float (*)[WP_VIZ_MAX])db : NULL,
               dt);
   wp_react_step(&w.react, &w.viz, &w.cfg, dt);
+  advance_rings(dt);
   double target = spin_glow();
   double tau = target > w.spin_glow ? 0.3 : 0.8;
   w.spin_glow = target + (w.spin_glow - target) * exp(-dt / tau);
@@ -664,15 +803,28 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->artist = w.artist;
   f->over = over();
   f->dir = w.cfg.spin_speed < 0 ? -1 : 1;
-  f->nbars = viz_showing() ? w.cfg.viz_bars : 0;
+  /* Under the topo style the lines are the visualiser. */
+  f->nbars = viz_showing() && !wp_topo(&w.cfg) ? w.cfg.viz_bars : 0;
   for (int s = 0; s < 2; ++s)
     for (int i = 0; i < f->nbars; ++i)
       f->bars[s][i] = (float)fmin(
           w.viz.bars[s][i] * wp_viz_wobble(&w.cfg, s, i, w.viz_time), 1);
   for (int k = 0; k < 6; ++k)
     f->lambda_fade[k] = 0;
-  f->logo_shrink = f->bar_fade = f->flash = f->fade = 0;
+  f->logo_shrink = f->bar_fade = f->flash = f->fade = f->bg_fade = 0;
   f->crt_w = f->crt_h = f->crt_alpha = 0;
+  advance_map(now);
+  f->map_fade = 1 - w.map_alpha;
+  f->map_under = false;
+  bool waves = wp_topo(&w.cfg) && w.cfg.topo_waves;
+  f->sway = waves ? fmin(w.react.loud * w.playing, 1) : 0;
+  f->time = w.viz_time;
+  f->nrings = waves ? w.nrings : 0;
+  for (int i = 0; i < f->nrings; ++i) {
+    double life = 1 - w.rings[i].age * 1000 / w.cfg.topo_ring_ms;
+    f->rings[i].radius = w.rings[i].age * w.cfg.topo_ring_speed;
+    f->rings[i].size = w.rings[i].size * life * life;
+  }
   show_frame(now, f);
 }
 
@@ -802,6 +954,8 @@ static void update_animating(void) {
   w.boost = 0;
   memset(&w.viz, 0, sizeof(w.viz));
   memset(&w.react, 0, sizeof(w.react));
+  w.kicks_seen = 0;
+  w.nrings = 0;
   w.spin_glow = 0;
   w.playing = 0;
   if (!doze)
@@ -821,7 +975,13 @@ static void on_bus(const struct bus_event *ev, void *data) {
     w.ws_empty = false;
   else
     return;
+  /* The map fades with its own frames, even into a frozen wallpaper. */
+  bool was_ticking = wp_ticking();
+  if (!was_ticking)
+    w.map_last = now_ms();
   update_animating();
+  if (map_fading() && !was_ticking && !wp_animating() && !wp_dozing())
+    wp_surfaces_draw(false); /* and every draw asks for the next frame */
 }
 
 /* ---- idle ---- */
@@ -902,6 +1062,13 @@ const struct swell_input wp_input = {
 
 /* ---- module ---- */
 
+/* An unknown style draws as topo. */
+static void check_style(void) {
+  if (strcmp(w.cfg.style, "topo") && strcmp(w.cfg.style, "classic"))
+    warn("wallpaper: unknown style '%s' (topo or classic); using topo",
+         w.cfg.style);
+}
+
 static bool init(struct swell *sw, const void *cfg) {
   if (!sw->wl->layer_shell) {
     warn("wallpaper: the compositor lacks wlr-layer-shell");
@@ -911,6 +1078,7 @@ static bool init(struct swell *sw, const void *cfg) {
   w.sw = sw;
   w.cfg = *(const struct wallpaper_config *)cfg;
   w.override = -1;
+  check_style();
   wp_audio_init();
   w.battery_timer =
       loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_battery_timer, NULL);
@@ -931,6 +1099,8 @@ static bool init(struct swell *sw, const void *cfg) {
     empty = wm_focused_empty();
   }
   w.ws_empty = empty != 0; /* without a window manager: always animate */
+  w.map_alpha = map_target();
+  w.map_last = now_ms();
   update_animating();
   if (w.cfg.intro && w.animating && intro_first())
     show_start(WP_SHOW_INTRO);
@@ -940,6 +1110,8 @@ static bool init(struct swell *sw, const void *cfg) {
 static void reconfigure(const void *cfg) {
   struct wallpaper_config old = w.cfg;
   w.cfg = *(const struct wallpaper_config *)cfg;
+  if (strcmp(old.style, w.cfg.style))
+    check_style();
   if (old.idle_timeout_s != w.cfg.idle_timeout_s) {
     setup_idle();
     update_animating();

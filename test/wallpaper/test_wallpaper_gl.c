@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 
 #include <GLES3/gl3.h>
@@ -115,13 +116,141 @@ static void check(const struct wallpaper_config *c, const struct wp_frame *f,
   cairo_surface_destroy(ref);
 }
 
+/* The topo map drawn by the GPU, as an RGB24 surface (written as a PNG). */
+static cairo_surface_t *gpu_map(const struct wallpaper_config *c,
+                                const struct wp_frame *f, const char *dir,
+                                const char *name) {
+  GLuint fbo, rb;
+  glGenFramebuffers(1, &fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  glGenRenderbuffers(1, &rb);
+  glBindRenderbuffer(GL_RENDERBUFFER, rb);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, W, H);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                            GL_RENDERBUFFER, rb);
+  assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+  wp_gl_map_draw(c, W, H, f, 0, 0, 1, 1, W, H);
+  unsigned char *px = malloc((size_t)W * H * 4);
+  glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px);
+  assert(glGetError() == GL_NO_ERROR);
+  glDeleteFramebuffers(1, &fbo);
+  glDeleteRenderbuffers(1, &rb);
+  cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_RGB24, W, H);
+  unsigned char *od = cairo_image_surface_get_data(out);
+  int os = cairo_image_surface_get_stride(out);
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      const unsigned char *g = px + ((size_t)(H - 1 - y) * W + x) * 4;
+      *(uint32_t *)(od + y * os + x * 4) = g[0] << 16 | g[1] << 8 | g[2];
+    }
+  cairo_surface_mark_dirty(out);
+  free(px);
+  if (name) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.png", dir, name);
+    assert(cairo_surface_write_to_png(out, path) == CAIRO_STATUS_SUCCESS);
+  }
+  return out;
+}
+
+static int lum(cairo_surface_t *s, int x, int y) {
+  uint32_t v = ((const uint32_t *)(cairo_image_surface_get_data(s) +
+                                   y * cairo_image_surface_get_stride(s)))[x];
+  return ((v >> 16) & 0xff) + ((v >> 8) & 0xff) + (v & 0xff);
+}
+
+/* The GPU's map against cairo's: the same lines (antialiasing and the
+ * smoothing aside); a ring moves them only where it passes; dimmed, black. */
+static void check_map(const char *dir) {
+  const struct wallpaper_config *c = wallpaper_module.defaults;
+  struct wp_frame f = {.percent = 50, .level = 1};
+  cairo_surface_t *gm = gpu_map(c, &f, dir, "wallpaper_gl_map");
+  cairo_surface_t *cm = wp_topo_background(c, W, H);
+  cairo_surface_flush(cm);
+  /* Lit pixels: most of each one's lit pixels have a lit one of the other
+   * close by. */
+  long lit[2] = {0}, near[2] = {0};
+  for (int y = 4; y < H - 4; y += 3)
+    for (int x = 4; x < W - 4; x += 3)
+      for (int s = 0; s < 2; ++s) {
+        cairo_surface_t *a = s ? cm : gm, *b = s ? gm : cm;
+        if (lum(a, x, y) < 120)
+          continue;
+        lit[s]++;
+        bool found = false;
+        for (int dy = -3; dy <= 3 && !found; ++dy)
+          for (int dx = -3; dx <= 3 && !found; ++dx)
+            found = lum(b, x + dx, y + dy) >= 60;
+        near[s] += found;
+      }
+  fprintf(stderr, "map lit gpu %ld (%ld near cpu), cpu %ld (%ld near gpu)\n", lit[0],
+         near[0], lit[1], near[1]);
+  assert(lit[0] > 1000 && lit[1] > 1000);
+  assert(near[0] * 100 > lit[0] * 95 && near[1] * 100 > lit[1] * 90);
+  assert(labs(lit[0] - lit[1]) * 4 < lit[1]);
+
+  /* A ring 600 px out: lines move near it, not near the centre or far out. */
+  struct wp_frame rf = f;
+  rf.nrings = 1;
+  rf.rings[0].radius = 600;
+  rf.rings[0].size = 1;
+  cairo_surface_t *rm = gpu_map(c, &rf, dir, "wallpaper_gl_map_ring");
+  long in = 0, out = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3) {
+      double r = hypot(x - W / 2.0, y - H / 2.0);
+      bool differ = abs(lum(gm, x, y) - lum(rm, x, y)) > 60;
+      if (fabs(r - 600) < 100)
+        in += differ;
+      else if (r < 250 || r > 1100)
+        out += differ;
+    }
+  fprintf(stderr, "ring: %ld changed in its band, %ld away\n", in, out);
+  assert(in > 500 && out == 0);
+  cairo_surface_destroy(rm);
+
+  /* Shaken: the same lines, moved by whole pixels (the derivatives' pixel
+   * pairs shift, so antialiasing may differ a little), and lines along the
+   * edges it uncovers, from past them. */
+  struct wp_frame sf = f;
+  sf.shake_x = 9;
+  sf.shake_y = -6;
+  cairo_surface_t *sm = gpu_map(c, &sf, dir, NULL);
+  long off = 0, n = 0;
+  for (int y = 0; y < H - 6; y += 3)
+    for (int x = 0; x < W - 9; x += 3, ++n)
+      off += abs(lum(sm, x + 9, y) - lum(gm, x, y + 6)) > 90;
+  int edge = 0;
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < 9; ++x)
+      edge += lum(sm, x, y) > 60;
+  fprintf(stderr, "shaken: %ld of %ld off, %d lit in the uncovered edge\n",
+          off, n, edge);
+  assert(off * 1000 < n && edge > 20);
+  cairo_surface_destroy(sm);
+
+  /* Faded out by a window: black. */
+  struct wp_frame df = f;
+  df.map_fade = 1;
+  cairo_surface_t *dm = gpu_map(c, &df, dir, NULL);
+  for (int y = 0; y < H; y += 7)
+    for (int x = 0; x < W; x += 7)
+      assert(lum(dm, x, y) == 0);
+  cairo_surface_destroy(dm);
+  cairo_surface_destroy(gm);
+}
+
 int main(int argc, char **argv) {
   const char *dir = argc > 1 ? argv[1] : ".";
   if (!wp_gl_init(NULL) || !wp_gl_current()) {
     printf("no EGL/GLES 3 device: skipped\n");
     return 77;
   }
-  const struct wallpaper_config *c = wallpaper_module.defaults;
+  /* The classic style; the topo one is tested on its own. */
+  struct wallpaper_config classic =
+      *(const struct wallpaper_config *)wallpaper_module.defaults;
+  strcpy(classic.style, "classic");
+  const struct wallpaper_config *c = &classic;
   struct wp_frame f = {.percent = 50, .level = 1, .nbars = c->viz_bars};
 
   /* Music: louder bass, a wiggle on top, different per side. */
@@ -156,6 +285,8 @@ int main(int argc, char **argv) {
     qf.bars[0][i] = qf.bars[1][i] = 0;
   check(c, &qf, dir, "wallpaper_gl_silent");
 
+  check_map(dir);
   wp_gl_finish();
+  wp_render_finish();
   return 0;
 }

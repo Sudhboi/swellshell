@@ -421,6 +421,70 @@ logo_alt = "#111111"
 logo_glow = "#5a5a5a"
 # snowflake at the fastest spin, every other lambda
 logo_glow_alt = "#444444"
+# the look: "topo" (rainbow contour lines, a glass snowflake) or "classic" (black, the solid snowflake)
+style = "topo"
+# topo background at the left (needs topo)
+topo_bg_left = "#000000"
+# topo background at the right
+topo_bg_right = "#000000"
+# contour lines at the left
+topo_line_left = "#f5b88a"
+# contour lines in the middle
+topo_line_mid = "#a6e3a1"
+# contour lines at the right
+topo_line_right = "#89dcea"
+# which contour map (any number)
+topo_seed = 7
+# contour lines from the lowest ground to the highest
+topo_levels = 16
+# every this many'th contour line is wider (0 = none)
+topo_index_every = 4
+# the hills' size, px
+topo_scale = 1500.0
+# how much the hills meander
+topo_warp = 0.9
+# contour line width, px
+topo_line_width = 4.0
+# the wider contour lines' width, x topo_line_width
+topo_index_width = 1.5
+# contour line opacity
+topo_line_alpha = 0.9
+# the glass snowflake's fill (its alpha lets the lines show through)
+topo_logo_fill = "#14151c90"
+# the glass snowflake's fill when it glows (music, spin)
+topo_logo_glow = "#22243290"
+# the glass snowflake's outline at the top left
+topo_edge_a = "#f5c2e780"
+# the glass snowflake's outline across the middle
+topo_edge_mid = "#fab38780"
+# the glass snowflake's outline at the bottom right
+topo_edge_b = "#89b4fa80"
+# the glass snowflake's outline width, px
+topo_edge_width = 3.0
+# the glass snowflake's shadow, px down and right
+topo_shadow_px = 22.0
+# the shadow's darkness
+topo_shadow_alpha = 0.6
+# the map fades out when a window opens on the workspace and back in when the last one goes
+topo_fade_ms = 600
+# the contour lines move with the music instead of the edge visualiser: bass kicks send rings out from the snowflake, loudness sways them (needs viz and a GPU; without one they stay still)
+topo_waves = true
+# how far a ring moves the lines at the hardest kick, px
+topo_ring_px = 28.0
+# a ring's width, px
+topo_ring_width = 160.0
+# how fast rings spread, px/s
+topo_ring_speed = 1600.0
+# how long a ring lasts
+topo_ring_ms = 1800
+# how far the lines sway at full loudness, px
+topo_sway_px = 10.0
+# title over the map
+topo_text = "#f0f0f0"
+# artist over the map
+topo_text_dim = "#b8b8b8"
+# the dark glow behind the title and artist, hiding the lines
+topo_text_backdrop = 0.9
 # bar top edge (px on a 2880 px wide output; all sizes scale with the output width)
 bar_top = 10.0
 # bar length, px
@@ -497,7 +561,7 @@ viz_edge_fade = 0.1
 viz_edge_rim = "#a0a0a0"
 # width of the line along the smooth curve, px (0 = none; needs viz_edge_smooth)
 viz_edge_rim_width = 3.0
-# draw the smooth edge curve with the GPU (EGL); falls back to the CPU if that fails (needs viz_edge_smooth)
+# draw the smooth edge curve (needs viz_edge_smooth) and the topo map, with its waves, with the GPU (EGL); falls back to the CPU if that fails
 viz_gpu = true
 # the line the ring's bars grow from, both ways (x logo_radius)
 viz_radius = 1.6

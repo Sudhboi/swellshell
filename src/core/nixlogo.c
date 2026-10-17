@@ -34,6 +34,29 @@ static void lambda_dir(double *dx, double *dy) {
   *dy = y / len;
 }
 
+/* Lambda k's outline, slid by slide along (dx, dy). */
+static void lambda_path(cairo_t *cr, int k, double slide, double dx,
+                        double dy) {
+  cairo_save(cr);
+  cairo_rotate(cr, k * PI / 3.0);
+  if (slide != 0)
+    cairo_translate(cr, dx * slide, dy * slide);
+  cairo_move_to(cr, lambda_pts[0][0], lambda_pts[0][1]);
+  for (int i = 1; i < lambda_n; i++)
+    cairo_line_to(cr, lambda_pts[i][0], lambda_pts[i][1]);
+  cairo_close_path(cr);
+  cairo_restore(cr);
+}
+
+void nixlogo_lambda_dir(double *dx, double *dy) { lambda_dir(dx, dy); }
+
+void nixlogo_lambda_path(cairo_t *cr, int k, double slide) {
+  double dx = 0, dy = 0;
+  if (slide != 0)
+    lambda_dir(&dx, &dy);
+  lambda_path(cr, k, slide, dx, dy);
+}
+
 void nixlogo_draw(cairo_t *cr, double cx, double cy, double r, double angle,
                   uint32_t dark, uint32_t light, double alpha) {
   nixlogo_draw_ex(cr, cx, cy, r, angle, dark, light, alpha, NULL, NULL);
@@ -58,15 +81,7 @@ void nixlogo_draw_ex(cairo_t *cr, double cx, double cy, double r,
     /* Even k is dark in the SVG, odd k light. */
     set_rgba(cr, k % 2 ? light : dark, a);
 
-    cairo_save(cr);
-    cairo_rotate(cr, k * PI / 3.0);
-    if (slide && slide[k] != 0)
-      cairo_translate(cr, dx * slide[k], dy * slide[k]);
-    cairo_move_to(cr, lambda_pts[0][0], lambda_pts[0][1]);
-    for (int i = 1; i < lambda_n; i++)
-      cairo_line_to(cr, lambda_pts[i][0], lambda_pts[i][1]);
-    cairo_close_path(cr);
-    cairo_restore(cr);
+    lambda_path(cr, k, slide ? slide[k] : 0, dx, dy);
     cairo_fill(cr);
   }
   cairo_restore(cr);

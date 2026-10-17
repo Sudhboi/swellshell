@@ -5,6 +5,7 @@ wallpaper_src = files(
   'render.c',
   'show.c',
   'surface.c',
+  'topo.c',
   'viz.c',
   'wallpaper.c',
 )

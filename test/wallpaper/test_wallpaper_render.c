@@ -104,7 +104,8 @@ static bool all_black(cairo_surface_t *s) {
 
 /* The launch and power-off animations, written out for a look:
  * wallpaper_intro_*, wallpaper_scatter_*, wallpaper_crt_*. */
-static void test_shows(const struct wallpaper_config *c, const char *dir) {
+static void test_shows(const struct wallpaper_config *c, const char *dir,
+                       const char *prefix) {
   struct wp_frame base = {.percent = 60, .level = 1, .angle = 0.3, .dir = 1};
   cairo_surface_t *plain = render(c, base, dir, NULL);
   char name[64];
@@ -113,13 +114,14 @@ static void test_shows(const struct wallpaper_config *c, const char *dir) {
    * (away from the centre), and the plain frame once it's over. */
   int len = wp_show_ms(c, WP_SHOW_INTRO);
   assert(len > c->intro_ms);
+  snprintf(name, sizeof name, "%s_intro_0", prefix);
   cairo_surface_t *s = render(c, show_at(c, WP_SHOW_INTRO, 0, base), dir,
-                              "wallpaper_intro_0");
+                              name);
   assert(all_black(s));
   cairo_surface_destroy(s);
   for (int i = 1; i <= 5; ++i) {
     double t = len * i / 6.0;
-    snprintf(name, sizeof name, "wallpaper_intro_%d", i);
+    snprintf(name, sizeof name, "%s_intro_%d", prefix, i);
     cairo_surface_destroy(render(c, show_at(c, WP_SHOW_INTRO, t, base), dir,
                                  name));
   }
@@ -137,7 +139,7 @@ static void test_shows(const struct wallpaper_config *c, const char *dir) {
   len = wp_show_ms(c, WP_SHOW_SCATTER);
   for (int i = 0; i <= 5; ++i) {
     double t = len * i / 5.0;
-    snprintf(name, sizeof name, "wallpaper_scatter_%d", i);
+    snprintf(name, sizeof name, "%s_scatter_%d", prefix, i);
     s = render(c, show_at(c, WP_SHOW_SCATTER, t, base), dir, name);
     if (i == 0)
       for (int y = 0; y < H; y += 3)
@@ -159,7 +161,7 @@ static void test_shows(const struct wallpaper_config *c, const char *dir) {
   len = wp_show_ms(c, WP_SHOW_CRT);
   for (int i = 0; i <= 8; ++i) {
     double t = len * i / 8.0;
-    snprintf(name, sizeof name, "wallpaper_crt_%d", i);
+    snprintf(name, sizeof name, "%s_crt_%d", prefix, i);
     s = render(c, show_at(c, WP_SHOW_CRT, t, base), dir, name);
     if (i == 8)
       assert(all_black(s));
@@ -168,7 +170,8 @@ static void test_shows(const struct wallpaper_config *c, const char *dir) {
   struct wp_frame line = show_at(c, WP_SHOW_CRT, len * 0.78, base);
   assert(line.logo_shrink == 1 && line.crt_alpha > 0.9);
   assert(line.crt_w > W * 0.9 && line.crt_h < 10);
-  s = render(c, line, dir, "wallpaper_crt_line");
+  snprintf(name, sizeof name, "%s_crt_line", prefix);
+  s = render(c, line, dir, name);
   assert(px(s, 100, H / 2) != 0 && px(s, W - 100, H / 2) != 0);
   assert(px(s, 100, H / 2 - 60) == 0);
   /* No logo left, only the line and its glow. */
@@ -179,9 +182,157 @@ static void test_shows(const struct wallpaper_config *c, const char *dir) {
   cairo_surface_destroy(plain);
 }
 
+/* The topo style (the default): the contour map under the glass snowflake,
+ * wallpaper_topo_*. */
+static void test_topo(const char *dir) {
+  const struct wallpaper_config *c = wallpaper_module.defaults;
+  assert(wp_topo(c));
+  struct wallpaper_config other = *c;
+  strcpy(other.style, "something");
+  assert(wp_topo(&other)); /* unknown styles draw as topo */
+
+  struct wp_frame f = {.percent = 60, .level = 1, .angle = 0.3};
+  cairo_surface_t *a = render(c, f, dir, "wallpaper_topo_rest");
+  /* Black between the lines; the lines warmer at the left than the
+   * right (the brightest pixel near each side, below the bar). */
+  uint32_t l = 0, r = 0;
+  int black = 0;
+  for (int y = 100; y < H; y += 2)
+    for (int x = 0; x < 200; x += 2) {
+      uint32_t pl = px(a, x, y), pr = px(a, W - 1 - x, y);
+      black += pl == 0;
+      if ((pl >> 8 & 0xff) > (l >> 8 & 0xff))
+        l = pl;
+      if ((pr >> 8 & 0xff) > (r >> 8 & 0xff))
+        r = pr;
+    }
+  assert(black > 1000 && l != 0 && r != 0);
+  assert((l >> 16) > (r >> 16) && (l & 0xff) < (r & 0xff));
+
+  /* The same map again from scratch; another seed, another map. */
+  wp_render_finish();
+  cairo_surface_t *b = render(c, f, dir, NULL);
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      assert(px(a, x, y) == px(b, x, y));
+  cairo_surface_destroy(b);
+  other = *c;
+  other.topo_seed++;
+  b = render(&other, f, dir, NULL);
+  int differ = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      differ += px(a, x, y) != px(b, x, y);
+  assert(differ > 1000);
+  cairo_surface_destroy(b);
+
+  /* Glow and overspeed change only the logo tile. */
+  struct wp_rect rg[WP_REGIONS];
+  wp_regions(c, W, H, false, false, rg);
+  struct wp_frame g = f;
+  g.glow = g.over = 1;
+  g.dir = 1;
+  b = render(c, g, dir, "wallpaper_topo_overspeed");
+  int changed = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      if (px(a, x, y) != px(b, x, y)) {
+        assert(x >= rg[1].x && x < rg[1].x + rg[1].w);
+        assert(y >= rg[1].y && y < rg[1].y + rg[1].h);
+        changed++;
+      }
+  assert(changed > 0);
+  cairo_surface_destroy(b);
+
+  /* A partial repaint over an older frame, pulsed and slid, equals a full
+   * one: the map under the logo, its shadow and the bloom all come back
+   * right. (A shake moves the map too, so it is repainted whole.) */
+  struct wp_frame h = {20, 0.9, 2.0, .glow = 0.5, .over = 0.7, .dir = 1,
+                       .pulse = 1};
+  for (int i = 0; i < 6; ++i)
+    h.slide[i] = c->react_slide_dist;
+  cairo_t *cr = cairo_create(a);
+  wp_render(cr, c, W, H, &h, false, false, false);
+  cairo_destroy(cr);
+  b = render(c, h, dir, "wallpaper_topo_pulsed");
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3)
+      assert(px(a, x, y) == px(b, x, y));
+  cairo_surface_destroy(a);
+  cairo_surface_destroy(b);
+
+  /* Shaken: the lines move with everything else, by whole pixels. */
+  a = render(c, f, dir, NULL);
+  struct wp_frame sh = f;
+  sh.shake_x = 9;
+  sh.shake_y = -6;
+  b = render(c, sh, dir, "wallpaper_topo_shaken");
+  int moved = 0;
+  for (int y = 100; y < H - 100; y += 3)
+    for (int x = 100; x < 1000; x += 3) { /* clear of the logo and bar */
+      assert(px(b, x + 9, y - 6) == px(a, x, y));
+      moved += px(b, x, y) != px(a, x, y);
+    }
+  assert(moved > 100);
+  cairo_surface_destroy(a);
+  cairo_surface_destroy(b);
+
+  /* A window open: the map gone, only the snowflake on black. */
+  a = render(c, f, dir, NULL);
+  struct wp_frame gone = f;
+  gone.map_fade = 1;
+  b = render(c, gone, dir, "wallpaper_topo_window");
+  int lines = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3) {
+      bool logo = x >= rg[1].x && x < rg[1].x + rg[1].w && y >= rg[1].y &&
+                  y < rg[1].y + rg[1].h;
+      bool bar = y < 40;
+      if (!logo && !bar) {
+        assert(px(b, x, y) == 0);
+        lines += px(a, x, y) != 0;
+      }
+    }
+  assert(lines > 1000);
+  cairo_surface_destroy(a);
+  cairo_surface_destroy(b);
+
+  /* The map on the GPU's surface underneath: the buffer stays clear
+   * around the snowflake, and the snowflake's glass lets it through. */
+  cairo_surface_t *u = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, W, H);
+  cr = cairo_create(u);
+  struct wp_frame uf = f;
+  uf.map_under = true;
+  wp_render(cr, c, W, H, &uf, true, false, false);
+  cairo_destroy(cr);
+  cairo_surface_flush(u);
+  const uint32_t *ud = (const uint32_t *)cairo_image_surface_get_data(u);
+  int us = cairo_image_surface_get_stride(u) / 4;
+  assert(ud[100 * us + 100] == 0 && ud[(H - 10) * us + W - 10] == 0);
+  /* inside a lambda's glass: partly see-through */
+  uint32_t glass = ud[(H / 2) * us + W / 2 + (int)(0.6 * c->logo_radius)];
+  int ga = glass >> 24;
+  assert(ga > 0 && ga < 255);
+  cairo_surface_destroy(u);
+
+  /* What's playing, readable over the lines: bright text in a dark glow. */
+  struct wp_frame tf = f;
+  tf.media_alpha = 1;
+  tf.title = "A Fairly Long Song Title";
+  tf.artist = "Some Artist";
+  b = render(c, tf, dir, "wallpaper_topo_text");
+  cairo_surface_destroy(b);
+
+  test_shows(c, dir, "wallpaper_topo");
+}
+
 int main(int argc, char **argv) {
   const char *dir = argc > 1 ? argv[1] : ".";
-  const struct wallpaper_config *c = wallpaper_module.defaults;
+  /* The classic style; the topo one is tested on its own. */
+  struct wallpaper_config classic =
+      *(const struct wallpaper_config *)wallpaper_module.defaults;
+  strcpy(classic.style, "classic");
+  const struct wallpaper_config *c = &classic;
 
   /* The script's pulse: resting at the start, full for the hold around
    * the middle, back to resting at the end. */
@@ -788,7 +939,8 @@ int main(int argc, char **argv) {
   cairo_surface_destroy(cover);
   cairo_surface_destroy(white);
 
-  test_shows(c, dir);
+  test_shows(c, dir, "wallpaper");
+  test_topo(dir);
   wp_render_finish();
   return 0;
 }

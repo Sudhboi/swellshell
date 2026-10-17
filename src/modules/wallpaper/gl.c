@@ -27,6 +27,13 @@ static struct {
       u_dir, u_len, u_fade, u_rw, u_fill, u_rim;
   float *rows;
   int rows_cap;
+  /* the topo map */
+  GLuint map_prog, map_tex;
+  unsigned map_grid; /* the grid in map_tex */
+  GLint m_heights, m_gsize, m_cell, m_origin, m_step, m_bh, m_pw, m_levels,
+      m_every, m_lw, m_iw, m_line0, m_line1, m_line2, m_bg0, m_bg1, m_bright,
+      m_rings, m_nrings, m_centre, m_ring_px, m_ring_w, m_sway, m_time, m_k,
+      m_gorigin, m_shake;
 } g;
 
 static const char *vs_src = "#version 300 es\n"
@@ -105,6 +112,67 @@ static const char *fs_src =
     "  color = o;\n"
     "}\n";
 
+/* The topo map: the contour lines of the height grid, antialiased by the
+ * heights' screen derivative, over the background, dimmed by bright. Rings
+ * (centre-relative radius, size) push the lines outwards as they pass; the
+ * sway moves them gently. q: the pixel in the cairo buffer's coordinates. */
+static const char *map_fs_src =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "precision highp int;\n"
+    "uniform highp sampler2D heights;\n"
+    "uniform ivec2 gsize;\n"
+    "uniform float cell, bh, pw, levels, lw, iw, bright, ring_px, ring_w,\n"
+    "    sway, time, k;\n"
+    "uniform int every, nrings;\n"
+    "uniform vec2 origin, stp, centre, shake;\n"
+    "uniform float gorigin;\n"
+    "uniform vec4 line0, line1, line2;\n"
+    "uniform vec3 bg0, bg1;\n"
+    "uniform vec4 rings[" WP_RINGS_STR "];\n"
+    "out vec4 color;\n"
+    "float at(ivec2 i) {\n"
+    "  return texelFetch(heights, clamp(i, ivec2(0), gsize - 1), 0).r;\n"
+    "}\n"
+    "float height(vec2 p) {\n"
+    "  vec2 g = (p - gorigin) / cell;\n"
+    "  vec2 f = floor(g);\n"
+    "  ivec2 i = ivec2(f);\n"
+    "  vec2 t = g - f;\n"
+    "  return mix(mix(at(i), at(i + ivec2(1, 0)), t.x),\n"
+    "             mix(at(i + ivec2(0, 1)), at(i + ivec2(1, 1)), t.x), t.y);\n"
+    "}\n"
+    "void main() {\n"
+    "  vec2 q = origin + vec2(gl_FragCoord.x, bh - gl_FragCoord.y) * stp -\n"
+    "           shake;\n"
+    "  vec2 p = q;\n"
+    "  for (int r = 0; r < nrings; ++r) {\n"
+    "    vec2 d = q - centre;\n"
+    "    float l = max(length(d), 1e-3);\n"
+    "    float u = (l - rings[r].x) / ring_w;\n"
+    "    float fall = exp(-u * u) * (1.0 - smoothstep(1.5, 2.1, abs(u)));\n"
+    "    p -= d / l * rings[r].y * ring_px * fall;\n"
+    "  }\n"
+    "  if (sway > 0.0) {\n"
+    "    float wl = 420.0 * k;\n"
+    "    p += sway * vec2(sin(q.y / wl + time * 1.7),\n"
+    "                     sin(q.x / wl * 0.8 + time * 2.3 + 1.0));\n"
+    "  }\n"
+    "  float v = height(p) * levels - 0.5;\n"
+    "  float fw = max(length(vec2(dFdx(v), dFdy(v))), 1e-5);\n"
+    "  float li = floor(v + 0.5);\n"
+    "  float dist = abs(v - li) / fw;\n"
+    "  bool index = every > 0 && int(li) % every == every / 2;\n"
+    "  float w = lw * (index ? iw : 1.0);\n"
+    "  float cov = li < 0.0 || li >= levels ? 0.0\n"
+    "            : clamp(w * 0.5 - dist + 0.5, 0.0, 1.0);\n"
+    "  float x = clamp(q.x / pw, 0.0, 1.0);\n"
+    "  vec4 lc = x < 0.5 ? mix(line0, line1, x * 2.0)\n"
+    "                    : mix(line1, line2, x * 2.0 - 1.0);\n"
+    "  vec3 c = mix(mix(bg0, bg1, x), lc.rgb, cov * lc.a);\n"
+    "  color = vec4(c * bright, 1.0);\n"
+    "}\n";
+
 static GLuint compile(GLenum type, const char *src) {
   GLuint sh = glCreateShader(type);
   glShaderSource(sh, 1, &src, NULL);
@@ -143,6 +211,35 @@ static bool build_program(void) {
   U(rw), U(fill), U(rim), U(shake), U(origin);
 #undef U
   g.u_step = glGetUniformLocation(g.prog, "stp");
+
+  GLuint mvs = compile(GL_VERTEX_SHADER, vs_src);
+  GLuint mfs = compile(GL_FRAGMENT_SHADER, map_fs_src);
+  if (!mvs || !mfs)
+    return false;
+  g.map_prog = glCreateProgram();
+  glAttachShader(g.map_prog, mvs);
+  glAttachShader(g.map_prog, mfs);
+  glLinkProgram(g.map_prog);
+  glDeleteShader(mvs);
+  glDeleteShader(mfs);
+  glGetProgramiv(g.map_prog, GL_LINK_STATUS, &ok);
+  if (!ok) {
+    warn("wallpaper: map shader link failed");
+    return false;
+  }
+#define M(n) g.m_##n = glGetUniformLocation(g.map_prog, #n)
+  M(heights), M(gsize), M(cell), M(origin), M(bh), M(pw), M(levels);
+  M(every), M(lw), M(iw), M(line0), M(line1), M(line2), M(bg0), M(bg1);
+  M(bright), M(rings), M(nrings), M(centre), M(ring_px), M(ring_w);
+  M(sway), M(time), M(k), M(gorigin), M(shake);
+#undef M
+  g.m_step = glGetUniformLocation(g.map_prog, "stp");
+  glGenTextures(1, &g.map_tex);
+  glBindTexture(GL_TEXTURE_2D, g.map_tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glGenTextures(1, &g.tex);
   glBindTexture(GL_TEXTURE_2D, g.tex);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -215,6 +312,10 @@ void wp_gl_finish(void) {
         glDeleteTextures(1, &g.tex);
       if (g.prog)
         glDeleteProgram(g.prog);
+      if (g.map_tex)
+        glDeleteTextures(1, &g.map_tex);
+      if (g.map_prog)
+        glDeleteProgram(g.map_prog);
       eglMakeCurrent(g.dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
       eglDestroyContext(g.dpy, g.ctx);
     }
@@ -373,5 +474,74 @@ bool wp_gl_edge(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
   if (!eglMakeCurrent(g.dpy, w->surf, w->surf, g.ctx))
     return false;
   wp_gl_edge_draw(c, pw, ph, f, s, ox, oy, sx, sy, bw, bh);
+  return eglSwapBuffers(g.dpy, w->surf);
+}
+
+static void set_color(GLint u, uint32_t c, double a) {
+  glUniform4f(u, col_r(c), col_g(c), col_b(c), col_a(c) * a);
+}
+
+void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
+                    const struct wp_frame *f, double ox, double oy, double sx,
+                    double sy, int bw, int bh) {
+  glViewport(0, 0, bw, bh);
+  glDisable(GL_BLEND);
+  const struct wp_topo_grid *grid = wp_topo_heights(c, pw, ph);
+  glUseProgram(g.map_prog);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, g.map_tex);
+  if (g.map_grid != grid->id) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, grid->nx, grid->ny, 0, GL_RED,
+                 GL_FLOAT, grid->h);
+    g.map_grid = grid->id;
+  }
+  double k = pw / WP_REF_WIDTH;
+  glUniform1i(g.m_heights, 0);
+  glUniform2i(g.m_gsize, grid->nx, grid->ny);
+  glUniform1f(g.m_cell, grid->cell);
+  glUniform1f(g.m_gorigin, grid->origin);
+  /* As cairo: shaken by whole pixels. */
+  glUniform2f(g.m_shake, round(f->shake_x * k), round(f->shake_y * k));
+  glUniform2f(g.m_origin, ox, oy);
+  glUniform2f(g.m_step, sx, sy);
+  glUniform1f(g.m_bh, bh);
+  glUniform1f(g.m_pw, pw);
+  glUniform1f(g.m_k, k);
+  bool lines = c->topo_line_width > 0 && c->topo_line_alpha > 0;
+  glUniform1f(g.m_levels, lines ? c->topo_levels : 0);
+  glUniform1i(g.m_every, c->topo_index_every);
+  glUniform1f(g.m_lw, c->topo_line_width * k);
+  glUniform1f(g.m_iw, c->topo_index_width);
+  set_color(g.m_line0, c->topo_line_left, c->topo_line_alpha);
+  set_color(g.m_line1, c->topo_line_mid, c->topo_line_alpha);
+  set_color(g.m_line2, c->topo_line_right, c->topo_line_alpha);
+  glUniform3f(g.m_bg0, col_r(c->topo_bg_left), col_g(c->topo_bg_left),
+              col_b(c->topo_bg_left));
+  glUniform3f(g.m_bg1, col_r(c->topo_bg_right), col_g(c->topo_bg_right),
+              col_b(c->topo_bg_right));
+  glUniform1f(g.m_bright, wp_map_brightness(f));
+  float rings[WP_RINGS][4] = {{0}};
+  int n = f->nrings < WP_RINGS ? f->nrings : WP_RINGS;
+  for (int i = 0; i < n; ++i) {
+    rings[i][0] = (float)(f->rings[i].radius * k);
+    rings[i][1] = (float)f->rings[i].size;
+  }
+  glUniform4fv(g.m_rings, WP_RINGS, rings[0]);
+  glUniform1i(g.m_nrings, n);
+  glUniform2f(g.m_centre, pw / 2.0, ph / 2.0);
+  glUniform1f(g.m_ring_px, c->topo_ring_px * k);
+  glUniform1f(g.m_ring_w, c->topo_ring_width * k);
+  glUniform1f(g.m_sway, f->sway * c->topo_sway_px * k);
+  glUniform1f(g.m_time, f->time);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
+bool wp_gl_map(struct wp_gl_win *w, const struct wallpaper_config *c, int pw,
+               int ph, const struct wp_frame *f, double ox, double oy,
+               double sx, double sy, int bw, int bh) {
+  if (!eglMakeCurrent(g.dpy, w->surf, w->surf, g.ctx))
+    return false;
+  wp_gl_map_draw(c, pw, ph, f, ox, oy, sx, sy, bw, bh);
   return eglSwapBuffers(g.dpy, w->surf);
 }

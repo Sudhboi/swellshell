@@ -77,6 +77,7 @@ static void intro(const struct wallpaper_config *c, double t,
     f->glow = fmax(f->glow, flash * flash);
     f->pulse = fmax(f->pulse, pulse * pulse);
   }
+  f->bg_fade = fmax(f->bg_fade, 1 - smoothstep(lock > 0 ? t / lock : 1));
   f->bar_fade = 1 - clamp01(after / 300);
   f->percent *= ease_out_cubic(after / 700);
   f->media_alpha *= clamp01(after / 300);
@@ -98,6 +99,7 @@ static void scatter(const struct wallpaper_config *c, double t,
   }
   f->percent *= 1 - smoothstep(p / 0.75);
   f->bar_fade = fmax(f->bar_fade, clamp01((p - 0.55) / 0.35));
+  f->bg_fade = fmax(f->bg_fade, smoothstep((p - 0.3) / 0.6));
   f->fade = fmax(f->fade, clamp01((p - 0.9) / 0.1));
 }
 
@@ -119,6 +121,7 @@ static void crt(const struct wallpaper_config *c, double t,
   f->angle += f->dir * turn;
   double shrink = ease_in_cubic((p - 0.35) / 0.25);
   f->logo_shrink = fmax(f->logo_shrink, shrink);
+  f->bg_fade = fmax(f->bg_fade, shrink);
   f->over = fmax(f->over, up * up * (1 - shrink));
   f->glow = fmax(f->glow, up);
   /* The line stretches out, then collapses to a dot that fades. */

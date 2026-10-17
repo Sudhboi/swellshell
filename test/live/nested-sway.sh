@@ -5,6 +5,7 @@
 #   ... run build/swell daemon, swell ..., grim, swaymsg ...
 #   test/live/nested-sway.sh stop [DIR]
 #
+# NESTED_RENDERER=gles2 gives clients a real GPU (default pixman).
 # DIR (default: a new mktemp dir under /tmp) holds a short XDG_RUNTIME_DIR,
 # the sway config/log, and the scratch swell socket/config, so nothing touches
 # the user's real sway, swell, or FIFOs.
@@ -25,7 +26,7 @@ CONF
   # The nested compositor must not inherit the outer session.
   env -u WAYLAND_DISPLAY -u SWAYSOCK -u I3SOCK -u NIRI_SOCKET -u DISPLAY \
     XDG_RUNTIME_DIR="$dir/rt" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
-    WLR_RENDERER=pixman sway -c "$dir/sway.conf" >"$dir/sway.log" 2>&1 &
+    WLR_RENDERER=${NESTED_RENDERER:-pixman} sway -c "$dir/sway.conf" >"$dir/sway.log" 2>&1 &
   echo $! >"$dir/sway.pid"
   i=0
   while [ $i -lt 100 ]; do
