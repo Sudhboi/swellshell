@@ -44,6 +44,7 @@ static struct {
   bool saving; /* idle on an empty workspace: the snowflake wanders */
   double saver_mix; /* 0 (centred, all shown) .. 1 (wandering) */
   double saver_t;   /* s along the wander */
+  double drift_t;   /* s along the map's drift */
 
   /* battery: percent is the target, -1 when no battery was found */
   int battery;
@@ -162,13 +163,9 @@ static bool reacting(void) {
 int wp_fps_cap(void) {
   if (wp_showing() || map_fading())
     return 0;
-  if (w.peek) {
-    /* Smooth while it pops, expands or the hold ring runs. */
-    struct peek_values v;
-    peek_values(w.peek, now_ms(), &v);
-    if (v.more)
-      return 0;
-  }
+  /* Smooth while it pops, expands, the hold runs or the lines spring. */
+  if (w.peek && wp_peek_moving(w.peek, now_ms()))
+    return 0;
   if (w.saving)
     return w.cfg.saver_fps;
   if (w.boost > 0.05)
@@ -273,6 +270,12 @@ static void advance_saver(double dt) {
   w.saver_mix = target > w.saver_mix ? fmin(w.saver_mix + step, target)
                                      : fmax(w.saver_mix - step, target);
   w.saver_t = w.saver_mix > 0 ? fmod(w.saver_t + dt, 86400) : 0;
+}
+
+/* The map's drift moves on while animating only; a window stops it. The
+ * x and y rates are 3:4, so wrapping at four x periods doesn't jump. */
+static void advance_drift(double dt) {
+  w.drift_t = fmod(w.drift_t + dt, 4 * w.cfg.topo_drift_s);
 }
 
 static double smooth(double t) { return t * t * (3 - 2 * t); }
@@ -387,10 +390,16 @@ static void show_frame(int64_t now, struct wp_frame *f) {
   f->fade = 1 - u;
 }
 
+/* After the expand the gathered lines spring back out: a damped wave of
+ * this period and decay, still after GATHER_SPRING_MS. */
+#define GATHER_PERIOD_S 0.5
+#define GATHER_DECAY_S 0.18
+#define GATHER_SPRING_MS 1500
+
 void wp_peek_frame(const struct peek *pk, bool ws_empty, int64_t now,
                    struct wp_frame *f) {
   f->peek = NULL;
-  f->peek_pop = f->peek_expand = f->peek_hold = 0;
+  f->peek_pop = f->peek_expand = f->peek_hold = f->peek_gather = 0;
   if (!pk || !ws_empty)
     return;
   struct peek_values v;
@@ -400,6 +409,22 @@ void wp_peek_frame(const struct peek *pk, bool ws_empty, int64_t now,
   f->peek_pop = v.pop;
   f->peek_expand = v.expand;
   f->peek_hold = v.hold;
+  /* Drawn in through the hold (going with the pop if let go early). */
+  double g = smooth(fmin(fmax(v.hold, 0), 1));
+  if (pk->expand_at) {
+    double t = (now - pk->expand_at) / 1000.0;
+    g = now - pk->expand_at < GATHER_SPRING_MS
+            ? cos(2 * M_PI * t / GATHER_PERIOD_S) * exp(-t / GATHER_DECAY_S)
+            : 0;
+  }
+  f->peek_gather = g * v.pop;
+}
+
+bool wp_peek_moving(const struct peek *pk, int64_t now) {
+  struct peek_values v;
+  peek_values(pk, now, &v);
+  return v.more ||
+         (pk->expand_at && now - pk->expand_at < GATHER_SPRING_MS && v.pop > 0);
 }
 
 void wp_frame_at(int64_t now, struct wp_frame *f) {
@@ -408,6 +433,7 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
     advance_viz(dt);
     advance_media(now, dt);
     advance_saver(dt);
+    advance_drift(dt);
   } else if (w.saving) {
     advance_saver(advance(now, false));
   } else if (w.dozing)
@@ -461,6 +487,9 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   bool waves = wp_topo(&w.cfg) && w.cfg.topo_waves;
   f->sway = waves ? fmin(w.react.loud * w.playing, 1) : 0;
   f->time = w.viz_time;
+  double drift = wp_topo(&w.cfg) ? w.cfg.topo_drift_px : 0;
+  f->drift_x = drift * sin(2 * M_PI * w.drift_t / w.cfg.topo_drift_s);
+  f->drift_y = drift * sin(2 * M_PI * w.drift_t * 0.75 / w.cfg.topo_drift_s);
   f->spec_on = waves && viz_showing() &&
                (w.cfg.topo_spectrum_px > 0 || w.cfg.topo_ripple_px > 0 ||
                 w.cfg.topo_light > 0 || w.cfg.topo_light_width > 0);

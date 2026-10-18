@@ -113,14 +113,32 @@ static struct diff compare(const struct wallpaper_config *c, cairo_surface_t *a,
   return d;
 }
 
+/* The box round every pixel where b differs from a. */
+struct box {
+  int x0, y0, x1, y1, n;
+};
+static struct box diff_box(cairo_surface_t *a, cairo_surface_t *b) {
+  struct box r = {W, H, -1, -1, 0};
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x)
+      if (px(a, x, y) != px(b, x, y)) {
+        r.x0 = x < r.x0 ? x : r.x0;
+        r.y0 = y < r.y0 ? y : r.y0;
+        r.x1 = x > r.x1 ? x : r.x1;
+        r.y1 = y > r.y1 ? y : r.y1;
+        r.n++;
+      }
+  return r;
+}
+
 static void test_style(const struct wallpaper_config *c, const char *style) {
   struct info in = info();
   struct wp_frame base = {.percent = 60, .level = 1, .angle = 0.3, .dir = 1};
   cairo_surface_t *plain = render(c, &base, NULL);
   char name[64];
 
-  /* The regions: left and right of the snowflake, the ring round it, the
-   * strip below the title, all inside the buffer and clear of the logo. */
+  /* The regions: left and right of the snowflake, the bottom below the
+   * title, all inside the buffer and clear of the logo. */
   struct wp_rect r[WP_PEEK_REGIONS];
   wp_peek_regions(c, W, H, r);
   double reach = wp_logo_reach(c, W);
@@ -131,15 +149,17 @@ static void test_style(const struct wallpaper_config *c, const char *style) {
   }
   assert(r[0].x + r[0].w < W / 2.0 - reach);
   assert(r[1].x > W / 2.0 + reach);
-  assert(r[3].y > H / 2.0 + reach);
-  double logo = c->logo_radius * (1 + c->react_pulse_scale);
-  assert(r[2].x < W / 2.0 - logo && r[2].x + r[2].w > W / 2.0 + logo);
+  assert(r[2].y > H / 2.0 + reach);
   /* The title's box (wp_regions' text region, without a shake's room) */
   struct wallpaper_config still = *c;
   still.react_shake = false;
   struct wp_rect rr[WP_REGIONS];
   wp_regions(&still, W, H, false, true, rr);
   const struct wp_rect *title = &rr[4];
+  /* The left holds only the clock and date; the stats row and the
+   * workspaces sit at the bottom, below the title. */
+  assert(r[0].y + r[0].h < H / 2.0 + 1.25 * c->peek_clock_size);
+  assert(r[2].y >= title->y + title->h);
 
   /* Popped out: nothing. */
   struct wp_frame f = base;
@@ -150,59 +170,80 @@ static void test_style(const struct wallpaper_config *c, const char *style) {
   assert(d.total == 0);
   cairo_surface_destroy(s);
 
-  /* Compact: the clock on the left, small levels on the right; no strip,
-   * no ring, nothing near the snowflake. */
+  /* Compact: the clock on the left, small levels on the right; nothing at
+   * the bottom, nothing near the snowflake. */
   f.peek_pop = 1;
   snprintf(name, sizeof name, "wallpaper_%s_peek_compact", style);
   s = render(c, &f, name);
   d = compare(c, plain, s);
-  printf("%s compact: %d (left %d, right %d, ring %d, strip %d)\n", style,
-         d.total, d.per[0], d.per[1], d.per[2], d.per[3]);
-  assert(d.per[0] > 2000 && d.per[1] > 100 && d.per[3] == 0 && d.logo == 0);
+  printf("%s compact: %d (left %d, right %d, bottom %d)\n", style, d.total,
+         d.per[0], d.per[1], d.per[2]);
+  assert(d.per[0] > 2000 && d.per[1] > 100 && d.per[2] == 0 && d.logo == 0);
   int compact_right = d.per[1];
-  cairo_surface_destroy(s);
+  cairo_surface_t *compact = s;
 
-  /* Half way through the hold: the ring, just past the snowflake at its
-   * biggest pulse, has traced the right half, clockwise from the top; it
-   * keeps clear of the title. */
-  f.peek_hold = 0.75;
-  s = render(c, &f, NULL);
-  for (int y = title->y; y < title->y + title->h; y += 2)
-    for (int x = title->x; x < title->x + title->w; x += 2)
-      assert(px(s, x, y) == px(plain, x, y));
-  cairo_surface_destroy(s);
+  /* Through the hold a thin line grows under the clock from its left
+   * edge, in the left column only. */
   f.peek_hold = 0.5;
   snprintf(name, sizeof name, "wallpaper_%s_peek_hold", style);
   s = render(c, &f, name);
   d = compare(c, plain, s);
-  assert(d.per[2] > 0);
-  double ring = logo + c->peek_ring_gap;
-  int right = 0, left = 0;
-  for (int y = r[2].y; y < r[2].y + r[2].h; y += 2)
-    for (int x = r[2].x; x < r[2].x + r[2].w; x += 2)
-      if (fabs(hypot(x - W / 2.0, y - H / 2.0) - ring) <
-              2 * c->peek_ring_width &&
-          px(s, x, y) != px(plain, x, y))
-        ++*(x > W / 2 ? &right : &left);
-  printf("%s hold: ring right %d, left %d\n", style, right, left);
-  assert(right > 100 && left < right / 20);
+  assert(d.logo == 0 && d.per[1] == compact_right && d.per[2] == 0);
+  struct box half = diff_box(compact, s);
   cairo_surface_destroy(s);
+  f.peek_hold = 1;
+  s = render(c, &f, NULL);
+  struct box whole = diff_box(compact, s);
+  cairo_surface_destroy(s);
+  cairo_surface_destroy(compact);
+  printf("%s hold: half %d..%d x %d..%d, whole %d..%d x %d..%d\n", style,
+         half.x0, half.x1, half.y0, half.y1, whole.x0, whole.x1, whole.y0,
+         whole.y1);
+  assert(half.n > 0 && whole.n > half.n);
+  assert(in_rect(&r[0], half.x0, half.y0) &&
+         in_rect(&r[0], whole.x1, whole.y1));
+  assert(whole.y1 - whole.y0 <= 2 * c->peek_hold_width + 4);
+  assert(abs(half.x0 - whole.x0) <= 3);
+  double ratio = (double)(half.x1 - half.x0) / (whole.x1 - whole.x0);
+  assert(ratio > 0.4 && ratio < 0.6);
 
-  /* Expanded: everything, the ring gone, bigger levels, the strip. */
+  /* Expanded: everything, the line gone, bigger levels, the bottom. */
   f.peek_hold = 1;
   f.peek_expand = 1;
   snprintf(name, sizeof name, "wallpaper_%s_peek_full", style);
   s = render(c, &f, name);
   d = compare(c, plain, s);
-  printf("%s full: %d (left %d, right %d, ring %d, strip %d), coloured %d\n",
-         style, d.total, d.per[0], d.per[1], d.per[2], d.per[3], d.coloured);
-  assert(d.per[0] > 4000 && d.per[1] > compact_right && d.per[3] > 200);
+  printf("%s full: %d (left %d, right %d, bottom %d), coloured %d\n", style,
+         d.total, d.per[0], d.per[1], d.per[2], d.coloured);
+  assert(d.per[0] > 4000 && d.per[1] > compact_right && d.per[2] > 200);
   assert(d.logo == 0);
   /* The wallpaper's colours: topo's gradient, classic's greys. */
   if (wp_topo(c))
     assert(d.coloured > d.total / 20);
   else
     assert(d.coloured == 0);
+  struct wp_frame unheld = f;
+  unheld.peek_hold = 0;
+  cairo_surface_t *u = render(c, &unheld, NULL);
+  assert(diff_box(s, u).n == 0);
+  cairo_surface_destroy(u);
+
+  /* Without workspaces the bottom still shows the stats row (expanded
+   * only). */
+  struct info nows = in;
+  nows.ws_count = 0;
+  struct wp_frame nf = f;
+  nf.peek = &nows;
+  cairo_surface_t *n = render(c, &nf, NULL);
+  struct diff dn = compare(c, plain, n);
+  assert(dn.per[2] > 200);
+  cairo_surface_destroy(n);
+  nf.peek_expand = 0;
+  nf.peek_hold = 0;
+  n = render(c, &nf, NULL);
+  dn = compare(c, plain, n);
+  assert(dn.per[2] == 0);
+  cairo_surface_destroy(n);
 
   /* Partial frames: drawn over the plain frame it matches the whole one,
    * and drawn plain over it (peek_area) it clears back. */
@@ -255,10 +296,19 @@ static void test_gpu_frame(const struct wallpaper_config *c) {
   struct wp_frame f = base;
   f.peek = &in;
   f.peek_pop = f.peek_expand = 1;
-  f.peek_hold = 0.5; /* (faded by the expand: no ring) */
+  f.peek_hold = 0.5;
   cairo_surface_t *s = render(c, &f, NULL);
   struct diff d = compare(c, plain, s);
-  assert(d.per[0] > 4000 && d.per[2] == 0 && d.logo == 0);
+  assert(d.per[0] > 4000 && d.logo == 0);
+  cairo_surface_destroy(s);
+  /* Under the GPU's map the lines show the hold: no line under the clock. */
+  f.peek_expand = 0;
+  f.peek_hold = 0;
+  s = render(c, &f, NULL);
+  f.peek_hold = 0.5;
+  cairo_surface_t *h = render(c, &f, NULL);
+  assert(diff_box(s, h).n == 0);
+  cairo_surface_destroy(h);
   cairo_surface_destroy(s);
   cairo_surface_destroy(plain);
 }
@@ -292,10 +342,66 @@ static void test_frame(void) {
   assert(f.peek_expand > 0 && f.peek_expand < 1 && f.peek_pop == 1);
 }
 
+/* The topo lines gather in towards the snowflake through the hold, spring
+ * back out (overshooting) after the expand, and settle. */
+static void test_gather(void) {
+  struct info in = info();
+  struct peek pk = {.info = &in,
+                    .pop_ms = 200,
+                    .close_ms = 100,
+                    .expand_ms = 300,
+                    .expand_delay_ms = 2000,
+                    .hold_line = true};
+  struct wp_frame f;
+  memset(&f, 0, sizeof f);
+  f.peek_gather = 0.5; /* stale */
+  wp_peek_frame(NULL, true, 1000, &f);
+  assert(f.peek_gather == 0);
+  peek_open(&pk, true, 1000);
+  wp_peek_frame(&pk, false, 2000, &f);
+  assert(f.peek_gather == 0); /* occupied: the plain wallpaper */
+  /* Rising with the hold (pop done past 200 ms). */
+  double g[3];
+  const int64_t at[3] = {1500, 2000, 3000};
+  for (int i = 0; i < 3; ++i) {
+    wp_peek_frame(&pk, true, at[i] - 1, &f);
+    g[i] = f.peek_gather;
+  }
+  printf("gather through the hold: %.3f %.3f %.3f\n", g[0], g[1], g[2]);
+  assert(0 < g[0] && g[0] < g[1] && g[1] < g[2] && g[2] > 0.99);
+  assert(wp_peek_moving(&pk, 2000));
+  /* The expand: fully in, then out past the rest, then still. */
+  peek_expand(&pk, 3000);
+  wp_peek_frame(&pk, true, 3000, &f);
+  assert(fabs(f.peek_gather - 1) < 1e-9);
+  double low = 1;
+  for (int64_t t = 3100; t <= 3500; t += 10) {
+    wp_peek_frame(&pk, true, t, &f);
+    low = fmin(low, f.peek_gather);
+  }
+  printf("gather overshoot: %.3f\n", low);
+  assert(low < -0.05);
+  assert(wp_peek_moving(&pk, 3800)); /* the expand tween is done by 3300 */
+  wp_peek_frame(&pk, true, 4600, &f);
+  assert(f.peek_gather == 0 && !wp_peek_moving(&pk, 4600));
+  /* Let go before the expand: it goes back out with the closing pop. */
+  struct peek early = pk;
+  peek_open(&early, true, 10000);
+  peek_close(&early, 11000);
+  wp_peek_frame(&early, true, 11000, &f);
+  double before = f.peek_gather;
+  wp_peek_frame(&early, true, 11050, &f);
+  struct peek_values v;
+  peek_values(&early, 11050, &v);
+  assert(before > 0 && f.peek_gather < before && f.peek_gather > 0);
+  assert(fabs(f.peek_gather - before * v.pop) < 1e-9);
+}
+
 int main(int argc, char **argv) {
   dir = argc > 1 ? argv[1] : ".";
   setenv("TZ", "UTC", 1);
   test_frame();
+  test_gather();
   const struct wallpaper_config *topo = wallpaper_module.defaults;
   assert(wp_topo(topo));
   test_style(topo, "topo");

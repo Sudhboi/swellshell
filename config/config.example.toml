@@ -505,6 +505,10 @@ topo_ring_speed = 1600.0
 topo_ring_ms = 1800
 # how far the lines sway at full loudness, px
 topo_sway_px = 10.0
+# at rest the lines drift slowly round a small loop this far, against burn-in, px (0 = still)
+topo_drift_px = 12.0
+# one turn of that drift, s
+topo_drift_s = 90.0
 # the lines round the snowflake bulge out by the spectrum, each angle by its band (bass at the bottom, left channel on the left), this far at full level, px (0 = off)
 topo_spectrum_px = 120.0
 # how far past the snowflake that bulge fades out, px
@@ -517,6 +521,12 @@ topo_ripple_span = 1400.0
 topo_light = 1.5
 # and widen by up to this x their width
 topo_light_width = 1.0
+# how far the lines are drawn in towards the snowflake while the popup key is held (GPU only; on the CPU and in classic a line grows under the clock), px; 0: none
+topo_gather_px = 120.0
+# how far out from the snowflake that pull fades, px
+topo_gather_reach = 700.0
+# meanwhile the lines light up from the screen's corners in to the snowflake, reaching it as the details appear (GPU only; as bright as topo_light / topo_light_width make the spectrum's), 0: off
+topo_hold_light = 1.0
 # title over the map
 topo_text = "#f0f0f0"
 # artist over the map
@@ -715,10 +725,8 @@ peek_row_size = 40.0
 peek_max_width = 720.0
 # how far they slide in from the sides as they show, px
 peek_slide = 60.0
-# the hold ring's distance past the snowflake (at its biggest pulse), px
-peek_ring_gap = 36.0
-# its width, px (0: no ring while holding)
-peek_ring_width = 5.0
+# the line that grows under the clock while the key is held, px (0: none)
+peek_hold_width = 4.0
 # low battery and urgent workspaces
 peek_warn = "#ff5a5a"
 # launch animation: the lambdas fly in and lock together, when the daemon starts on an empty workspace (once per login)

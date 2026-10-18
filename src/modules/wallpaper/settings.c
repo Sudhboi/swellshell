@@ -60,12 +60,17 @@ static const struct wallpaper_config defaults = {
     .topo_ring_speed = 1600,
     .topo_ring_ms = 1800,
     .topo_sway_px = 10,
+    .topo_drift_px = 12,
+    .topo_drift_s = 90,
     .topo_spectrum_px = 120,
     .topo_spectrum_reach = 500,
     .topo_ripple_px = 45,
     .topo_ripple_span = 1400,
     .topo_light = 1.5,
     .topo_light_width = 1,
+    .topo_gather_px = 120,
+    .topo_gather_reach = 700,
+    .topo_hold_light = 1,
     .topo_text = 0xf0f0f0ffu,
     .topo_text_dim = 0xb8b8b8ffu,
     .topo_text_backdrop = 0.9,
@@ -165,8 +170,7 @@ static const struct wallpaper_config defaults = {
     .peek_row_size = 40,
     .peek_max_width = 720,
     .peek_slide = 60,
-    .peek_ring_gap = 36,
-    .peek_ring_width = 5,
+    .peek_hold_width = 4,
     .peek_warn = 0xff5a5affu,
     .intro = true,
     .intro_ms = 1100,
@@ -271,7 +275,7 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, topo_shadow_px, 0, 500,
                "the glass snowflake's shadow, px down and right"),
     CFG_DOUBLE(S, topo_shadow_alpha, 0, 1, "the shadow's darkness"),
-    CFG_INT(S, topo_fade_ms, 0, 10000,
+    CFG_INT(S, topo_fade_ms, 0, 2500,
             "the map fades out when a window opens on the workspace and back "
             "in when the last one goes"),
     CFG_BOOL(S, topo_waves,
@@ -287,6 +291,10 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, topo_ring_ms, 1, 60000, "how long a ring lasts"),
     CFG_DOUBLE(S, topo_sway_px, 0, 1000,
                "how far the lines sway at full loudness, px"),
+    CFG_DOUBLE(S, topo_drift_px, 0, 200,
+               "at rest the lines drift slowly round a small loop this far, "
+               "against burn-in, px (0 = still)"),
+    CFG_DOUBLE(S, topo_drift_s, 1, 3600, "one turn of that drift, s"),
     CFG_DOUBLE(S, topo_spectrum_px, 0, 1000,
                "the lines round the snowflake bulge out by the spectrum, each "
                "angle by its band (bass at the bottom, left channel on the "
@@ -306,6 +314,17 @@ static const struct cfg_field fields[] = {
                "their alpha gaining up to this x itself (0 = off)"),
     CFG_DOUBLE(S, topo_light_width, 0, 10,
                "and widen by up to this x their width"),
+    CFG_DOUBLE(S, topo_gather_px, 0, 10000,
+               "how far the lines are drawn in towards the snowflake while "
+               "the popup key is held (GPU only; on the CPU and in classic a "
+               "line grows under the clock), px; 0: none"),
+    CFG_DOUBLE(S, topo_gather_reach, 1, 100000,
+               "how far out from the snowflake that pull fades, px"),
+    CFG_DOUBLE(S, topo_hold_light, 0, 1,
+               "meanwhile the lines light up from the screen's corners in to "
+               "the snowflake, reaching it as the details appear (GPU only; "
+               "as bright as topo_light / topo_light_width make the "
+               "spectrum's), 0: off"),
     CFG_COLOR(S, topo_text, "title over the map"),
     CFG_COLOR(S, topo_text_dim, "artist over the map"),
     CFG_DOUBLE(S, topo_text_backdrop, 0, 1,
@@ -512,11 +531,9 @@ static const struct cfg_field fields[] = {
                "widest column each side of the snowflake, px"),
     CFG_DOUBLE(S, peek_slide, 0, 10000,
                "how far they slide in from the sides as they show, px"),
-    CFG_DOUBLE(S, peek_ring_gap, 0, 10000,
-               "the hold ring's distance past the snowflake (at its biggest "
-               "pulse), px"),
-    CFG_DOUBLE(S, peek_ring_width, 0, 1000,
-               "its width, px (0: no ring while holding)"),
+    CFG_DOUBLE(S, peek_hold_width, 0, 1000,
+               "the line that grows under the clock while the key is held, "
+               "px (0: none)"),
     CFG_COLOR(S, peek_warn, "low battery and urgent workspaces"),
     CFG_BOOL(S, intro,
              "launch animation: the lambdas fly in and lock together, when "

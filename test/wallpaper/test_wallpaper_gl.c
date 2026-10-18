@@ -10,6 +10,7 @@
 
 #include <GLES3/gl3.h>
 
+#include "info.h"
 #include "module.h"
 #include "wallpaper/wallpaper.h"
 
@@ -159,6 +160,41 @@ static int lum(cairo_surface_t *s, int x, int y) {
   return ((v >> 16) & 0xff) + ((v >> 8) & 0xff) + (v & 0xff);
 }
 
+/* Of b's lit pixels within r0..r1 of the centre, how many (per 1000) have
+ * a lit pixel of a close to where shift(r) (px, out from the centre) puts
+ * them. */
+static long lit_moved(cairo_surface_t *a, cairo_surface_t *b, double r0,
+                      double r1, double (*shift)(double r, double sign),
+                      double sign) {
+  long lit = 0, found = 0;
+  for (int y = 4; y < H - 4; y += 3)
+    for (int x = 4; x < W - 4; x += 3) {
+      double dx = x - W / 2.0, dy = y - H / 2.0, r = hypot(dx, dy);
+      if (r < r0 || r > r1 || lum(b, x, y) < 120)
+        continue;
+      double s = shift(r, sign);
+      int ax = (int)lround(x + dx / r * s), ay = (int)lround(y + dy / r * s);
+      if (ax < 3 || ay < 3 || ax >= W - 3 || ay >= H - 3)
+        continue;
+      lit++;
+      bool hit = false;
+      for (int j = -3; j <= 3 && !hit; ++j)
+        for (int i = -3; i <= 3 && !hit; ++i)
+          hit = lum(a, ax + i, ay + j) >= 60;
+      found += hit;
+    }
+  return lit ? found * 1000 / lit : 0;
+}
+
+/* The gather's pull at r (the shader's, with the default config at the
+ * reference width), times sign; and none. */
+static double gather_shift(double r, double sign) {
+  const struct wallpaper_config *c = wallpaper_module.defaults;
+  return sign * c->topo_gather_px *
+         exp(-fmax(r - c->logo_radius, 0) / c->topo_gather_reach);
+}
+static double no_shift(double r, double sign) { return 0; }
+
 /* The GPU's map against cairo's: the same lines (antialiasing and the
  * smoothing aside); a ring moves them only where it passes; dimmed, black. */
 static void check_map(const char *dir) {
@@ -243,6 +279,73 @@ static void check_map(const char *dir) {
   assert(near_logo > 500 && far > 500 && lit_qm * 10 > lit_gm * 13);
   cairo_surface_destroy(qm);
 
+  /* Held popup key: the lines are drawn in towards the snowflake, most
+   * near it; nothing at 0; out instead while springing back (< 0). */
+  struct wp_frame hf = f;
+  cairo_surface_t *hm = gpu_map(c, &hf, dir, NULL);
+  for (int y = 0; y < H; y += 5)
+    for (int x = 0; x < W; x += 5)
+      assert(abs(lum(gm, x, y) - lum(hm, x, y)) <= 2);
+  cairo_surface_destroy(hm);
+  hf.peek_gather = 1;
+  hm = gpu_map(c, &hf, dir, "wallpaper_gl_map_gather");
+  hf.peek_gather = -1;
+  cairo_surface_t *om = gpu_map(c, &hf, dir, NULL);
+  /* Each lit pixel came from where the pull says, near the logo (most
+   * pull) and far out (less); not from where it was. */
+  long near_in = lit_moved(gm, hm, 330, 800, gather_shift, 1);
+  long near_still = lit_moved(gm, hm, 330, 800, no_shift, 0);
+  long far_in = lit_moved(gm, hm, 1100, 1600, gather_shift, 1);
+  long near_out = lit_moved(gm, om, 330, 800, gather_shift, -1);
+  fprintf(stderr,
+          "gather: lit from the pulled place %ld/1000 near, %ld far, %ld "
+          "springing out; from the same place %ld\n",
+          near_in, far_in, near_out, near_still);
+  assert(near_in > 900 && far_in > 900 && near_out > 900);
+  assert(near_still < 500);
+  cairo_surface_destroy(om);
+  cairo_surface_destroy(hm);
+
+  /* Through the hold the lines light up from the screen's corners inward:
+   * outside the front (corner to snowflake as the hold runs) brighter,
+   * inside it as before; none before the hold or once expanded. */
+  struct info pin;
+  memset(&pin, 0, sizeof pin);
+  struct wp_frame lf = f;
+  lf.peek = &pin;
+  lf.peek_pop = 1;
+  cairo_surface_t *lm = gpu_map(c, &lf, dir, NULL);
+  for (int y = 0; y < H; y += 5)
+    for (int x = 0; x < W; x += 5)
+      assert(abs(lum(gm, x, y) - lum(lm, x, y)) <= 2);
+  cairo_surface_destroy(lm);
+  lf.peek_hold = 0.5;
+  lm = gpu_map(c, &lf, dir, "wallpaper_gl_map_hold_light");
+  double rmax = hypot(W / 2.0, H / 2.0);
+  double front = c->logo_radius + (rmax - c->logo_radius) * 0.5;
+  long out_a = 0, out_b = 0, inner_diff = 0;
+  for (int y = 0; y < H; y += 2)
+    for (int x = 0; x < W; x += 2) {
+      double r = hypot(x - W / 2.0, y - H / 2.0);
+      if (r > front + 150) {
+        out_a += lum(gm, x, y);
+        out_b += lum(lm, x, y);
+      } else if (r < front - 150) {
+        inner_diff += abs(lum(gm, x, y) - lum(lm, x, y)) > 2;
+      }
+    }
+  fprintf(stderr,
+          "hold light: outside the front %ld -> %ld, %ld changed inside\n",
+          out_a, out_b, inner_diff);
+  assert(out_b * 10 > out_a * 13 && inner_diff == 0);
+  cairo_surface_destroy(lm);
+  lf.peek_expand = 1;
+  lm = gpu_map(c, &lf, dir, NULL);
+  for (int y = 0; y < H; y += 5)
+    for (int x = 0; x < W; x += 5)
+      assert(abs(lum(gm, x, y) - lum(lm, x, y)) <= 2);
+  cairo_surface_destroy(lm);
+
   /* Shaken: the same lines, moved by whole pixels (the derivatives' pixel
    * pairs shift, so antialiasing may differ a little), and lines along the
    * edges it uncovers, from past them. */
@@ -262,6 +365,49 @@ static void check_map(const char *dir) {
           off, n, edge);
   assert(off * 1000 < n && edge > 20);
   cairo_surface_destroy(sm);
+
+  /* Drifting at rest: the GPU's lines moved by about the drift (it bends a
+   * little), not left where they were; cairo's by it in whole pixels. */
+  struct wp_frame wf = f;
+  double k = W / WP_REF_WIDTH;
+  wf.drift_x = 10 / k;
+  wf.drift_y = -6 / k;
+  cairo_surface_t *wm = gpu_map(c, &wf, dir, "wallpaper_gl_map_drift");
+  long lit_w = 0, moved = 0, stayed = 0;
+  for (int y = 16; y < H - 16; y += 3)
+    for (int x = 16; x < W - 16; x += 3) {
+      if (lum(wm, x, y) < 120)
+        continue;
+      lit_w++;
+      bool from = false, same = false;
+      for (int j = -4; j <= 4; ++j)
+        for (int i = -4; i <= 4; ++i) {
+          from |= lum(gm, x - 10 + i, y + 6 + j) >= 60;
+          same |= abs(i) <= 1 && abs(j) <= 1 && lum(gm, x + i, y + j) >= 60;
+        }
+      moved += from;
+      stayed += same;
+    }
+  fprintf(stderr,
+          "drift gpu: %ld lit, %ld from the drifted place, %ld from "
+          "the same\n",
+          lit_w, moved, stayed);
+  assert(moved * 100 > lit_w * 95 && stayed * 2 < lit_w);
+  cairo_surface_destroy(wm);
+  cairo_surface_t *c0 = render(c, &f), *cd = render(c, &wf);
+  long cpu_n = 0, cpu_off = 0;
+  for (int y = 16; y < H - 16; y += 3)
+    for (int x = 16; x < W - 16; x += 3) {
+      double r = hypot(x - W / 2.0, y - H / 2.0);
+      if (r < c->logo_radius * k * 1.6 || y < H / 8)
+        continue; /* the snowflake and the bar stay */
+      cpu_n++;
+      cpu_off += lum(cd, x + 10, y - 6) != lum(c0, x, y);
+    }
+  fprintf(stderr, "drift cpu: %ld of %ld off\n", cpu_off, cpu_n);
+  assert(cpu_off * 1000 < cpu_n);
+  cairo_surface_destroy(c0);
+  cairo_surface_destroy(cd);
 
   /* Faded out by a window: black. */
   struct wp_frame df = f;

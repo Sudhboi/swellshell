@@ -75,6 +75,9 @@ struct wallpaper_config {
   double topo_ring_speed;  /* ref px/s */
   int topo_ring_ms;        /* each ring's life */
   double topo_sway_px;     /* at full loudness, ref px */
+  /* at rest they drift slowly round a small loop (against burn-in) */
+  double topo_drift_px; /* ref px, 0: still */
+  double topo_drift_s;  /* the loop's x period, s (y takes 4/3 of it) */
   /* the spectrum moves them too (GPU only): round the snowflake each
    * angle bulges by its band (bass at the bottom, the left channel on the
    * left), out on the map the distance from the snowflake picks the band
@@ -86,6 +89,9 @@ struct wallpaper_config {
   double topo_ripple_span;    /* bass at the logo, treble this far out */
   double topo_light;          /* x the lines' alpha added at full level */
   double topo_light_width;    /* x their width added at full level */
+  /* the popup key held, they're drawn in towards the snowflake (GPU only) */
+  double topo_gather_px, topo_gather_reach;
+  double topo_hold_light; /* and light up from the edges in, x topo_light */
   uint32_t topo_text, topo_text_dim; /* title, artist over the map */
   double topo_text_backdrop; /* the dark glow behind them, 0..1 */
   /* bar, reference px */
@@ -173,13 +179,14 @@ struct wallpaper_config {
   int media_fade_ms;
   double media_paused_alpha;
   /* the popup's contents, drawn here instead of its panel on an empty
-   * workspace: the clock and stats left of the snowflake, the levels right
-   * of it, the workspaces at the bottom, the hold traced round it */
+   * workspace: the clock left of the snowflake, the levels right of it,
+   * the stats and workspaces at the bottom, the hold traced under the
+   * clock */
   char peek_font[128];
   double peek_clock_size, peek_seconds_size, peek_date_size, peek_row_size;
   double peek_max_width; /* of each side's column, reference px */
   double peek_slide;     /* in from the screen's sides, reference px */
-  double peek_ring_gap, peek_ring_width; /* the hold ring, reference px */
+  double peek_hold_width; /* the line under the clock while held, ref px */
   uint32_t peek_warn;                    /* low battery, urgent workspaces */
   /* the launch animation: the lambdas fly in and lock together, once per
    * login session, when the daemon starts on an empty workspace */
@@ -239,6 +246,7 @@ struct wp_frame {
   bool logo_gpu, logo_box;
   double sway;    /* the map's sway, 0..1 (loudness) */
   double time;    /* s, drives the sway */
+  double drift_x, drift_y; /* the map's slow drift at rest, ref px */
   int nrings;
   struct wp_ring {
     double radius; /* ref px from the logo's centre */
@@ -250,6 +258,9 @@ struct wp_frame {
   const struct info *peek;
   int peek_low_pct; /* battery at or below this (discharging) warns */
   double peek_pop, peek_expand, peek_hold; /* peek_values(), 0..1 */
+  /* the topo lines drawn in towards the snowflake by this share of
+   * topo_gather_px through the hold, -1..1 (< 0: out, springing back) */
+  double peek_gather;
   bool peek_area; /* repaint wp_peek_regions() too (a buffer holds them) */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
@@ -320,9 +331,9 @@ void wp_topo_finish(void);
 /* How bright the map shows in frame f: windows and shows dim it, 0..1. */
 double wp_map_brightness(const struct wp_frame *f);
 /* render_peek.c: the buffer areas the popup's contents can cover in a pw x
- * ph buffer: the left column (clock, date, network, stats), the right one
- * (levels), the hold ring's box round the snowflake, the workspace strip. */
-#define WP_PEEK_REGIONS 4
+ * ph buffer: the left column (clock, date, the hold line), the right one
+ * (levels), the bottom (stats row, workspace strip). */
+#define WP_PEEK_REGIONS 3
 void wp_peek_regions(const struct wallpaper_config *c, int pw, int ph,
                      struct wp_rect out[WP_PEEK_REGIONS]);
 /* Free wp_render()'s cache. */
@@ -568,6 +579,9 @@ int wp_fps_cap(void);
 struct peek;
 void wp_peek_frame(const struct peek *pk, bool ws_empty, int64_t now,
                    struct wp_frame *f);
+/* pk's frames still change at now (it pops, expands, the hold runs, or
+ * the lines spring back). */
+bool wp_peek_moving(const struct peek *pk, int64_t now);
 /* Advance the animation to now (monotonic ms) and give the frame. */
 void wp_frame_at(int64_t now, struct wp_frame *f);
 /* A frame was presented (for the fps count in `status`). */

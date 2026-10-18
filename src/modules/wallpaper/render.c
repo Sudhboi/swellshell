@@ -361,10 +361,12 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
     cairo_set_source_rgba(cr, 0, 0, 0, 0);
     cairo_paint(cr);
   } else if (topo) {
-    /* The lines shake with everything else; the edge stretches in. */
+    /* The lines shake with everything else and drift at rest; the edge
+     * stretches in. */
     double k0 = pw / WP_REF_WIDTH;
     cairo_set_source_surface(cr, wp_topo_background(c, pw, ph),
-                             round(f->shake_x * k0), round(f->shake_y * k0));
+                             round(f->shake_x * k0) + round(f->drift_x * k0),
+                             round(f->shake_y * k0) + round(f->drift_y * k0));
     cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
     cairo_paint(cr);
   } else {

@@ -53,9 +53,12 @@ struct output {
   bool under;
   struct strip map;     /* surface NULL unless under */
   double map_bright;    /* as last drawn, -1: not drawn since a change */
-  bool map_moved;       /* the last map frame had rings, sway or the spectrum */
+  bool map_moved;       /* the last map frame had rings, sway, the spectrum or a
+                           gather */
   double cpu_bright[2]; /* the cairo map's brightness in each buffer */
   bool shook[2];        /* the cairo map in each buffer is shaken */
+  double map_drift[2];  /* the GPU map's drift as last drawn, px */
+  long cpu_drift[2][2]; /* the cairo map's in each buffer, whole px */
   /* The topo snowflake on the GPU, on a subsurface over the logo's box. */
   bool lgpu;            /* the GPU draws it (but in shows and slides) */
   struct strip logo;    /* surface NULL until the GPU first draws it */
@@ -394,11 +397,25 @@ static void draw(struct output *out, bool full) {
   /* The map fading: the GPU redraws it, or cairo the whole buffer. */
   double bright = wp_map_brightness(&f);
   bool shaking = f.shake_x != 0 || f.shake_y != 0;
-  bool moving = f.nrings > 0 || f.sway > 0 || f.spec_on || shaking;
-  bool map_due = under && (out->map_bright != bright || moving ||
+  /* The held popup key gathers the lines in and lights them. */
+  bool gathering = (f.peek_gather != 0 && wp_config()->topo_gather_px > 0) ||
+                   (f.peek && f.peek_hold > 0 && f.peek_pop > 0 &&
+                    f.peek_expand < 1 && wp_config()->topo_hold_light > 0);
+  bool moving = f.nrings > 0 || f.sway > 0 || f.spec_on || shaking || gathering;
+  /* The slow drift at rest redraws the GPU's map only once it has moved a
+   * quarter pixel (its bend moves the lines up to 1.3 times the drift), and
+   * cairo's whole buffer once it has moved a whole one. */
+  double dk = pw / WP_REF_WIDTH;
+  double dx = f.drift_x * dk, dy = f.drift_y * dk;
+  bool drifted =
+      1.3 * fmax(fabs(dx - out->map_drift[0]), fabs(dy - out->map_drift[1])) >=
+      0.25;
+  long cdx = lround(dx), cdy = lround(dy);
+  bool map_due = under && (out->map_bright != bright || moving || drifted ||
                            out->map_moved || !out->map.surface);
   if (!under && wp_topo(wp_config()) &&
-      (out->cpu_bright[i] != bright || shaking || out->shook[i]))
+      (out->cpu_bright[i] != bright || shaking || out->shook[i] ||
+       cdx != out->cpu_drift[i][0] || cdy != out->cpu_drift[i][1]))
     whole = true;
   /* The GPU's snowflake, but in shows and while the lambdas slide (the
    * CPU draws those, and the GPU's surface shows nothing). */
@@ -452,6 +469,8 @@ static void draw(struct output *out, bool full) {
     }
     out->map_bright = bright;
     out->map_moved = moving;
+    out->map_drift[0] = dx;
+    out->map_drift[1] = dy;
   }
   if (logo_due) {
     if (!logo_draw(out, pw, ph, gl_logo ? &f : NULL)) {
@@ -516,6 +535,8 @@ static void draw(struct output *out, bool full) {
   out->showed[i] = showing;
   out->cpu_bright[i] = bright;
   out->shook[i] = shaking;
+  out->cpu_drift[i][0] = cdx;
+  out->cpu_drift[i][1] = cdy;
   out->still[i] = wp_dozing();
   out->logoed[i] = !cf.logo_gpu;
   out->streaked[i] = streaking;
