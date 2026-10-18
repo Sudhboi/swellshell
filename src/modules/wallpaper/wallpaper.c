@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "anim.h"
+#include "backdrop.h"
 #include "battery.h"
 #include "bus.h"
 #include "cursor-shape-v1-client-protocol.h"
@@ -762,6 +763,30 @@ static const struct peek_sink peek_sink = {
     .update = peek_update,
 };
 
+/* ---- the map under the overview ---- */
+
+/* The topo map without its motion, at half the buffer's resolution (the
+ * overview dims it anyway; a quarter of the first draw's cost), kept in
+ * topo.c's cache for the next open. */
+static bool backdrop_paint(cairo_t *cr, int lw, int lh, double scale) {
+  if (!wp_topo(&w.cfg) || lw <= 0 || lh <= 0)
+    return false;
+  int pw = (int)lround(lw * scale / 2), ph = (int)lround(lh * scale / 2);
+  if (pw < 1 || ph < 1)
+    return false;
+  cairo_save(cr);
+  cairo_scale(cr, (double)lw / pw, (double)lh / ph);
+  cairo_set_source_surface(cr, wp_topo_background(&w.cfg, pw, ph), 0, 0);
+  cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+  cairo_paint(cr);
+  cairo_restore(cr);
+  return true;
+}
+
+static const struct backdrop_source backdrop_source = {
+    .paint = backdrop_paint,
+};
+
 /* ---- idle ---- */
 
 static void idled(void *data, struct ext_idle_notification_v1 *n) {
@@ -967,6 +992,7 @@ bool wp_init(struct swell *sw, const void *cfg) {
 
   bus_subscribe(on_bus, NULL);
   peek_set_sink(&peek_sink);
+  backdrop_set_source(&backdrop_source);
   int empty = wm_focused_empty();
   if (empty < 0 && sw->wm != WM_NONE) {
     wm_emit_focused_state(); /* the answer arrives through on_bus */
@@ -1026,6 +1052,7 @@ void wp_finish(void) {
   wp_joined();
   bus_unsubscribe(on_bus, NULL);
   peek_set_sink(NULL);
+  backdrop_set_source(NULL);
   w.peek = NULL;
   wp_surfaces_finish();
   wp_gl_finish();

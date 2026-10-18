@@ -3,6 +3,7 @@
 #ifndef SWELL_OVERVIEW_H
 #define SWELL_OVERVIEW_H
 
+#include <cairo.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-client.h>
@@ -22,15 +23,19 @@ struct overview_config {
   char font[128];
 
   double layout_pad, layout_gap, label_height, caption_height;
+  double tile_radius, tile_inset, window_radius, window_gap;
   double spread_gap;
   double drag_threshold;
   int zoom_delay_ms, zoom_anim_ms;
+  int open_anim_ms;
+  bool backdrop; /* the wallpaper's map under the background */
   double zoom_max_width, zoom_max_height, zoom_min_gain, zoom_margin;
 
-  uint32_t background, tile, tile_border, tile_visible, accent, urgent;
+  uint32_t background, background_plain, tile, tile_border, tile_visible, accent, urgent;
+  uint32_t accent_a, accent_mid, accent_b; /* the selection's gradient */
   uint32_t window, window_border, hover, text, text_dim;
   uint32_t focused_border, drop_fill, new_slot_fill, new_slot_drop_fill;
-  uint32_t shadow, zoom_shadow, zoom_title_band;
+  uint32_t shadow, tile_shadow, zoom_shadow, zoom_title_band;
   double drag_source_alpha, drag_ghost_alpha;
 };
 
@@ -74,6 +79,7 @@ struct workspace {
   struct output *output;
   struct box box;
   struct box label;
+  struct box inner; /* where its windows are laid out, inside box */
 };
 
 struct sway_output_info {
@@ -115,6 +121,19 @@ struct output {
   bool configured, dirty;
   struct wl_callback *frame_cb;
   struct buffer *buffers[2];
+  struct buffer *half_buffers[2]; /* the zoom's half-size frames */
+  bool warm; /* the names drawn once at the zoom's size (see render.c) */
+  /* The map and scrim, drawn once per open at buffer resolution: on a
+   * subsurface below, which the compositor fades (alpha-modifier), else
+   * copied into every frame from this cache. */
+  struct wl_surface *bg_surface;
+  struct wl_subsurface *bg_sub;
+  struct wp_viewport *bg_viewport;
+  struct wp_alpha_modifier_surface_v1 *bg_alpha;
+  struct buffer *bg_buffer;
+  uint32_t bg_multiplier; /* last one set */
+  cairo_surface_t *background;
+  bool bg_ready; /* drawn at the current size: the zoom may start */
 
   /* layout, rebuilt by ov_layout_all() */
   struct workspace **workspaces;
@@ -157,6 +176,18 @@ struct ov {
     struct box big;      /* fully grown box */
   } zoom;
 
+  /* open/close: the shown workspace zooms out of the screen, back in */
+  struct {
+    int64_t opened; /* when open began (the zoom waits for thumbnails) */
+    int64_t start;  /* when the current direction began, 0: not yet */
+    double from;    /* progress 0..1 at start */
+    int dir;        /* 1 opening, -1 closing, 0 still */
+    /* the workspace a close zooms into, else each output's visible one */
+    bool into_set, into_placeholder;
+    long into_id;
+    bool close_emitted; /* overview.close went out when the close began */
+  } anim;
+
   struct {
     bool pressed, active;
     struct target press;
@@ -171,5 +202,10 @@ void ov_redraw(struct ov *ov);
 void ov_output_redraw(struct output *out);
 /* Close at the next loop iteration (safe from input handlers). */
 void ov_request_close(struct ov *ov);
+/* The open/close animation at now: 0 closed (the screen as it is) .. 1
+ * open. */
+double ov_anim_value(struct ov *ov, int64_t now);
+/* The workspace that zooms on out (NULL: none). */
+struct workspace *ov_anim_hero(struct ov *ov, struct output *out);
 
 #endif

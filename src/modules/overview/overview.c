@@ -5,7 +5,8 @@
  * binds a fresh foreign toplevel list, starts the captures, subscribes to
  * sway events (which mark the model dirty), loads the model and takes the
  * keyboard. `close` (also Esc, a background or right click, or activating a
- * target) tears all of that down again.
+ * target) tears all of that down again, after the shown workspace has zoomed
+ * back into the screen (open_anim_ms; the keyboard is let go at once).
  *
  * While open, a prepare hook reloads the model when dirty, requests due
  * capture frames, advances the hover zoom and paints dirty outputs (paced by
@@ -18,6 +19,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "alpha-modifier-v1-client-protocol.h"
+#include "anim.h"
 #include "buffer.h"
 #include "bus.h"
 #include "capture.h"
@@ -49,6 +52,10 @@ static const CFG defaults = {
     .layout_gap = 36,
     .label_height = 30,
     .caption_height = 56,
+    .tile_radius = 12,
+    .tile_inset = 6,
+    .window_radius = 6,
+    .window_gap = 4,
     .spread_gap = 24,
     .drag_threshold = 8,
     .zoom_delay_ms = 250,
@@ -57,24 +64,32 @@ static const CFG defaults = {
     .zoom_max_height = 0.65,
     .zoom_min_gain = 1.2,
     .zoom_margin = 16,
+    .open_anim_ms = 180,
+    .backdrop = true,
 
-    /* swayverview's float colours, rounded to 8 bits */
-    .background = 0x121217f0,
-    .tile = 0x24242bff,
-    .tile_border = 0x42424dff,
-    .tile_visible = 0x8c8c99ff,
-    .accent = 0x5e9cffff,
+    /* slate neutrals like the wallpaper's glass, the snowflake's outline
+     * gradient (wallpaper topo_edge_*) for the selection */
+    .background = 0x0b0b10b8,
+    .background_plain = 0x0f0f14f0,
+    .tile = 0x1c1d26ff,
+    .tile_border = 0x2e3040ff,
+    .tile_visible = 0x6c6f85ff,
+    .accent = 0x89b4faff,
+    .accent_a = 0xf5c2e7ff,
+    .accent_mid = 0xfab387ff,
+    .accent_b = 0x89b4faff,
     .urgent = 0xed5454ff,
-    .window = 0x383845ff,
-    .window_border = 0x575766ff,
+    .window = 0x2a2c3aff,
+    .window_border = 0xffffff14,
     .hover = 0xffffffa6,
     .text = 0xebebf2ff,
-    .text_dim = 0x9e9eadff,
-    .focused_border = 0x5e9cff73,
-    .drop_fill = 0x5e9cff2e,
+    .text_dim = 0x8a8ca0ff,
+    .focused_border = 0xffffff40,
+    .drop_fill = 0x89b4fa2e,
     .new_slot_fill = 0xffffff08,
-    .new_slot_drop_fill = 0x5e9cff26,
+    .new_slot_drop_fill = 0x89b4fa26,
     .shadow = 0x00000059,
+    .tile_shadow = 0x00000029,
     .zoom_shadow = 0x0000001f,
     .zoom_title_band = 0x0d0d12c7,
     .drag_source_alpha = 0.3,
@@ -92,6 +107,11 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(CFG, label_height, 0, 500, "workspace name row height (px)"),
     CFG_DOUBLE(CFG, caption_height, 0, 500,
                "space for the window title at the bottom (px)"),
+    CFG_DOUBLE(CFG, tile_radius, 0, 200, "workspace tile corner radius (px)"),
+    CFG_DOUBLE(CFG, tile_inset, 0, 200,
+               "space between a tile's edge and its windows (px)"),
+    CFG_DOUBLE(CFG, window_radius, 0, 200, "window corner radius (px)"),
+    CFG_DOUBLE(CFG, window_gap, 0, 200, "gap between windows in a tile (px)"),
     CFG_DOUBLE(CFG, spread_gap, 0, 500,
                "gap between spread-out tabbed/stacked windows (tree px)"),
     CFG_DOUBLE(CFG, drag_threshold, 0, 500,
@@ -107,11 +127,23 @@ static const struct cfg_field fields[] = {
                "no preview unless it grows at least this much"),
     CFG_DOUBLE(CFG, zoom_margin, 0, 1000,
                "preview distance from the output edges (px)"),
-    CFG_COLOR(CFG, background, "scrim over the whole output"),
+    CFG_INT(CFG, open_anim_ms, 0, 5000,
+            "open/close animation: the shown workspace zooms out of and back "
+            "into the screen (0 = off)"),
+    CFG_BOOL(CFG, backdrop,
+             "the wallpaper's topo map under the background (topo style "
+             "only; the windows hide the real one)"),
+    CFG_COLOR(CFG, background, "scrim over the wallpaper's map"),
+    CFG_COLOR(CFG, background_plain,
+              "scrim without the map (classic wallpaper, backdrop = false); "
+              "the windows show through what it leaves"),
     CFG_COLOR(CFG, tile, "workspace tile"),
     CFG_COLOR(CFG, tile_border, "workspace tile border"),
     CFG_COLOR(CFG, tile_visible, "border of a visible (unfocused) workspace"),
-    CFG_COLOR(CFG, accent, "selection, focused workspace name, drop markers"),
+    CFG_COLOR(CFG, accent, "focused workspace name, drop tints"),
+    CFG_COLOR(CFG, accent_a, "selection/drop marker gradient, top left"),
+    CFG_COLOR(CFG, accent_mid, "selection/drop marker gradient, middle"),
+    CFG_COLOR(CFG, accent_b, "selection/drop marker gradient, bottom right"),
     CFG_COLOR(CFG, urgent, "urgent workspace name / window border"),
     CFG_COLOR(CFG, window, "window placeholder behind thumbnails"),
     CFG_COLOR(CFG, window_border, "window border"),
@@ -124,6 +156,7 @@ static const struct cfg_field fields[] = {
     CFG_COLOR(CFG, new_slot_drop_fill,
               "\"New workspace\" slot fill while a window is dragged over it"),
     CFG_COLOR(CFG, shadow, "shadow under dragged windows/workspaces"),
+    CFG_COLOR(CFG, tile_shadow, "each of the 3 shadow rings under a tile"),
     CFG_COLOR(CFG, zoom_shadow, "each of the 3 shadow rings of the preview"),
     CFG_COLOR(CFG, zoom_title_band, "title band at the bottom of the preview"),
     CFG_DOUBLE(CFG, drag_source_alpha, 0, 1,
@@ -149,9 +182,129 @@ void ov_redraw(struct ov *o) {
 
 void ov_request_close(struct ov *o) { o->close_pending = true; }
 
+/* ---- open/close animation ---------------------------------------------- */
+
+/* How long the zoom out waits for the shown windows' first thumbnails, so it
+ * starts from what is on screen instead of grey placeholders. */
+#define OPEN_WAIT_MS 150
+
+static double anim_linear(struct ov *o, int64_t now) {
+  if (o->anim.dir == 0 || o->anim.start == 0 || o->cfg.open_anim_ms <= 0)
+    return o->anim.from;
+  double p = o->anim.from + o->anim.dir * (double)(now - o->anim.start) /
+                                o->cfg.open_anim_ms;
+  return p < 0 ? 0 : p > 1 ? 1 : p;
+}
+
+/* Eased both ways: quick off the mark, gentle at the end (opening ends
+ * open, closing ends on the screen). */
+static double anim_ease(double p, int dir) {
+  return dir < 0 ? 1 - ease_out_cubic(1 - p) : ease_out_cubic(p);
+}
+
+/* p with anim_ease(p, dir) == v. */
+static double anim_uneased(double v, int dir) {
+  if (dir < 0)
+    return cbrt(v);
+  return 1 - cbrt(1 - v);
+}
+
+double ov_anim_value(struct ov *o, int64_t now) {
+  return anim_ease(anim_linear(o, now), o->anim.dir);
+}
+
+struct workspace *ov_anim_hero(struct ov *o, struct output *out) {
+  struct workspace *visible = NULL;
+  for (int i = 0; i < out->nworkspaces; ++i) {
+    struct workspace *ws = out->workspaces[i];
+    if (o->anim.dir < 0 && o->anim.into_set &&
+        ws->placeholder == o->anim.into_placeholder &&
+        (ws->placeholder || ws->id == o->anim.into_id))
+      return ws;
+    if (ws->visible && !ws->placeholder && !visible)
+      visible = ws;
+  }
+  return visible;
+}
+
+/* Head in direction dir from wherever the animation is now. */
+static void anim_turn(struct ov *o, int dir, int64_t now) {
+  o->anim.from = anim_uneased(ov_anim_value(o, now), dir); /* no jump */
+  o->anim.start = now;
+  o->anim.dir = dir;
+}
+
+/* Every shown output has its background drawn (the first draw is slow; it
+ * goes in a frame before the zoom, not into it). */
+static bool backgrounds_ready(struct ov *o, int64_t now) {
+  if (now - o->anim.opened >= 1000)
+    return true; /* an output that never configured */
+  struct output *out;
+  wl_list_for_each(out, &o->outputs, link) {
+    if (out->surface && !out->bg_ready)
+      return false;
+  }
+  return true;
+}
+
+/* Advance; false once a close has finished. */
+static bool anim_tick(struct ov *o, int64_t now) {
+  if (o->anim.dir > 0 && o->anim.start == 0 &&
+      (ov_capture_settled(o) || now - o->anim.opened >= OPEN_WAIT_MS) &&
+      backgrounds_ready(o, now))
+    o->anim.start = now;
+  double p = anim_linear(o, now);
+  if (o->anim.dir < 0 && p <= 0)
+    return false;
+  if (o->anim.dir > 0 && p >= 1) {
+    o->anim.from = 1;
+    o->anim.dir = 0;
+    ov_redraw(o); /* the settled look (sharp thumbnails, captions) */
+  } else if (o->anim.dir != 0) {
+    ov_redraw(o);
+  }
+  return true;
+}
+
+static int anim_timeout(struct ov *o) { return o->anim.dir != 0 ? 8 : -1; }
+
+static void set_keyboard(struct ov *o, bool take) {
+  struct output *out;
+  wl_list_for_each(out, &o->outputs, link) {
+    if (!out->layer)
+      continue;
+    zwlr_layer_surface_v1_set_keyboard_interactivity(
+        out->layer, take ? ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE
+                         : ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
+    wl_surface_commit(out->surface);
+  }
+}
+
 /* ---- per-output overlays ---------------------------------------------- */
 
+static void output_destroy_background(struct output *out) {
+  if (out->bg_alpha)
+    wp_alpha_modifier_surface_v1_destroy(out->bg_alpha);
+  if (out->bg_viewport)
+    wp_viewport_destroy(out->bg_viewport);
+  if (out->bg_sub)
+    wl_subsurface_destroy(out->bg_sub);
+  if (out->bg_surface)
+    wl_surface_destroy(out->bg_surface);
+  buffer_destroy(out->bg_buffer);
+  if (out->background)
+    cairo_surface_destroy(out->background);
+  out->bg_alpha = NULL;
+  out->bg_viewport = NULL;
+  out->bg_sub = NULL;
+  out->bg_surface = NULL;
+  out->bg_buffer = NULL;
+  out->background = NULL;
+  out->bg_ready = false;
+}
+
 static void output_destroy_surface(struct output *out) {
+  output_destroy_background(out);
   if (out->surface)
     wl_clear_input(out->ov->wl, out->surface);
   if (out->frame_cb)
@@ -166,7 +319,8 @@ static void output_destroy_surface(struct output *out) {
     wl_surface_destroy(out->surface);
   for (int i = 0; i < 2; ++i) {
     buffer_destroy(out->buffers[i]);
-    out->buffers[i] = NULL;
+    buffer_destroy(out->half_buffers[i]);
+    out->buffers[i] = out->half_buffers[i] = NULL;
   }
   out->frame_cb = NULL;
   out->fractional = NULL;
@@ -251,6 +405,21 @@ static void output_create_surface(struct output *out) {
   zwlr_layer_surface_v1_set_keyboard_interactivity(
       out->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE);
   wl_set_input(wl, out->surface, &ov_input_handler, out);
+
+  /* the background below, faded by the compositor */
+  if (wl->subcompositor && wl->alpha_modifier && wl->viewporter) {
+    out->bg_surface = wl_compositor_create_surface(wl->compositor);
+    out->bg_sub = wl_subcompositor_get_subsurface(
+        wl->subcompositor, out->bg_surface, out->surface);
+    wl_subsurface_place_below(out->bg_sub, out->surface);
+    out->bg_viewport =
+        wp_viewporter_get_viewport(wl->viewporter, out->bg_surface);
+    out->bg_alpha =
+        wp_alpha_modifier_v1_get_surface(wl->alpha_modifier, out->bg_surface);
+    struct wl_region *none = wl_compositor_create_region(wl->compositor);
+    wl_surface_set_input_region(out->bg_surface, none);
+    wl_region_destroy(none);
+  }
   wl_surface_commit(out->surface);
 }
 
@@ -299,21 +468,61 @@ static const struct wl_callback_listener frame_listener = {
     .done = frame_done,
 };
 
-static struct buffer *output_get_buffer(struct output *out, int w, int h) {
+/* A free buffer of pair (kept apart so switching sizes for the zoom
+ * doesn't allocate). */
+static struct buffer *output_get_buffer(struct output *out,
+                                        struct buffer *pair[2], int w, int h) {
   for (int i = 0; i < 2; ++i) {
-    struct buffer *b = out->buffers[i];
+    struct buffer *b = pair[i];
     if (b && b->busy)
       continue;
     if (b && (b->width != w || b->height != h)) {
       buffer_destroy(b);
-      b = out->buffers[i] = NULL;
+      b = pair[i] = NULL;
     }
     if (!b)
-      b = out->buffers[i] =
+      b = pair[i] =
           buffer_create(out->ov->wl->shm, w, h, WL_SHM_FORMAT_ARGB8888);
     return b;
   }
   return NULL;
+}
+
+/* The background subsurface: drawn when the output's size changes, at half
+ * the buffer resolution (the map is drawn at that anyway; the compositor
+ * scales it up), faded with the open/close animation; committed before the
+ * parent, which applies it. */
+static void output_render_background(struct output *out, int pw, int ph,
+                                     double scale) {
+  struct ov *o = out->ov;
+  bool commit = false;
+  int bw = (pw + 1) / 2, bh = (ph + 1) / 2;
+  if (!out->bg_buffer || out->bg_buffer->width != bw ||
+      out->bg_buffer->height != bh) {
+    buffer_destroy(out->bg_buffer);
+    out->bg_buffer = buffer_create(o->wl->shm, bw, bh, WL_SHM_FORMAT_ARGB8888);
+    if (!out->bg_buffer)
+      return;
+    cairo_t *cr = cairo_create(out->bg_buffer->cairo);
+    cairo_scale(cr, (double)bw / out->width, (double)bh / out->height);
+    ov_render_background(o, out, cr, scale);
+    cairo_destroy(cr);
+    cairo_surface_flush(out->bg_buffer->cairo);
+    wl_surface_set_buffer_scale(out->bg_surface, 1);
+    wp_viewport_set_destination(out->bg_viewport, out->width, out->height);
+    wl_surface_attach(out->bg_surface, out->bg_buffer->wl_buffer, 0, 0);
+    wl_surface_damage_buffer(out->bg_surface, 0, 0, bw, bh);
+    out->bg_ready = true;
+    commit = true;
+  }
+  uint32_t m = (uint32_t)lround(ov_anim_value(o, now_ms()) * UINT32_MAX);
+  if (commit || m != out->bg_multiplier) {
+    wp_alpha_modifier_surface_v1_set_multiplier(out->bg_alpha, m);
+    out->bg_multiplier = m;
+    commit = true;
+  }
+  if (commit)
+    wl_surface_commit(out->bg_surface);
 }
 
 static void output_render(struct output *out) {
@@ -324,24 +533,41 @@ static void output_render(struct output *out) {
   int pw = (int)lround(out->width * scale);
   int ph = (int)lround(out->height * scale);
 
-  struct buffer *buf = output_get_buffer(out, pw, ph);
+  /* Zooming in or out: half the pixels each way, scaled up by the
+   * compositor (a full-size frame took longer than a 120 Hz frame; the
+   * softness doesn't show in motion). */
+  bool zooming = out->ov->anim.dir != 0 && out->viewport;
+  double rscale = zooming ? scale / 2 : scale;
+  int rw = zooming ? (int)lround(out->width * rscale) : pw;
+  int rh = zooming ? (int)lround(out->height * rscale) : ph;
+
+  struct buffer *buf = output_get_buffer(
+      out, zooming ? out->half_buffers : out->buffers, rw, rh);
   if (!buf)
     return; /* both busy; retry on the next frame */
+  if (out->bg_surface)
+    output_render_background(out, pw, ph, scale);
 
+  if (zooming && !out->warm) {
+    ov_render_warm(out->ov, out, rscale);
+    out->warm = true;
+  }
   cairo_t *cr = cairo_create(buf->cairo);
-  cairo_scale(cr, scale, scale);
-  ov_render_output(out->ov, out, cr, scale);
+  cairo_scale(cr, rscale, rscale);
+  ov_render_output(out->ov, out, cr, rscale);
   cairo_destroy(cr);
   cairo_surface_flush(buf->cairo);
 
-  if (fractional) {
+  if (fractional || zooming) {
     wl_surface_set_buffer_scale(out->surface, 1);
     wp_viewport_set_destination(out->viewport, out->width, out->height);
   } else {
+    if (out->viewport)
+      wp_viewport_set_destination(out->viewport, -1, -1);
     wl_surface_set_buffer_scale(out->surface, (int)scale);
   }
   wl_surface_attach(out->surface, buf->wl_buffer, 0, 0);
-  wl_surface_damage_buffer(out->surface, 0, 0, pw, ph);
+  wl_surface_damage_buffer(out->surface, 0, 0, rw, rh);
   out->frame_cb = wl_surface_frame(out->surface);
   wl_callback_add_listener(out->frame_cb, &frame_listener, out);
   wl_surface_commit(out->surface);
@@ -480,9 +706,28 @@ static void on_sway_event(const I3ipc_event *ev, void *data) {
   o->model_dirty = true;
 }
 
+/* Start closing (the zoom back in), or close now when there is none. */
+static bool begin_close(struct ov *o, int64_t now) {
+  if (o->anim.dir < 0)
+    return true;
+  if (o->cfg.open_anim_ms <= 0 || anim_linear(o, now) <= 0)
+    return false;
+  anim_turn(o, -1, now);
+  o->drag.pressed = o->drag.active = false;
+  set_keyboard(o, false); /* keys go to the windows again right away */
+  o->anim.close_emitted = true;
+  bus_emit("overview.close", NULL);
+  ov_redraw(o);
+  return true;
+}
+
+static int min_timeout(int a, int b) {
+  return b >= 0 && (a < 0 || b < a) ? b : a;
+}
+
 static int prepare(void *data) {
   struct ov *o = data;
-  if (o->close_pending) {
+  if (o->close_pending && !begin_close(o, now_ms())) {
     ov_close();
     return -1;
   }
@@ -491,22 +736,28 @@ static int prepare(void *data) {
   /* events another module's roundtrip queued would otherwise wait for the
    * core's flush hook, which runs after us */
   wl_display_dispatch_pending(o->wl->display);
-  if (o->close_pending) {
+  if (o->close_pending && !begin_close(o, now_ms())) {
     ov_close();
     return -1;
   }
   if (o->model_dirty)
     reload(o, false);
   int64_t now = now_ms();
-  ov_capture_tick(o, now);
+  if (!anim_tick(o, now)) {
+    ov_close();
+    return -1;
+  }
+  /* no fresh thumbnails while zooming: each one is scaled again for the
+   * zoom, the frames that took longest */
+  bool zooming = o->anim.dir != 0 && o->anim.start != 0;
+  if (!zooming)
+    ov_capture_tick(o, now);
   ov_zoom_tick(o, now);
   render_dirty(o);
 
-  int timeout = ov_capture_timeout(o, now);
-  int zt = ov_zoom_timeout(o, now);
-  if (zt >= 0 && (timeout < 0 || zt < timeout))
-    timeout = zt;
-  return timeout;
+  int timeout = zooming ? -1 : ov_capture_timeout(o, now);
+  timeout = min_timeout(timeout, ov_zoom_timeout(o, now));
+  return min_timeout(timeout, anim_timeout(o));
 }
 
 static void reset_state(struct ov *o) {
@@ -544,6 +795,18 @@ static void teardown(struct ov *o) {
 }
 
 static int ov_open(struct reply *r) {
+  if (ov.open && ov.anim.dir < 0) {
+    /* closing: turn round */
+    int64_t now = now_ms();
+    anim_turn(&ov, 1, now);
+    ov.close_pending = false;
+    ov.anim.into_set = false;
+    ov.anim.close_emitted = false;
+    set_keyboard(&ov, true);
+    ov_redraw(&ov);
+    bus_emit("overview.open", NULL);
+    return 0;
+  }
   if (ov.open)
     return 0;
   ov.sw = sw_;
@@ -562,6 +825,9 @@ static int ov_open(struct reply *r) {
     return 1;
   }
   ov.open = true;
+  ov.anim.opened = now_ms();
+  ov.anim.dir = ov.cfg.open_anim_ms > 0 ? 1 : 0;
+  ov.anim.from = ov.anim.dir ? 0 : 1;
   wl_add_output_listener(ov.wl, on_output, &ov);
   sway_subscribe(on_sway_event, &ov);
   loop_add_prepare(sw_->loop, 50, prepare, &ov);
@@ -575,6 +841,7 @@ static int ov_open(struct reply *r) {
 static void ov_close(void) {
   if (!ov.open)
     return;
+  bool emitted = ov.anim.close_emitted;
   wl_remove_output_listener(ov.wl, on_output, &ov);
   sway_unsubscribe(on_sway_event, &ov);
   loop_remove_prepare(sw_->loop, prepare, &ov);
@@ -583,7 +850,8 @@ static void ov_close(void) {
   teardown(&ov); /* clears ov.open */
   wl_display_flush(ov.wl->display);
   malloc_trim(0); /* hand the frame/thumbnail memory back while closed */
-  bus_emit("overview.close", NULL);
+  if (!emitted)
+    bus_emit("overview.close", NULL);
 }
 
 /* ---- dump (runs in the client) ---------------------------------------------- */
@@ -656,6 +924,7 @@ static int run_local(struct swell *sw, const void *cfg, bool have_daemon,
   reset_state(&ov);
   memcpy(&ov.cfg, cfg, sizeof(ov.cfg));
   ov.dump = true;
+  ov.anim.from = 1; /* fully open */
   ov.dump_path = argv[1];
   ov.dump_output = argc > 2 ? argv[2] : NULL;
   int ret = 1;
@@ -696,19 +965,21 @@ static int command(int argc, char **argv, struct reply *r) {
   }
   if (strcmp(cmd, "open") == 0)
     return ov_open(r);
+  bool shown = ov.open && ov.anim.dir >= 0; /* closing counts as closed */
   if (strcmp(cmd, "close") == 0) {
-    ov_close();
+    if (ov.open)
+      ov_request_close(&ov); /* the next prepare starts the zoom back in */
     return 0;
   }
   if (strcmp(cmd, "toggle") == 0) {
-    if (ov.open) {
-      ov_close();
+    if (shown) {
+      ov_request_close(&ov);
       return 0;
     }
     return ov_open(r);
   }
   if (strcmp(cmd, "status") == 0) {
-    reply_printf(r, "%s\n", ov.open ? "open" : "closed");
+    reply_printf(r, "%s\n", shown ? "open" : "closed");
     return 0;
   }
   reply_printf(r, "unknown overview command '%s' (open, close, toggle, "

@@ -19,6 +19,9 @@ void ov_input_activate(struct ov *ov, struct target t) {
     ov_model_focus_workspace(t.ws);
   else
     return;
+  ov->anim.into_set = true; /* the close zooms into it */
+  ov->anim.into_id = t.ws->id;
+  ov->anim.into_placeholder = t.ws->placeholder;
   ov_request_close(ov);
 }
 
@@ -75,6 +78,8 @@ static void pointer_motion(void *data, double x, double y) {
   struct ov *ov = out->ov;
   ov->px = x;
   ov->py = y;
+  if (ov->close_pending)
+    return; /* closing: nothing more lights up */
 
   if (ov->drag.pressed && !ov->drag.active &&
       (ov->drag.press.win || ov_layout_reorderable(ov->drag.press.ws)) &&

@@ -1,6 +1,7 @@
 /* overview: pure parts (workspace reorder planning, layout, hit testing,
  * navigation, drop slots) without Wayland or sway. */
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -148,10 +149,30 @@ static void test_layout(void) {
     double aspect = ws->box.w / ws->box.h;
     assert(aspect > 1536.0 / 864 - 0.01 && aspect < 1536.0 / 864 + 0.01);
   }
+  double x, y;
   /* windows scale with their tile */
   assert(left->box.x == w1->box.x && left->box.w * 2 - w1->box.w < 1e-6);
+  assert(w1->inner.x == w1->box.x && w1->inner.w == w1->box.w);
 
-  double x, y;
+  /* inset and gaps: windows inside the inset, apart, still hit */
+  ov.cfg.tile_inset = 6;
+  ov.cfg.window_gap = 4;
+  ov_layout_all(&ov);
+  assert(w1->inner.x >= w1->box.x + 6 - 1e-6);
+  assert(w1->inner.y >= w1->box.y + 6 - 1e-6);
+  assert(w1->inner.x + w1->inner.w <= w1->box.x + w1->box.w - 6 + 1e-6);
+  assert(w1->inner.y + w1->inner.h <= w1->box.y + w1->box.h - 6 + 1e-6);
+  assert(fabs(w1->inner.w / w1->inner.h - 1536.0 / 864) < 1e-6);
+  assert(fabs(left->box.x - (w1->inner.x + 2)) < 1e-6);
+  assert(right->box.x - (left->box.x + left->box.w) > 3.9);
+  assert(left->cbox.x >= left->box.x && left->cbox.w <= left->box.w);
+  double gx = (left->box.x + left->box.w + right->box.x) / 2, gy;
+  center(right->box, &x, &gy);
+  assert(ov_layout_hit(&out, gx, gy).win == NULL);
+  assert(ov_layout_hit(&out, x, gy).win == right);
+  ov.cfg.tile_inset = ov.cfg.window_gap = 0;
+  ov_layout_all(&ov);
+
   center(right->box, &x, &y);
   struct target t = ov_layout_hit(&out, x, y);
   assert(t.win == right && t.ws == w1);

@@ -337,6 +337,14 @@ layout_gap = 36.0
 label_height = 30.0
 # space for the window title at the bottom (px)
 caption_height = 56.0
+# workspace tile corner radius (px)
+tile_radius = 12.0
+# space between a tile's edge and its windows (px)
+tile_inset = 6.0
+# window corner radius (px)
+window_radius = 6.0
+# gap between windows in a tile (px)
+window_gap = 4.0
 # gap between spread-out tabbed/stacked windows (tree px)
 spread_gap = 24.0
 # pointer travel that starts a drag (px)
@@ -353,38 +361,52 @@ zoom_max_height = 0.65
 zoom_min_gain = 1.2
 # preview distance from the output edges (px)
 zoom_margin = 16.0
-# scrim over the whole output
-background = "#121217f0"
+# open/close animation: the shown workspace zooms out of and back into the screen (0 = off)
+open_anim_ms = 180
+# the wallpaper's topo map under the background (topo style only; the windows hide the real one)
+backdrop = true
+# scrim over the wallpaper's map
+background = "#0b0b10b8"
+# scrim without the map (classic wallpaper, backdrop = false); the windows show through what it leaves
+background_plain = "#0f0f14f0"
 # workspace tile
-tile = "#24242b"
+tile = "#1c1d26"
 # workspace tile border
-tile_border = "#42424d"
+tile_border = "#2e3040"
 # border of a visible (unfocused) workspace
-tile_visible = "#8c8c99"
-# selection, focused workspace name, drop markers
-accent = "#5e9cff"
+tile_visible = "#6c6f85"
+# focused workspace name, drop tints
+accent = "#89b4fa"
+# selection/drop marker gradient, top left
+accent_a = "#f5c2e7"
+# selection/drop marker gradient, middle
+accent_mid = "#fab387"
+# selection/drop marker gradient, bottom right
+accent_b = "#89b4fa"
 # urgent workspace name / window border
 urgent = "#ed5454"
 # window placeholder behind thumbnails
-window = "#383845"
+window = "#2a2c3a"
 # window border
-window_border = "#575766"
+window_border = "#ffffff14"
 # hovered window/workspace border
 hover = "#ffffffa6"
 # text
 text = "#ebebf2"
 # dim text (labels without thumbnails, +)
-text_dim = "#9e9ead"
+text_dim = "#8a8ca0"
 # border of the focused workspace
-focused_border = "#5e9cff73"
+focused_border = "#ffffff40"
 # tint of a workspace a window is dragged over
-drop_fill = "#5e9cff2e"
+drop_fill = "#89b4fa2e"
 # "New workspace" slot fill
 new_slot_fill = "#ffffff08"
 # "New workspace" slot fill while a window is dragged over it
-new_slot_drop_fill = "#5e9cff26"
+new_slot_drop_fill = "#89b4fa26"
 # shadow under dragged windows/workspaces
 shadow = "#00000059"
+# each of the 3 shadow rings under a tile
+tile_shadow = "#00000029"
 # each of the 3 shadow rings of the preview
 zoom_shadow = "#0000001f"
 # title band at the bottom of the preview

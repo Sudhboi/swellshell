@@ -33,6 +33,7 @@ protocol_xml = [
   wlp_dir / 'stable/xdg-shell/xdg-shell.xml',
   wlp_dir / 'stable/viewporter/viewporter.xml',
   wlp_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
+  wlp_dir / 'staging/alpha-modifier/alpha-modifier-v1.xml',
   wlp_dir / 'stable/tablet/tablet-v2.xml',
   wlp_dir / 'staging/cursor-shape/cursor-shape-v1.xml',
   wlp_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml',
@@ -71,6 +72,7 @@ core_inc = include_directories('src/core', 'src/modules')
 core_src = files(
   'src/core/anim.h',
   'src/core/art.c',
+  'src/core/backdrop.c',
   'src/core/battery.c',
   'src/core/buffer.c',
   'src/core/bus.c',

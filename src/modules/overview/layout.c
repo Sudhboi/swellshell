@@ -15,6 +15,19 @@ static struct box map_rect(struct box ws, double s, struct rect r) {
   return (struct box){ws.x + r.x * s, ws.y + r.y * s, r.w * s, r.h * s};
 }
 
+/* b made smaller by d on every side, unless that leaves too little. */
+static struct box shrink(struct box b, double d) {
+  if (d <= 0 || b.w <= 4 * d || b.h <= 4 * d)
+    return b;
+  return (struct box){b.x + d, b.y + d, b.w - 2 * d, b.h - 2 * d};
+}
+
+static struct box clip_to(struct box b, struct box c) {
+  double x0 = fmax(b.x, c.x), y0 = fmax(b.y, c.y);
+  double x1 = fmin(b.x + b.w, c.x + c.w), y1 = fmin(b.y + b.h, c.y + c.h);
+  return (struct box){x0, y0, fmax(0, x1 - x0), fmax(0, y1 - y0)};
+}
+
 static void layout_output(struct output *out) {
   const struct overview_config *cfg = &out->ov->cfg;
   const double pad = cfg->layout_pad, gap = cfg->layout_gap;
@@ -64,11 +77,25 @@ static void layout_output(struct output *out) {
     ws->label = (struct box){x, y, tile_w, label_h};
     ws->box = (struct box){x, y + label_h, tile_w, tile_h};
 
-    double s = ws->rect.w > 0 ? tile_w / ws->rect.w : 1;
+    /* windows go inside the tile's inset, centred if its shape differs */
+    double in = fmin(cfg->tile_inset, fmin(tile_w, tile_h) / 4);
+    struct box inner = {ws->box.x + in, ws->box.y + in, tile_w - 2 * in,
+                        tile_h - 2 * in};
+    double s = 1;
+    if (ws->rect.w > 0 && ws->rect.h > 0) {
+      s = fmin(inner.w / ws->rect.w, inner.h / ws->rect.h);
+      inner.x += (inner.w - s * ws->rect.w) / 2;
+      inner.y += (inner.h - s * ws->rect.h) / 2;
+    }
+    ws->inner = inner;
+    ws->inner.w = s * fmax(ws->rect.w, 0);
+    ws->inner.h = s * fmax(ws->rect.h, 0);
+    if (ws->inner.w <= 0 || ws->inner.h <= 0)
+      ws->inner = ws->box;
     for (int j = 0; j < ws->nwindows; ++j) {
       struct window *w = ws->windows[j];
-      w->box = map_rect(ws->box, s, w->rect);
-      w->cbox = map_rect(ws->box, s, w->content);
+      w->box = shrink(map_rect(inner, s, w->rect), cfg->window_gap / 2);
+      w->cbox = clip_to(map_rect(inner, s, w->content), w->box);
     }
   }
 }

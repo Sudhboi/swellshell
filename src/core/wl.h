@@ -47,6 +47,7 @@ struct swell_wl {
   struct zwlr_layer_shell_v1 *layer_shell;
   struct wp_viewporter *viewporter;
   struct wp_fractional_scale_manager_v1 *fractional;
+  struct wp_alpha_modifier_v1 *alpha_modifier; /* NULL if unsupported */
   struct wp_cursor_shape_manager_v1 *cursor_shape;
   struct ext_idle_notifier_v1 *idle_notifier; /* NULL if unsupported */
   struct ext_foreign_toplevel_image_capture_source_manager_v1 *source_manager;

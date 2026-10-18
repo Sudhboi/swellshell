@@ -7,6 +7,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "alpha-modifier-v1-client-protocol.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "ext-foreign-toplevel-list-v1-client-protocol.h"
 #include "ext-idle-notify-v1-client-protocol.h"
@@ -369,6 +370,9 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
              0) {
     wl->fractional = wl_registry_bind(
         reg, name, &wp_fractional_scale_manager_v1_interface, 1);
+  } else if (strcmp(iface, wp_alpha_modifier_v1_interface.name) == 0) {
+    wl->alpha_modifier =
+        wl_registry_bind(reg, name, &wp_alpha_modifier_v1_interface, 1);
   } else if (strcmp(iface, wp_cursor_shape_manager_v1_interface.name) == 0) {
     wl->cursor_shape =
         wl_registry_bind(reg, name, &wp_cursor_shape_manager_v1_interface, 1);
@@ -527,6 +531,8 @@ void wl_destroy(struct swell_wl *wl) {
     wp_cursor_shape_manager_v1_destroy(wl->cursor_shape);
   if (wl->fractional)
     wp_fractional_scale_manager_v1_destroy(wl->fractional);
+  if (wl->alpha_modifier)
+    wp_alpha_modifier_v1_destroy(wl->alpha_modifier);
   if (wl->viewporter)
     wp_viewporter_destroy(wl->viewporter);
   if (wl->layer_shell)
