@@ -1,3 +1,13 @@
+# Sanitizer runs: meson setup B -Db_sanitize=address,undefined, then
+# meson test -C B --setup asan (font library caches aren't leaks).
+add_test_setup('asan',
+  env: {
+    'LSAN_OPTIONS': 'suppressions=' + meson.current_source_dir() / 'lsan.supp'
+      + ':print_suppressions=0',
+    'UBSAN_OPTIONS': 'halt_on_error=1:print_stacktrace=1',
+  },
+  timeout_multiplier: 3)
+
 test_config = executable('test_config', 'test_config.c', dependencies: modules_dep)
 test('config', test_config)
 

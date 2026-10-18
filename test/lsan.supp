@@ -1,0 +1,7 @@
+# LeakSanitizer suppressions for `meson test --setup asan`: caches that
+# fontconfig, pango and cairo keep for the life of the process.
+leak:libfontconfig.so
+leak:libpangoft2-1.0.so
+leak:libpangocairo-1.0.so
+leak:libpango-1.0.so
+leak:libcairo.so

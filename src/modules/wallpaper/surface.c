@@ -31,6 +31,27 @@ struct strip {
   int bw, bh;         /* buffer px */
 };
 
+/* What a buffer holds, as of its last paint. A new buffer holds nothing
+ * and is stale; each paint records all of it. */
+struct painted {
+  bool stale;        /* needs a full repaint before partial ones are valid */
+  bool ringed;       /* visualiser bars, outside the small logo tile */
+  bool still;        /* the frozen frame outside the bar (dozing) */
+  bool texted;       /* the title and artist */
+  bool showed;       /* a launch or power-off frame */
+  double cpu_bright; /* the cairo map's brightness */
+  bool shook;        /* the cairo map, shaken */
+  long cpu_drift[2]; /* the cairo map's drift, whole px */
+  bool logoed;       /* the CPU's snowflake */
+  bool streaked;     /* speed lines */
+  bool hexed;        /* the hexagon (cover, progress) */
+  bool wandered;     /* something off the centre */
+  bool peeked;       /* the popup's contents */
+};
+
+/* Either buffer holds it. */
+#define EITHER(out, field) ((out)->painted[0].field || (out)->painted[1].field)
+
 struct output {
   struct wl_list link;
   struct swell_output *so;
@@ -41,11 +62,7 @@ struct output {
   struct wl_callback *frame_cb;
   struct loop_timer *fps_timer; /* fps cap: the delayed next frame */
   struct buffer *bufs[2];
-  bool stale[2]; /* needs a full repaint before partial ones are valid */
-  bool ringed[2]; /* holds visualiser bars, outside the small logo tile */
-  bool still[2];  /* holds the frozen frame outside the bar (dozing) */
-  bool texted[2]; /* holds the title and artist */
-  bool showed[2]; /* holds a launch or power-off frame */
+  struct painted painted[2];     /* of bufs[] */
   double bar_level, bar_percent; /* of the last commit */
   struct strip strips[2]; /* left, right; surface NULL unless shown */
   /* The topo style with a GPU: the map on a subsurface under the buffers,
@@ -55,20 +72,12 @@ struct output {
   double map_bright;    /* as last drawn, -1: not drawn since a change */
   bool map_moved;       /* the last map frame had rings, sway, the spectrum or a
                            gather */
-  double cpu_bright[2]; /* the cairo map's brightness in each buffer */
-  bool shook[2];        /* the cairo map in each buffer is shaken */
   double map_drift[2];  /* the GPU map's drift as last drawn, px */
-  long cpu_drift[2][2]; /* the cairo map's in each buffer, whole px */
   /* The topo snowflake on the GPU, on a subsurface over the logo's box. */
   bool lgpu;            /* the GPU draws it (but in shows and slides) */
   struct strip logo;    /* surface NULL until the GPU first draws it */
   bool logo_on;         /* it holds a snowflake, not nothing */
   double logo_key[10];  /* the frame it was drawn from, NAN: redraw */
-  bool logoed[2];   /* the buffer holds the CPU's snowflake */
-  bool streaked[2]; /* the buffer holds speed lines */
-  bool hexed[2];    /* the buffer holds the hexagon (cover, progress) */
-  bool wandered[2]; /* the buffer holds something off the centre */
-  bool peeked[2];   /* the buffer holds the popup's contents */
   double bar_sx, bar_sy; /* the shake of the last commit, px */
   double bar_fade;       /* of the last commit */
   int width, height; /* logical, from configure */
@@ -160,12 +169,7 @@ static int get_buffer(struct output *out, int pw, int ph, uint32_t format) {
       b = out->bufs[i] = buffer_create(wl->shm, pw, ph, format);
       if (!b)
         return -1;
-      out->stale[i] = true;
-      out->ringed[i] = false;
-      out->texted[i] = false;
-      out->still[i] = false;
-      out->wandered[i] = false;
-      out->peeked[i] = false;
+      out->painted[i] = (struct painted){.stale = true};
     }
     return i;
   }
@@ -384,11 +388,11 @@ static void draw(struct output *out, bool full) {
   int pw = output_scale_px(out, out->width);
   int ph = output_scale_px(out, out->height);
   if (full)
-    out->stale[0] = out->stale[1] = true;
+    out->painted[0].stale = out->painted[1].stale = true;
   bool under = gpu_map();
   if (under != out->under) {
     out->under = under;
-    out->stale[0] = out->stale[1] = true;
+    out->painted[0].stale = out->painted[1].stale = true;
     if (!under)
       strip_destroy(&out->map);
   }
@@ -399,7 +403,7 @@ static void draw(struct output *out, bool full) {
   bool lgpu = under && gpu_logo();
   if (lgpu != out->lgpu) {
     out->lgpu = lgpu;
-    out->stale[0] = out->stale[1] = true;
+    out->painted[0].stale = out->painted[1].stale = true;
     if (!lgpu) {
       strip_destroy(&out->logo);
       out->logo_on = false;
@@ -418,7 +422,8 @@ static void draw(struct output *out, bool full) {
   }
   out->retry = false;
   struct buffer *b = out->bufs[i];
-  bool whole = out->stale[i];
+  const struct painted *p = &out->painted[i];
+  bool whole = p->stale;
 
   int64_t now = now_ms();
   struct wp_frame f;
@@ -426,7 +431,7 @@ static void draw(struct output *out, bool full) {
   /* A show moves things far outside the regions, so it is drawn whole, and
    * so is the first frame after it in each buffer. */
   bool showing = wp_showing();
-  if (showing || out->showed[i])
+  if (showing || p->showed)
     whole = true;
   /* The map fading: the GPU redraws it, or cairo the whole buffer. */
   double bright = wp_map_brightness(&f);
@@ -448,8 +453,8 @@ static void draw(struct output *out, bool full) {
   bool map_due = under && (out->map_bright != bright || moving || drifted ||
                            out->map_moved || !out->map.surface);
   if (!under && wp_topo(wp_config()) &&
-      (out->cpu_bright[i] != bright || shaking || out->shook[i] ||
-       cdx != out->cpu_drift[i][0] || cdy != out->cpu_drift[i][1]))
+      (p->cpu_bright != bright || shaking || p->shook ||
+       cdx != p->cpu_drift[0] || cdy != p->cpu_drift[1]))
     whole = true;
   /* The GPU's snowflake, but in shows and while the lambdas slide (the
    * CPU draws those, and the GPU's surface shows nothing). */
@@ -459,7 +464,7 @@ static void draw(struct output *out, bool full) {
    * again once it's back. */
   bool off = f.wander_x != 0 || f.wander_y != 0;
   bool wandering = off && (!gl_logo || f.over > 0);
-  if (wandering || out->wandered[i])
+  if (wandering || p->wandered)
     whole = true;
   double key[10];
   logo_key(&f, key);
@@ -472,9 +477,9 @@ static void draw(struct output *out, bool full) {
   /* The popup's contents: repainted while they show, and once more in
    * each buffer that still holds them. */
   bool peeking = f.peek && f.peek_pop > 0;
-  bool peek_area = peeking || out->peeked[0] || out->peeked[1];
+  bool peek_area = peeking || EITHER(out, peeked);
   bool bar_only = wp_dozing() && !whole && !map_due && !logo_due &&
-                  !peek_area && out->still[0] && out->still[1];
+                  !peek_area && out->painted[0].still && out->painted[1].still;
   if (bar_only && fabs(f.level - out->bar_level) < 0.5 / 255 &&
       fabs(f.percent - out->bar_percent) < 0.01 &&
       f.bar_fade == out->bar_fade) {
@@ -524,20 +529,20 @@ static void draw(struct output *out, bool full) {
    * logo box is repainted, so they're cleared. */
   bool streaking = f.over > 0;
   cf.logo_gpu = gl_logo;
-  cf.logo_box = gl_logo && (streaking || out->logoed[0] || out->logoed[1] ||
-                            out->streaked[0] || out->streaked[1]);
-  bool ring = cf.nbars > 0 || out->ringed[0] || out->ringed[1];
+  cf.logo_box =
+      gl_logo && (streaking || EITHER(out, logoed) || EITHER(out, streaked));
+  bool ring = cf.nbars > 0 || EITHER(out, ringed);
   /* The same for the title and artist: a buffer still holding them is
    * cleared once they're gone. */
   bool texting = f.media_alpha > 0 && wp_config()->media_title;
-  bool text = texting || out->texted[0] || out->texted[1];
+  bool text = texting || EITHER(out, texted);
   /* With the snowflake on the GPU, and no hexagon, title or bars, only the
    * bar can change in the buffer: repaint just it, and only if it changed
    * (or moved with a shake); otherwise commit the GPU's surfaces alone. */
   double bsx = round(f.shake_x * pw / WP_REF_WIDTH);
   double bsy = round(f.shake_y * pw / WP_REF_WIDTH);
   if (gl_logo && !whole && !cf.logo_box && !ring && !text && !peek_area &&
-      f.media_alpha <= 0 && !out->hexed[0] && !out->hexed[1]) {
+      f.media_alpha <= 0 && !EITHER(out, hexed)) {
     /* (A faded bar's pulse shows nothing.) */
     bool bar_gone = f.bar_fade >= 1 && out->bar_fade >= 1;
     if ((bar_gone || (fabs(f.level - out->bar_level) < 0.5 / 255 &&
@@ -563,20 +568,20 @@ static void draw(struct output *out, bool full) {
   wp_render(cr, wp_config(), pw, ph, &cf, whole, ring, text);
   cairo_destroy(cr);
   cairo_surface_flush(b->cairo);
-  out->stale[i] = false;
-  out->ringed[i] = cf.nbars > 0;
-  out->texted[i] = texting;
-  out->showed[i] = showing;
-  out->cpu_bright[i] = bright;
-  out->shook[i] = shaking;
-  out->cpu_drift[i][0] = cdx;
-  out->cpu_drift[i][1] = cdy;
-  out->still[i] = wp_dozing();
-  out->logoed[i] = !cf.logo_gpu;
-  out->streaked[i] = streaking;
-  out->hexed[i] = f.media_alpha > 0;
-  out->wandered[i] = wandering;
-  out->peeked[i] = peeking;
+  out->painted[i] = (struct painted){
+      .ringed = cf.nbars > 0,
+      .still = wp_dozing(),
+      .texted = texting,
+      .showed = showing,
+      .cpu_bright = bright,
+      .shook = shaking,
+      .cpu_drift = {cdx, cdy},
+      .logoed = !cf.logo_gpu,
+      .streaked = streaking,
+      .hexed = f.media_alpha > 0,
+      .wandered = wandering,
+      .peeked = peeking,
+  };
   out->bar_fade = f.bar_fade;
   out->bar_level = f.level;
   out->bar_percent = f.percent;
