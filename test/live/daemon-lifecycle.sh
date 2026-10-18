@@ -84,8 +84,7 @@ sleep 0.4
 t "quit removes the socket" '[ ! -e "$SWELL_SOCK" ] && [ -z "$(daemons)" ]'
 
 # Concurrent starts (exec_always on two quick `swaymsg reload`s): exactly
-# one daemon must survive and own the socket. Known bug: check-then-bind in
-# ipc_server_start races and leaves orphaned daemons running.
+# one daemon must survive and own the socket.
 for round in 1 2 3 4 5 6 7 8; do
   for _ in 1 2 3 4 5 6; do "$SWELL" daemon >/dev/null 2>&1 & done
   sleep 4
@@ -100,8 +99,8 @@ sleep 0.5
 wait_up
 p=$(pid_of)
 
-# Known bug: a syntax error makes `swell reload` apply all defaults (turning
-# disabled modules on and replacing the hooks) and still report success.
+# A syntax error must not make `swell reload` apply all defaults (turning
+# disabled modules on and replacing the hooks), and must report failure.
 printf '[osd\n' >>"$SWELL_CONFIG"
 "$SWELL" reload >/dev/null 2>&1
 rc=$?
@@ -111,7 +110,7 @@ t "reload with a syntax error reports an error" '[ $rc -ne 0 ]'
 sed -i '$d' "$SWELL_CONFIG"
 "$SWELL" reload >/dev/null
 
-# Known bug: `ws goto` passes its argument into a quoted sway command.
+# `ws goto` must not pass its argument into a quoted sway command.
 rm -f "$NESTED_DIR/pwned"
 "$SWELL" ws goto "1\"; exec touch $NESTED_DIR/pwned; workspace \"1" >/dev/null 2>&1
 sleep 0.3

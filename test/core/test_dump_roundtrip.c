@@ -1,9 +1,6 @@
 /* `swell config` must print valid TOML that parses back to the same values,
  * also for strings with control characters (a multi-line hook command, a
- * tab). cfg_dump and the runner's hooks_dump write such characters raw, so
- * this test currently FAILS and is registered with should_fail: true.
- * Flip that once the dumpers escape \n, \t, \r, \b, \f and other control
- * characters. */
+ * tab). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
