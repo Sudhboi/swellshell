@@ -447,7 +447,14 @@ static int wl_prepare(void *data) {
 
 static void wl_readable(int fd, short revents, void *data) {
   struct swell_wl *wl = data;
-  if ((revents & POLLIN) && wl_display_dispatch(wl->display) >= 0)
+  /* Read what is there and dispatch it, never wait: wl_display_dispatch()
+   * blocks until the default queue gets an event, and what woke us may be
+   * only Mesa's (EGL buffer releases on its own queue), which hung the whole
+   * loop until the compositor next sent us something. */
+  if ((revents & POLLIN) &&
+      (wl_display_prepare_read(wl->display) != 0 ||
+       wl_display_read_events(wl->display) >= 0) &&
+      wl_display_dispatch_pending(wl->display) >= 0)
     return;
   if (revents & (POLLIN | POLLERR | POLLHUP)) {
     warn("lost the Wayland connection");
