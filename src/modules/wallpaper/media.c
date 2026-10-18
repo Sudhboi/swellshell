@@ -69,12 +69,15 @@ static const char *parsed(const char *out, void *data) {
   return md.want_art && md.m.has ? md.m.art_url : "";
 }
 
+static void changed(void *data) { wp_media_in(); }
+
 static const struct mpris_ops ops = {
     .format = "{{status}}\t{{mpris:length}}\t{{position}}\t{{mpris:artUrl}}"
               "\t{{artist}}\t{{title}}",
     .grey = true,
     .art_tag = "swell-art",
     .parsed = parsed,
+    .changed = changed,
 };
 
 void wp_media_start(struct loop *loop, const struct wallpaper_config *c) {

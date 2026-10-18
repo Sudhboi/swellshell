@@ -48,6 +48,11 @@ struct swell_module {
   /* Handle `swell <name> argv...` (argv[0] is the first word after the
    * module name; argc may be 0). Return 0 for success. */
   int (*command)(int argc, char **argv, struct reply *r);
+  /* Optional: a new daemon replaces this one (handover.h). Write lines
+   * "<name> ..." for the new daemon's module (handover_get), start any
+   * goodbye, and return how long (ms) to keep running while it takes over,
+   * 0 to stop now with the rest. */
+  int (*handover)(struct reply *r);
   /* Optional: run a command in the client process instead of sending it to
    * the daemon. Called with have_daemon=true first; return -1 to send it
    * on. If no daemon answers it is called again with have_daemon=false.

@@ -75,6 +75,8 @@ struct output {
   uint32_t scale120;  /* preferred fractional scale, 0 if unknown */
   bool configured;
   bool retry;         /* a draw found both buffers busy */
+  bool held;          /* a draw waits for a replaced daemon (wp_join_wait) */
+  bool presented;     /* a frame of ours has been shown (for the handover) */
   int64_t last_draw;  /* ms */
 };
 
@@ -88,10 +90,24 @@ static void draw(struct output *out, bool full);
 
 static void request_frame(struct output *out);
 
+/* Taking over from a replaced daemon: once every output shows our frame,
+ * it may go. */
+static void check_presented(void) {
+  struct output *out;
+  wl_list_for_each(out, &outputs,
+                   link) if (out->surface && !out->presented) return;
+  wp_joined();
+}
+
 static void frame_done(void *data, struct wl_callback *cb, uint32_t time) {
   struct output *out = data;
   wl_callback_destroy(cb);
   out->frame_cb = NULL;
+  if (!out->presented) {
+    out->presented = true;
+    if (wp_joining())
+      check_presented();
+  }
   if (!wp_ticking() && !out->retry)
     return; /* frozen: stop here, the last frame stays */
   int fps = wp_fps_cap();
@@ -113,8 +129,14 @@ static void request_frame(struct output *out) {
 
 static void on_fps_timer(struct loop_timer *t, void *data) {
   struct output *out = data;
-  if (out->surface && wp_ticking())
+  if (!out->surface)
+    return;
+  if (out->held) {
+    out->held = false;
+    draw(out, true);
+  } else if (wp_ticking()) {
     draw(out, false);
+  }
 }
 
 /* ---- drawing ---- */
@@ -347,6 +369,18 @@ const char *wp_surfaces_viz_renderer(void) {
 static void draw(struct output *out, bool full) {
   if (!out->surface || !out->configured || out->width <= 0)
     return;
+  /* Taking over from a replaced daemon: its wallpaper stays on screen
+   * until its lines are gone. */
+  int64_t wait = wp_join_wait();
+  if (wait > 0) {
+    out->held = true;
+    loop_timer_arm(out->fps_timer, wait, 0);
+    return;
+  }
+  if (out->held) {
+    out->held = false;
+    full = true;
+  }
   int pw = output_scale_px(out, out->width);
   int ph = output_scale_px(out, out->height);
   if (full)
@@ -510,7 +544,7 @@ static void draw(struct output *out, bool full) {
                       fabs(f.percent - out->bar_percent) < 0.01 &&
                       f.bar_fade == out->bar_fade)) &&
         bsx == out->bar_sx && bsy == out->bar_sy) {
-      if (wp_ticking())
+      if (wp_ticking() || wp_joining())
         request_frame(out);
       wl_surface_commit(out->surface);
       out->last_draw = now;
@@ -573,7 +607,7 @@ static void draw(struct output *out, bool full) {
                                  pr[k].h);
     }
   }
-  if (wp_ticking())
+  if (wp_ticking() || wp_joining())
     request_frame(out);
   wl_surface_commit(out->surface);
   b->busy = true;
@@ -679,6 +713,8 @@ static void destroy_surface(struct output *out) {
   out->surface = NULL;
   out->configured = false;
   out->retry = false;
+  out->held = false;
+  out->presented = false;
   out->scale120 = 0;
   out->width = out->height = 0;
 }

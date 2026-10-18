@@ -152,9 +152,9 @@ int main(void) {
   snprintf(sock_path, sizeof(sock_path), "/tmp/swell-test-ipc-%d.sock",
            (int)getpid());
   loop = loop_create();
-  assert(ipc_server_start(loop, sock_path, false, handler, NULL));
+  assert(ipc_server_start(loop, sock_path, false, NULL, handler, NULL));
   /* a second server on the same path refuses without --replace */
-  assert(!ipc_server_start(loop, sock_path, false, handler, NULL));
+  assert(!ipc_server_start(loop, sock_path, false, NULL, handler, NULL));
 
   struct loop_timer *guard =
       loop_add_timer(loop, CLOCK_MONOTONIC, on_guard, NULL);

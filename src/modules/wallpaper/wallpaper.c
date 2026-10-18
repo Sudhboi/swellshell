@@ -29,6 +29,7 @@
 #include "bus.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "ext-idle-notify-v1-client-protocol.h"
+#include "handover.h"
 #include "ipc.h"
 #include "loop.h"
 #include "module.h"
@@ -94,6 +95,22 @@ static struct {
   int nrings;
   unsigned kicks_seen;
 
+  /* a restart (handover.h). Replaced: our lines fade out from leave_at.
+   * Replacing: nothing is drawn before join_at (the old lines are gone),
+   * then ours fade in from the first frame (join_at then). Through it the
+   * snowflake follows one curve both daemons compute (handover_angle): from
+   * join_angle at join_from, turning join_spin rad/s, eased to join_rest; the
+   * old daemon goes once every output shows us (joining). What's
+   * playing shows at once: the first frame waits (until join_media_until at
+   * most) for the first poll and its cover, and the details start as bright as
+   * the old ones. */
+  int64_t leave_at, join_at, join_from; /* ms, 0: none */
+  double join_angle, join_spin, join_rest;
+  bool join_turn; /* the angle is still to be taken over */
+  bool joining;
+  bool join_media;
+  int64_t join_media_until;
+
   /* measured frame rate */
   int64_t fps_start;
   int fps_frames;
@@ -130,11 +147,17 @@ static bool map_fading(void) {
   return wp_topo(&w.cfg) && fabs(w.map_alpha - map_target()) > 1e-6;
 }
 
+/* The lines fading out (replaced) or in (replacing). */
+static bool handing(void) {
+  int64_t at = w.leave_at ? w.leave_at : w.join_at;
+  return at && now_ms() < at + w.cfg.handover_ms;
+}
+
 bool wp_ticking(void) {
   if (show_holding())
     return false;
   return w.animating || w.dozing || w.saving || w.saver_mix > 0 ||
-         wp_showing() || map_fading() || w.peek;
+         wp_showing() || map_fading() || w.peek || handing();
 }
 
 static bool viz_showing(void) {
@@ -161,7 +184,7 @@ static bool reacting(void) {
 /* The resting spin is slow enough for a low rate; a pointer-boosted one
  * and moving bars need more frames to look smooth. */
 int wp_fps_cap(void) {
-  if (wp_showing() || map_fading())
+  if (wp_showing() || map_fading() || handing())
     return 0;
   /* Smooth while it pops, expands, the hold runs or the lines spring. */
   if (w.peek && wp_peek_moving(w.peek, now_ms()))
@@ -200,6 +223,30 @@ static void set_target(double pct) {
     wp_surfaces_draw(false);
 }
 
+/* How fast the snowflake turns now, rad/s. */
+static double spin_omega(void) {
+  double music = w.cfg.react_spin
+                     ? w.cfg.react_spin_gain * w.react.energy + w.react.kick
+                     : 0;
+  double omega = w.cfg.spin_speed * (1 + w.boost + music);
+  return copysign(fmin(fabs(omega), w.cfg.spin_visible_max), omega) * M_PI /
+         180;
+}
+
+/* A restart's spin eases from join_spin to join_rest with this time
+ * constant, s. */
+#define HANDOVER_SPIN_TAU 0.3
+
+/* Where the snowflake is at now on a restart's curve: the old daemon turns
+ * it so after answering, the new one starts from it. */
+static double handover_angle(int64_t now) {
+  double t = fmax((now - w.join_from) / 1000.0, 0);
+  double ease = HANDOVER_SPIN_TAU * (1 - exp(-t / HANDOVER_SPIN_TAU));
+  return fmod(w.join_angle + w.join_rest * t +
+                  (w.join_spin - w.join_rest) * ease,
+              2 * M_PI);
+}
+
 /* Returns the time advanced, in seconds. bar_only: the logo stays put. */
 static double advance(int64_t now, bool bar_only) {
   /* Clamped, so a stall (or a freeze) doesn't make anything jump. */
@@ -213,13 +260,10 @@ static double advance(int64_t now, bool bar_only) {
   w.phase = fmod(w.phase + dt / wp_pulse_period(&w.cfg, shown_percent()), 1);
   if (bar_only)
     return dt;
-  double music =
-      w.cfg.react_spin ? w.cfg.react_spin_gain * w.react.energy + w.react.kick
-                       : 0;
-  double omega = w.cfg.spin_speed * (1 + w.boost + music);
-  omega = copysign(fmin(fabs(omega), w.cfg.spin_visible_max), omega) * M_PI /
-          180;
-  w.angle = fmod(w.angle + omega * dt, 2 * M_PI);
+  if (w.leave_at)
+    w.angle = handover_angle(now);
+  else
+    w.angle = fmod(w.angle + spin_omega() * dt, 2 * M_PI);
   if (now - w.last_motion >= w.cfg.spin_hold_ms)
     w.boost *= exp(-dt / w.cfg.spin_decay_s);
   if (w.boost < 1e-3)
@@ -279,6 +323,17 @@ static void advance_drift(double dt) {
 }
 
 static double smooth(double t) { return t * t * (3 - 2 * t); }
+
+/* Black over the map for a restart: 0 .. 1 as the old lines go, 1 .. 0 as
+ * the new ones come. */
+static double handover_fade(int64_t now) {
+  double ms = w.cfg.handover_ms;
+  if (w.leave_at)
+    return ms > 0 ? smooth(fmin(fmax((now - w.leave_at) / ms, 0), 1)) : 1;
+  if (w.join_at)
+    return ms > 0 ? 1 - smooth(fmin(fmax((now - w.join_at) / ms, 0), 1)) : 0;
+  return 0;
+}
 
 /* A triangle wave through 0 at p = 0, rising: the bounce off two edges. */
 static double bounce(double p) { return 2 / M_PI * asin(sin(2 * M_PI * p)); }
@@ -428,6 +483,12 @@ bool wp_peek_moving(const struct peek *pk, int64_t now) {
 }
 
 void wp_frame_at(int64_t now, struct wp_frame *f) {
+  if (w.join_turn) {
+    w.join_turn = false;
+    w.join_at = now; /* our lines fade in from here */
+    w.angle = handover_angle(now);
+    w.last = now;
+  }
   if (w.animating) {
     double dt = advance(now, false);
     advance_viz(dt);
@@ -504,6 +565,7 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
     f->rings[i].radius = w.rings[i].age * w.cfg.topo_ring_speed;
     f->rings[i].size = w.rings[i].size * life * life;
   }
+  f->bg_fade = handover_fade(now);
   wp_peek_frame(w.peek, w.ws_empty, now, f);
   f->peek_area = false;
   show_frame(now, f);
@@ -799,6 +861,85 @@ static void pick_map(void) {
   w.cfg.topo_angle = angle;
 }
 
+/* ---- restarts ---- */
+
+/* The old daemon stays this long past its lines going, at most, for us. */
+#define HANDOVER_STAY_MS 6000
+/* Replacing it, the first frame waits at most this long for what's
+ * playing. */
+#define JOIN_MEDIA_MS 1000
+
+int wp_handover(struct reply *r) {
+  int64_t now = now_ms();
+  bool lines = wp_topo(&w.cfg) && w.map_alpha > 0 && w.cfg.handover_ms > 0;
+  int64_t clear = now + (lines ? w.cfg.handover_ms : 0);
+  /* From here both turn the snowflake on one curve (handover_angle);
+   * frozen, it stays put. */
+  bool turning = w.animating || w.saving;
+  w.join_from = now;
+  w.join_angle = w.angle;
+  w.join_spin = turning ? spin_omega() : 0;
+  w.join_rest = turning ? w.cfg.spin_speed * M_PI / 180 : 0;
+  reply_printf(r,
+               "wallpaper now=%lld clear=%lld angle=%.9f spin=%.9f rest=%.9f "
+               "media=%.4f\n",
+               (long long)now, (long long)clear, w.join_angle, w.join_spin,
+               w.join_rest, w.media_alpha);
+  bool was_ticking = wp_ticking();
+  w.leave_at = now; /* (a frozen wallpaper's lines are already gone) */
+  if (lines && !was_ticking)
+    wp_surfaces_draw(false); /* and every draw asks for the next frame */
+  return (int)(clear - now) + HANDOVER_STAY_MS;
+}
+
+/* Replacing a daemon whose wallpaper said where it was. */
+static void join(void) {
+  const char *s = handover_get("wallpaper");
+  long long now, clear;
+  double media;
+  if (!s ||
+      sscanf(s, "now=%lld clear=%lld angle=%lf spin=%lf rest=%lf media=%lf",
+             &now, &clear, &w.join_angle, &w.join_spin, &w.join_rest,
+             &media) != 6)
+    return;
+  w.media_alpha = fmin(fmax(media, 0), 1);
+  w.join_from = now;
+  w.join_at = clear > 0 ? clear : 1;
+  w.join_turn = w.joining = true;
+  handover_hold();
+}
+
+/* The first poll is in, and its cover if it has one. */
+static bool media_in(void) {
+  const struct wp_media *m = wp_media_get();
+  unsigned id;
+  return !m->has || !w.cfg.media_art || !m->art_url[0] || wp_media_art(&id);
+}
+
+void wp_media_in(void) {
+  if (!w.join_media || !media_in())
+    return;
+  w.join_media = false;
+  wp_surfaces_draw(false); /* the held first frame, now or re-timed */
+}
+
+int64_t wp_join_wait(void) {
+  int64_t until = w.join_at;
+  if (w.join_media && w.join_media_until > until)
+    until = w.join_media_until;
+  int64_t left = until - now_ms();
+  return left > 0 ? left : 0;
+}
+
+bool wp_joining(void) { return w.joining; }
+
+void wp_joined(void) {
+  if (!w.joining)
+    return;
+  w.joining = false;
+  handover_release();
+}
+
 bool wp_init(struct swell *sw, const void *cfg) {
   if (!sw->wl->layer_shell) {
     warn("wallpaper: the compositor lacks wlr-layer-shell");
@@ -816,6 +957,7 @@ bool wp_init(struct swell *sw, const void *cfg) {
   w.hold_timer = loop_add_timer(sw->loop, CLOCK_MONOTONIC, on_hold_timer, NULL);
   srand48(now_ms() ^ getpid());
   pick_map();
+  join();
   int pct;
   bool charging;
   w.battery = battery_read(&pct, &charging) ? (pct > 100 ? 100 : pct) : -1;
@@ -833,8 +975,12 @@ bool wp_init(struct swell *sw, const void *cfg) {
   w.ws_empty = empty != 0; /* without a window manager: always animate */
   w.map_alpha = map_target();
   w.map_last = now_ms();
+  if (w.join_at && w.ws_empty && !w.idle && w.cfg.media) {
+    w.join_media = true;
+    w.join_media_until = now_ms() + JOIN_MEDIA_MS;
+  }
   update_animating();
-  if (w.cfg.intro && w.animating && intro_first())
+  if (w.cfg.intro && w.animating && !w.join_at && intro_first())
     show_start(WP_SHOW_INTRO);
   return true;
 }
@@ -877,6 +1023,7 @@ void wp_reconfigure(const void *cfg) {
 }
 
 void wp_finish(void) {
+  wp_joined();
   bus_unsubscribe(on_bus, NULL);
   peek_set_sink(NULL);
   w.peek = NULL;

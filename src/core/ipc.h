@@ -26,9 +26,10 @@ typedef int (*ipc_handler_fn)(int argc, char **argv, struct reply *r,
 const char *ipc_socket_path(void);
 
 /* Listen on path. If a daemon already answers there: with replace, ask it to
- * quit and wait (up to 3 s) for it to go; otherwise fail. */
+ * `quit handover` and wait (up to 5 s) for it to go, its answer in answer
+ * (may be NULL; see handover.h); otherwise fail. */
 bool ipc_server_start(struct loop *loop, const char *path, bool replace,
-                      ipc_handler_fn fn, void *data);
+                      struct reply *answer, ipc_handler_fn fn, void *data);
 /* Close and unlink the socket. */
 void ipc_server_stop(void);
 

@@ -172,6 +172,7 @@ static const struct wallpaper_config defaults = {
     .peek_slide = 60,
     .peek_hold_width = 4,
     .peek_warn = 0xff5a5affu,
+    .handover_ms = 500,
     .intro = true,
     .intro_ms = 1100,
     .intro_stagger_ms = 90,
@@ -535,6 +536,10 @@ static const struct cfg_field fields[] = {
                "the line that grows under the clock while the key is held, "
                "px (0: none)"),
     CFG_COLOR(S, peek_warn, "low battery and urgent workspaces"),
+    CFG_INT(S, handover_ms, 0, 2500,
+            "when the daemon is restarted (run again, e.g. by `exec_always` "
+            "on a sway reload) the old map's lines fade out and the new "
+            "one's fade in, each this long; the snowflake stays"),
     CFG_BOOL(S, intro,
              "launch animation: the lambdas fly in and lock together, when "
              "the daemon starts on an empty workspace (once per login)"),
@@ -577,4 +582,5 @@ const struct swell_module wallpaper_module = {
     .reconfigure = wp_reconfigure,
     .finish = wp_finish,
     .command = wp_command,
+    .handover = wp_handover,
 };

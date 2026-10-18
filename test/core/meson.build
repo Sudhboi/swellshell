@@ -10,3 +10,7 @@ test('core-niri', test_niri)
 
 test_peek = executable('test_peek', 'test_peek.c', dependencies: core_dep)
 test('core-peek', test_peek)
+
+test_handover = executable('test_handover', 'test_handover.c',
+  dependencies: core_dep)
+test('core-handover', test_handover, timeout: 20)

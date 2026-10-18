@@ -291,8 +291,9 @@ static bool socket_alive(const char *path) {
 }
 
 /* Take $path.lock, which a daemon holds for its whole life. With replace,
- * keep asking the holder to quit until it lets go (up to 5 s). */
-static int take_lock(const char *path, bool replace) {
+ * keep asking the holder to quit (handing over) until it lets go (up to
+ * 5 s); its first answer goes to answer. */
+static int take_lock(const char *path, bool replace, struct reply *answer) {
   char lock_path[128];
   snprintf(lock_path, sizeof(lock_path), "%s.lock", path);
   int fd = open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
@@ -312,8 +313,10 @@ static int take_lock(const char *path, bool replace) {
     if (now_ms() >= next_quit && socket_alive(path)) {
       struct reply r = {0};
       bool ok;
-      char *quit[] = {"quit"};
-      ipc_client_send(path, 1, quit, &r, &ok);
+      char *quit[] = {"quit", "handover"};
+      if (ipc_client_send(path, 2, quit, &r, &ok) == 0 && ok && answer &&
+          !answer->len && r.len)
+        reply_printf(answer, "%s", r.buf);
       reply_free(&r);
       next_quit = now_ms() + 200;
     }
@@ -329,11 +332,11 @@ static int take_lock(const char *path, bool replace) {
 }
 
 bool ipc_server_start(struct loop *loop, const char *path, bool replace,
-                      ipc_handler_fn fn, void *data) {
+                      struct reply *answer, ipc_handler_fn fn, void *data) {
   struct sockaddr_un addr;
   if (!make_addr(path, &addr) || strlen(path) + 6 > sizeof(srv.path))
     return false;
-  int lock_fd = take_lock(path, replace);
+  int lock_fd = take_lock(path, replace, answer);
   if (lock_fd < 0)
     return false;
 

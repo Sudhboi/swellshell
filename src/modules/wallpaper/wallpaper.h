@@ -188,6 +188,9 @@ struct wallpaper_config {
   double peek_slide;     /* in from the screen's sides, reference px */
   double peek_hold_width; /* the line under the clock while held, ref px */
   uint32_t peek_warn;                    /* low battery, urgent workspaces */
+  /* a restart (`swell daemon` again, e.g. on a sway reload): the old
+   * daemon's lines fade out, then the new one's fade in, each this long */
+  int handover_ms;
   /* the launch animation: the lambdas fly in and lock together, once per
    * login session, when the daemon starts on an empty workspace */
   bool intro;
@@ -459,6 +462,7 @@ bool wp_init(struct swell *sw, const void *cfg);
 void wp_reconfigure(const void *cfg);
 void wp_finish(void);
 int wp_command(int argc, char **argv, struct reply *r);
+int wp_handover(struct reply *r);
 
 /* media.c: what's playing, polled with playerctl only while animating */
 struct wp_media {
@@ -574,6 +578,14 @@ bool wp_ticking(void);
 bool wp_showing(void);
 /* The frame rate cap right now (0: none). */
 int wp_fps_cap(void);
+/* Taking over from a replaced daemon (handover.h): ms until we may draw
+ * (its lines are gone), 0: now. */
+int64_t wp_join_wait(void);
+/* Not every output has shown our frame yet; wp_joined once they have. */
+bool wp_joining(void);
+void wp_joined(void);
+/* media.c: a poll's result or a cover is in. */
+void wp_media_in(void);
 /* Fill f's peek fields from the popup's timeline pk (NULL: none) at now;
  * none with a window open (ws_empty false). */
 struct peek;

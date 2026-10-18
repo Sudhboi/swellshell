@@ -729,6 +729,8 @@ peek_slide = 60.0
 peek_hold_width = 4.0
 # low battery and urgent workspaces
 peek_warn = "#ff5a5a"
+# when the daemon is restarted (run again, e.g. by `exec_always` on a sway reload) the old map's lines fade out and the new one's fade in, each this long; the snowflake stays
+handover_ms = 500
 # launch animation: the lambdas fly in and lock together, when the daemon starts on an empty workspace (once per login)
 intro = true
 # each lambda's flight

@@ -13,12 +13,13 @@
 
 #include "bus.h"
 #include "config.h"
+#include "handover.h"
 #include "ipc.h"
 #include "loop.h"
 #include "module.h"
-#include "wm.h"
 #include "util.h"
 #include "wl.h"
+#include "wm.h"
 
 #ifndef SWELL_VERSION
 #define SWELL_VERSION "dev"
@@ -28,6 +29,7 @@ struct module_state {
   void *cfg;
   bool enabled; /* per the config */
   bool running; /* init succeeded */
+  bool staying; /* replaced, it still shows something (handover) */
 };
 
 static struct {
@@ -35,6 +37,9 @@ static struct {
   struct cfg_doc doc;
   struct module_state *mods;
   time_t config_mtime;
+  /* replaced: the socket goes at once, the staying modules after this */
+  struct loop_timer *retire;
+  int64_t linger_ms;
 } d;
 
 /* ---- config ---- */
@@ -174,6 +179,43 @@ static int reload_config(struct reply *r) {
   return 0;
 }
 
+/* ---- being replaced ---- */
+
+/* Once the answer has gone: let go of the socket (and its lock) for the
+ * new daemon, stop the modules that showed nothing, and give the rest
+ * linger_ms (the new daemon's SIGTERM usually comes first). */
+static void on_retire(struct loop_timer *t, void *data) {
+  if (d.linger_ms <= 0) {
+    loop_quit(d.sw.loop);
+    return;
+  }
+  ipc_server_stop();
+  for (size_t i = swell_nmodules; i-- > 0;)
+    if (!d.mods[i].staying)
+      stop_module(i);
+  loop_timer_arm(t, d.linger_ms, 0);
+  d.linger_ms = 0;
+}
+
+/* `quit handover` from a new daemon: see handover.h. */
+static int hand_over(struct reply *r) {
+  if (d.retire)
+    return 0; /* already going */
+  reply_printf(r, "handover %d\n", (int)getpid());
+  for (size_t i = 0; i < swell_nmodules; ++i) {
+    const struct swell_module *m = swell_modules[i];
+    if (!d.mods[i].running || !m->handover)
+      continue;
+    int ms = m->handover(r);
+    d.mods[i].staying = ms > 0;
+    if (ms > d.linger_ms)
+      d.linger_ms = ms;
+  }
+  d.retire = loop_add_timer(d.sw.loop, CLOCK_MONOTONIC, on_retire, NULL);
+  loop_timer_arm(d.retire, 1, 0);
+  return 0;
+}
+
 /* ---- commands ---- */
 
 static void print_help(FILE *f, struct reply *r) {
@@ -211,6 +253,8 @@ static void print_help(FILE *f, struct reply *r) {
 static int handle(int argc, char **argv, struct reply *r, void *data) {
   const char *cmd = argv[0];
   if (strcmp(cmd, "quit") == 0) {
+    if (argc > 1 && strcmp(argv[1], "handover") == 0)
+      return hand_over(r);
     loop_quit(d.sw.loop);
     return 0;
   }
@@ -283,8 +327,14 @@ static int run_daemon(int argc, char **argv) {
 
   d.sw.loop = loop_create();
   d.sw.daemon = true;
-  if (!ipc_server_start(d.sw.loop, ipc_socket_path(), replace, handle, NULL))
+  struct reply answer = {0};
+  if (!ipc_server_start(d.sw.loop, ipc_socket_path(), replace, &answer, handle,
+                        NULL)) {
+    reply_free(&answer);
     return 1;
+  }
+  handover_parse(answer.buf);
+  reply_free(&answer);
 
   cfg_load(&d.doc, config_path);
   warn_unknown_sections(&d.doc);
@@ -298,15 +348,19 @@ static int run_daemon(int argc, char **argv) {
     d.mods[i].cfg = build_config(swell_modules[i], &d.doc, &d.mods[i].enabled);
   for (size_t i = 0; i < swell_nmodules; ++i)
     start_module(i);
+  handover_settle(d.sw.loop);
 
   loop_run(d.sw.loop);
 
   ipc_server_stop();
+  if (d.retire)
+    loop_remove_timer(d.retire);
   for (size_t i = swell_nmodules; i-- > 0;) {
     stop_module(i);
     free_config(swell_modules[i], d.mods[i].cfg);
   }
   free(d.mods);
+  handover_finish();
   wm_finish();
   wl_destroy(d.sw.wl);
   cfg_free(&d.doc);

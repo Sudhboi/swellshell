@@ -75,6 +75,7 @@ core_src = files(
   'src/core/buffer.c',
   'src/core/bus.c',
   'src/core/config.c',
+  'src/core/handover.c',
   'src/core/info.c',
   'src/core/ipc.c',
   'src/core/loop.c',
