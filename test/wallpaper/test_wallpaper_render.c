@@ -87,6 +87,119 @@ static cairo_surface_t *render(const struct wallpaper_config *c,
   return s;
 }
 
+/* What a buffer must repaint for the track's details: the hexagon only
+ * when it paints something, the title only when it differs from what the
+ * buffer holds. */
+static void test_media_kept(const struct wallpaper_config *c,
+                            cairo_surface_t *cover) {
+  /* A track without a length has no hexagon, title or not. (Only topo's
+   * snowflake goes on the GPU.) */
+  struct wp_frame f = {.percent = 50,
+                       .level = 1,
+                       .angle = 0.3,
+                       .media_alpha = 1,
+                       .progress = -1,
+                       .title = "T",
+                       .artist = "A",
+                       .logo_gpu = wp_topo(c)};
+  assert(!wp_hex_shows(c, &f));
+  f.progress = 0.4;
+  assert(wp_hex_shows(c, &f));
+  struct wallpaper_config noline = *c;
+  noline.media_line_width = 0;
+  assert(!wp_hex_shows(&noline, &f));
+  f.art = cover;
+  assert(wp_hex_shows(&noline, &f));
+  struct wallpaper_config noart = noline;
+  noart.media_art = false;
+  assert(!wp_hex_shows(&noart, &f));
+  noline.media_art_alpha = 0;
+  assert(!wp_hex_shows(&noline, &f));
+  f.media_alpha = 0;
+  assert(!wp_hex_shows(c, &f));
+  f.media_alpha = 1;
+
+  /* The title's key: the same through a spin, pulse, glow or progress;
+   * not through a fade, a shake or another track. */
+  struct wp_text_key k0, k1;
+  wp_text_key(c, W, &f, &k0);
+  assert(k0.shown);
+  struct wp_frame g = f;
+  g.angle = 1.2;
+  g.pulse = 0.7;
+  g.glow = 0.5;
+  g.progress = 0.9;
+  wp_text_key(c, W, &g, &k1);
+  assert(wp_text_key_eq(&k0, &k1));
+  struct wp_frame d[4] = {f, f, f, f};
+  d[0].media_alpha = 0.5;
+  d[1].shake_x = 10;
+  d[2].title = "U";
+  d[3].artist = "B";
+  for (int i = 0; i < 4; ++i) {
+    wp_text_key(c, W, &d[i], &k1);
+    assert(!wp_text_key_eq(&k0, &k1));
+  }
+  /* A shake under half a pixel doesn't move the tile. */
+  g = f;
+  g.shake_x = 0.1;
+  wp_text_key(c, W, &g, &k1);
+  assert(wp_text_key_eq(&k0, &k1));
+  /* Nothing shown (hidden, faded out, no title) is all the same. */
+  struct wallpaper_config notitle = *c;
+  notitle.media_title = false;
+  wp_text_key(&notitle, W, &f, &k1);
+  assert(!k1.shown);
+  struct wp_frame h[2] = {f, f};
+  h[0].media_alpha = 0;
+  h[1].title = NULL;
+  for (int i = 0; i < 2; ++i) {
+    wp_text_key(c, W, &h[i], &k0);
+    assert(!k0.shown && wp_text_key_eq(&k0, &k1));
+  }
+
+  /* A partial repaint keeping the title leaves its region alone, and over
+   * a buffer holding the same title equals a full repaint. */
+  cairo_surface_t *t = render(c, f, NULL, NULL);
+  struct wp_rect r[WP_REGIONS];
+  wp_regions_ex(c, W, H, false, true, f.logo_gpu, false, r);
+  assert(r[4].w > 0);
+  int mx = r[4].x + 3, my = r[4].y + r[4].h - 3;
+  cairo_t *cr = cairo_create(t);
+  cairo_set_source_rgb(cr, 1, 0, 1);
+  cairo_rectangle(cr, mx, my, 1, 1);
+  cairo_fill(cr);
+  cairo_destroy(cr);
+  g = f;
+  g.angle = 0.9;
+  g.pulse = 0.5;
+  g.text_kept = true;
+  cr = cairo_create(t);
+  wp_render(cr, c, W, H, &g, false, false, false);
+  cairo_destroy(cr);
+  assert(px(t, mx, my) == 0xff00ff);
+  g.text_kept = false;
+  cr = cairo_create(t);
+  wp_render(cr, c, W, H, &g, false, false, false);
+  cairo_destroy(cr);
+  assert(px(t, mx, my) != 0xff00ff);
+  g.angle = 1.5;
+  g.text_kept = true;
+  cr = cairo_create(t);
+  wp_render(cr, c, W, H, &g, false, false, false);
+  cairo_destroy(cr);
+  cairo_surface_t *b = render(c, g, NULL, NULL);
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x)
+      if (px(t, x, y) != px(b, x, y)) {
+        fprintf(stderr, "%s %d,%d %06x %06x\n", c->style, x, y, px(t, x, y),
+                px(b, x, y));
+        abort();
+      }
+  cairo_surface_destroy(b);
+  cairo_surface_destroy(t);
+}
+
 /* The frame t ms into show s, over a normal frame base. */
 static struct wp_frame show_at(const struct wallpaper_config *c,
                                enum wp_show s, double t,
@@ -1047,6 +1160,8 @@ int main(int argc, char **argv) {
       assert(px(t, x, y) == px(a, x, y));
   cairo_surface_destroy(a);
   cairo_surface_destroy(t);
+  test_media_kept(c, cover);
+  test_media_kept(wallpaper_module.defaults, cover);
   cairo_surface_destroy(cover);
   cairo_surface_destroy(white);
 

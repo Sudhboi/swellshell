@@ -37,7 +37,7 @@ struct painted {
   bool stale;        /* needs a full repaint before partial ones are valid */
   bool ringed;       /* visualiser bars, outside the small logo tile */
   bool still;        /* the frozen frame outside the bar (dozing) */
-  bool texted;       /* the title and artist */
+  struct wp_text_key text; /* the title and artist */
   bool showed;       /* a launch or power-off frame */
   double cpu_bright; /* the cairo map's brightness */
   bool shook;        /* the cairo map, shaken */
@@ -80,6 +80,7 @@ struct output {
   double logo_key[10];  /* the frame it was drawn from, NAN: redraw */
   double bar_sx, bar_sy; /* the shake of the last commit, px */
   double bar_fade;       /* of the last commit */
+  struct wp_text_key text_shown; /* the title the compositor last got */
   int width, height; /* logical, from configure */
   uint32_t scale120;  /* preferred fractional scale, 0 if unknown */
   bool configured;
@@ -532,17 +533,23 @@ static void draw(struct output *out, bool full) {
   cf.logo_box =
       gl_logo && (streaking || EITHER(out, logoed) || EITHER(out, streaked));
   bool ring = cf.nbars > 0 || EITHER(out, ringed);
-  /* The same for the title and artist: a buffer still holding them is
-   * cleared once they're gone. */
-  bool texting = f.media_alpha > 0 && wp_config()->media_title;
-  bool text = texting || EITHER(out, texted);
-  /* With the snowflake on the GPU, and no hexagon, title or bars, only the
-   * bar can change in the buffer: repaint just it, and only if it changed
-   * (or moved with a shake); otherwise commit the GPU's surfaces alone. */
+  /* The title and artist are repainted (or cleared once gone) in a buffer
+   * that doesn't hold them as they are now, and damaged while the
+   * compositor has them otherwise. */
+  struct wp_text_key tk;
+  wp_text_key(wp_config(), pw, &f, &tk);
+  bool text =
+      !wp_text_key_eq(&tk, &p->text) || !wp_text_key_eq(&tk, &out->text_shown);
+  cf.text_kept = !text;
+  bool hex = wp_hex_shows(wp_config(), &f);
+  /* With the snowflake on the GPU, and no hexagon, bars or changing title,
+   * only the bar can change in the buffer: repaint just it, and only if it
+   * changed (or moved with a shake); otherwise commit the GPU's surfaces
+   * alone. */
   double bsx = round(f.shake_x * pw / WP_REF_WIDTH);
   double bsy = round(f.shake_y * pw / WP_REF_WIDTH);
   if (gl_logo && !whole && !cf.logo_box && !ring && !text && !peek_area &&
-      f.media_alpha <= 0 && !EITHER(out, hexed)) {
+      !hex && !EITHER(out, hexed)) {
     /* (A faded bar's pulse shows nothing.) */
     bool bar_gone = f.bar_fade >= 1 && out->bar_fade >= 1;
     if ((bar_gone || (fabs(f.level - out->bar_level) < 0.5 / 255 &&
@@ -571,17 +578,20 @@ static void draw(struct output *out, bool full) {
   out->painted[i] = (struct painted){
       .ringed = cf.nbars > 0,
       .still = wp_dozing(),
-      .texted = texting,
+      /* (A bar-only repaint leaves what the buffer held round it.) */
+      .text = bar_only ? p->text : tk,
       .showed = showing,
       .cpu_bright = bright,
       .shook = shaking,
       .cpu_drift = {cdx, cdy},
       .logoed = !cf.logo_gpu,
       .streaked = streaking,
-      .hexed = f.media_alpha > 0,
+      .hexed = bar_only ? p->hexed : hex,
       .wandered = wandering,
       .peeked = peeking,
   };
+  if (whole || (text && !bar_only))
+    out->text_shown = tk; /* damaged below */
   out->bar_fade = f.bar_fade;
   out->bar_level = f.level;
   out->bar_percent = f.percent;

@@ -40,6 +40,7 @@ static struct {
   int head;            /* next write */
   int rate;
   int64_t last_data; /* ms */
+  uint64_t seq;      /* changes to ring or rate; never restarts */
 } a;
 
 static void on_param_changed(void *data, uint32_t id,
@@ -47,8 +48,10 @@ static void on_param_changed(void *data, uint32_t id,
   if (!param || id != SPA_PARAM_Format)
     return;
   struct spa_audio_info_raw info;
-  if (spa_format_audio_raw_parse(param, &info) >= 0 && info.rate > 0)
+  if (spa_format_audio_raw_parse(param, &info) >= 0 && info.rate > 0) {
     a.rate = (int)info.rate;
+    a.seq++;
+  }
 }
 
 static void on_process(void *data) {
@@ -65,9 +68,12 @@ static void on_process(void *data) {
     if (now - a.last_data > FRESH_MS) {
       /* After a pause, don't analyse what played before it. */
       memset(a.ring, 0, sizeof(a.ring));
+      a.seq++;
     }
-    if (n > 0)
+    if (n > 0) {
       a.last_data = now;
+      a.seq++;
+    }
     for (int i = n > RING ? n - RING : 0; i < n; ++i) {
       a.ring[0][a.head] = s[2 * i];
       a.ring[1][a.head] = s[2 * i + 1];
@@ -218,4 +224,10 @@ bool wp_audio_samples(float *left, float *right, int *rate) {
   }
   *rate = a.rate;
   return true;
+}
+
+uint64_t wp_audio_seq(void) {
+  if (!a.stream || now_ms() - a.last_data > FRESH_MS)
+    return 0;
+  return a.seq;
 }

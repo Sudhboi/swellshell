@@ -102,6 +102,26 @@ void wp_viz_analyse(const float *samples, int rate,
   }
 }
 
+const float (*wp_viz_levels(struct wp_viz_in *in, uint64_t seq,
+                            wp_viz_fetch_fn fetch, void *data,
+                            const struct wallpaper_config *c)) [WP_VIZ_MAX] {
+  if (!seq)
+    return NULL;
+  if (seq != in->seq) {
+    static float samples[2][WP_VIZ_FFT];
+    int rate;
+    fetch(samples[0], samples[1], &rate, data);
+    for (int s = 0; s < 2; ++s)
+      wp_viz_analyse(samples[s], rate, c, in->db[s]);
+    in->seq = seq;
+  }
+  return (const float (*)[WP_VIZ_MAX])in->db;
+}
+
+void wp_viz_forget(struct wp_viz_in *in) {
+  in->seq = 0;
+}
+
 /* A bass hit: the bass power (40..KICK_HZ) jumped KICK_RISE_DB above its
  * lowest in the last KICK_WINDOW_S, and isn't far below the loudest recent
  * band. A held note kicks once: the next kick needs the bass to fall back a

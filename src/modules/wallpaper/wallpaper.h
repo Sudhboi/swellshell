@@ -247,6 +247,9 @@ struct wp_frame {
    * repaint only the hexagon's box round it unless logo_box (a buffer
    * still holds the CPU's snowflake or speed lines). */
   bool logo_gpu, logo_box;
+  /* The buffer already holds this title and artist (wp_text_key): leave
+   * their region out. */
+  bool text_kept;
   double sway;    /* the map's sway, 0..1 (loudness) */
   double time;    /* s, drives the sway */
   double drift_x, drift_y; /* the map's slow drift at rest, ref px */
@@ -290,6 +293,19 @@ void wp_regions(const struct wallpaper_config *c, int pw, int ph, bool ring,
 void wp_regions_ex(const struct wallpaper_config *c, int pw, int ph, bool ring,
                    bool text, bool logo_gpu, bool logo_box,
                    struct wp_rect out[WP_REGIONS]);
+/* What frame f draws of the title and artist: a buffer holding the same
+ * needn't repaint them. Nothing shown is one key. */
+struct wp_text_key {
+  bool shown;
+  double alpha;
+  long x, y;     /* the shake, whole buffer px */
+  uint64_t text; /* a hash of the title and artist */
+};
+void wp_text_key(const struct wallpaper_config *c, int pw,
+                 const struct wp_frame *f, struct wp_text_key *k);
+bool wp_text_key_eq(const struct wp_text_key *a, const struct wp_text_key *b);
+/* Whether frame f's hexagon paints anything (a cover or a progress line). */
+bool wp_hex_shows(const struct wallpaper_config *c, const struct wp_frame *f);
 /* Draw a frame into a pw x ph buffer. full repaints everything, otherwise
  * only the wp_regions() areas (with ring and text) are touched. */
 void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
@@ -408,6 +424,24 @@ struct wp_viz {
  * left and right channel (NULL: silence). */
 void wp_viz_step(struct wp_viz *v, const struct wallpaper_config *c,
                  const float (*db)[WP_VIZ_MAX], double dt);
+/* The band levels of the latest audio, analysed once per block of samples
+ * (the display can tick faster than the audio arrives). */
+struct wp_viz_in {
+  uint64_t seq; /* the block db holds, 0: none */
+  float db[2][WP_VIZ_MAX];
+};
+/* Copies the last WP_VIZ_FFT samples of the left and right channel and
+ * gives the rate. */
+typedef void (*wp_viz_fetch_fn)(float *left, float *right, int *rate,
+                                void *data);
+/* The levels of the left and right channel for audio block seq (0: no
+ * fresh audio, NULL back), fetched and analysed only if in doesn't hold
+ * that block yet. */
+const float (*wp_viz_levels(struct wp_viz_in *in, uint64_t seq,
+                            wp_viz_fetch_fn fetch, void *data,
+                            const struct wallpaper_config *c))[WP_VIZ_MAX];
+/* Drop the held block (the config changed). */
+void wp_viz_forget(struct wp_viz_in *in);
 /* The n bars (bass first) resampled and smoothed to WP_SPEC bands. */
 void wp_viz_spectrum(const float *bars, int n, float *out);
 /* What the logo reacts to, from the bars. */
@@ -454,6 +488,9 @@ const char *wp_audio_state(void);
  * channel and give the rate. Returns false if no fresh audio arrived
  * lately. */
 bool wp_audio_samples(float *left, float *right, int *rate);
+/* Counts the changes to those samples (and rate), 1 up; 0 if no fresh
+ * audio arrived lately. */
+uint64_t wp_audio_seq(void);
 
 /* wallpaper.c: the module's entry points (settings.c's descriptor) */
 struct swell;

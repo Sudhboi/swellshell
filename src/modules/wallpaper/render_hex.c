@@ -115,6 +115,14 @@ static void stroke_hex(cairo_t *cr, const uint32_t *edge, uint32_t col,
   cairo_restore(cr);
 }
 
+bool wp_hex_shows(const struct wallpaper_config *c, const struct wp_frame *f) {
+  if (f->media_alpha <= 0)
+    return false;
+  bool art = c->media_art && f->art && c->media_art_alpha > 0;
+  bool line = c->media_line_width > 0 && f->progress >= 0;
+  return art || line;
+}
+
 /* What's playing, in the snowflake's hole (resting radius r, now rp): the
  * cover in grey, with a line round its border, clockwise from the top, as
  * far as the track has played. The hexagon, the cover and the line turn with

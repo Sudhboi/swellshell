@@ -319,6 +319,32 @@ static void draw_text(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_restore(cr);
 }
 
+static uint64_t fnv(uint64_t h, const char *s) {
+  for (; *s; ++s)
+    h = (h ^ (unsigned char)*s) * 0x100000001b3ull;
+  return (h ^ 0xff) * 0x100000001b3ull; /* the end, so "ab","c" != "a","bc" */
+}
+
+void wp_text_key(const struct wallpaper_config *c, int pw,
+                 const struct wp_frame *f, struct wp_text_key *k) {
+  /* What draw_text() draws, and where. */
+  *k = (struct wp_text_key){0};
+  if (!c->media_title || f->media_alpha <= 0 || !f->title)
+    return;
+  double s = pw / WP_REF_WIDTH;
+  k->shown = true;
+  k->alpha = fmin(f->media_alpha, 1);
+  k->x = lround(f->shake_x * s);
+  k->y = lround(f->shake_y * s);
+  k->text =
+      fnv(fnv(0xcbf29ce484222325ull, f->title), f->artist ? f->artist : "");
+}
+
+bool wp_text_key_eq(const struct wp_text_key *a, const struct wp_text_key *b) {
+  return a->shown == b->shown && a->alpha == b->alpha && a->x == b->x &&
+         a->y == b->y && a->text == b->text;
+}
+
 void wp_render_finish(void) {
   wp_render_logo_finish();
   wp_render_viz_finish();
@@ -335,8 +361,9 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   if (!full) {
     struct wp_rect r[WP_REGIONS];
     wp_regions_ex(c, pw, ph, ring || f->nbars > 0,
-                  text || (c->media_title && f->media_alpha > 0), f->logo_gpu,
-                  f->logo_box, r);
+                  !f->text_kept &&
+                      (text || (c->media_title && f->media_alpha > 0)),
+                  f->logo_gpu, f->logo_box, r);
     for (int i = 0; i < WP_REGIONS; ++i)
       if (r[i].w > 0 && r[i].h > 0)
         cairo_rectangle(cr, r[i].x, r[i].y, r[i].w, r[i].h);

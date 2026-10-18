@@ -65,6 +65,7 @@ static struct {
   double px, py;
   int64_t last_motion; /* ms of the last boosting pointer motion */
   struct wp_viz viz;
+  struct wp_viz_in viz_in; /* the last audio block's band levels */
   double viz_time; /* s, drives the bars' wobble */
   struct wp_react react;
   double spin_glow; /* spin_glow(), smoothed so beats swell, not flash */
@@ -354,19 +355,17 @@ static void wander(double *x, double *y) {
   *y = m * bounce(w.saver_t * w.cfg.saver_speed / (4 * ty));
 }
 
+static void fetch_audio(float *left, float *right, int *rate, void *data) {
+  wp_audio_samples(left, right, rate);
+}
+
 /* Move the bars on by dt towards the latest audio (silence without any). */
 static void advance_viz(double dt) {
   if (dt <= 0)
     return;
-  static float samples[2][WP_VIZ_FFT];
-  float db[2][WP_VIZ_MAX];
-  int rate;
-  bool fresh = w.cfg.viz && wp_audio_samples(samples[0], samples[1], &rate);
-  if (fresh)
-    for (int s = 0; s < 2; ++s)
-      wp_viz_analyse(samples[s], rate, &w.cfg, db[s]);
-  wp_viz_step(&w.viz, &w.cfg, fresh ? (const float (*)[WP_VIZ_MAX])db : NULL,
-              dt);
+  uint64_t seq = w.cfg.viz ? wp_audio_seq() : 0;
+  wp_viz_step(&w.viz, &w.cfg,
+              wp_viz_levels(&w.viz_in, seq, fetch_audio, NULL, &w.cfg), dt);
   wp_react_step(&w.react, &w.viz, &w.cfg, dt);
   advance_rings(dt);
   double target = spin_glow();
@@ -1014,6 +1013,7 @@ bool wp_init(struct swell *sw, const void *cfg) {
 void wp_reconfigure(const void *cfg) {
   struct wallpaper_config old = w.cfg;
   w.cfg = *(const struct wallpaper_config *)cfg;
+  wp_viz_forget(&w.viz_in); /* bands may have changed */
   pick_map();
   if (strcmp(old.style, w.cfg.style))
     check_style();

@@ -17,6 +17,16 @@ static void tone(float *s, double hz, double amp) {
     s[i] = (float)(amp * sin(2 * M_PI * hz * i / RATE));
 }
 
+/* A fake audio source for wp_viz_levels: counts fetches. */
+static int fetches;
+static double fetch_hz = 440;
+static void fetch(float *left, float *right, int *rate, void *data) {
+  fetches++;
+  tone(left, fetch_hz, 0.5);
+  tone(right, fetch_hz, 0.25);
+  *rate = RATE;
+}
+
 /* The band whose level is highest. */
 static int loudest(const float *db, int n) {
   int best = 0;
@@ -50,6 +60,37 @@ int main(void) {
   tone(s, 1000, 1.0);
   wp_viz_analyse(s, RATE, c, db);
   assert(fabs(db[loudest(db, n)]) < 3);
+
+  /* Levels are analysed once per audio block, however many frames ask:
+   * the display ticks faster than PipeWire delivers. */
+  {
+    struct wp_viz_in in = {0};
+    float want[2][WP_VIZ_MAX];
+    tone(s, 440, 0.5);
+    wp_viz_analyse(s, RATE, c, want[0]);
+    tone(s, 440, 0.25);
+    wp_viz_analyse(s, RATE, c, want[1]);
+    assert(wp_viz_levels(&in, 0, fetch, NULL, c) == NULL); /* no audio */
+    assert(fetches == 0);
+    const float (*l)[WP_VIZ_MAX] = wp_viz_levels(&in, 5, fetch, NULL, c);
+    assert(fetches == 1 && l);
+    assert(!memcmp(l[0], want[0], n * sizeof(float)));
+    assert(!memcmp(l[1], want[1], n * sizeof(float)));
+    for (int i = 0; i < 3; ++i)
+      assert(wp_viz_levels(&in, 5, fetch, NULL, c) == l);
+    assert(fetches == 1);
+    /* A new block is analysed. */
+    fetch_hz = 4000;
+    l = wp_viz_levels(&in, 6, fetch, NULL, c);
+    assert(fetches == 2 && loudest(l[0], n) == loudest(l[1], n));
+    assert(abs(loudest(l[0], n) - band_of(c, 4000)) <= 1);
+    /* Silence in between keeps the block: the same number again is the
+     * same samples. A reload forgets it. */
+    assert(wp_viz_levels(&in, 0, fetch, NULL, c) == NULL);
+    assert(wp_viz_levels(&in, 6, fetch, NULL, c) && fetches == 2);
+    wp_viz_forget(&in);
+    assert(wp_viz_levels(&in, 6, fetch, NULL, c) && fetches == 3);
+  }
 
   /* Bars: a tone eases in over a few frames (not in one jump), to full
    * height after auto-sensitivity, on the side of the channel that carries
