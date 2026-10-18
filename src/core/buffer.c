@@ -67,3 +67,18 @@ void buffer_destroy(struct buffer *buf) {
   munmap(buf->data, buf->size);
   free(buf);
 }
+
+int buffer_format_rank(uint32_t format) {
+  switch (format) {
+  case WL_SHM_FORMAT_ARGB8888:
+    return 4;
+  case WL_SHM_FORMAT_XRGB8888:
+    return 3;
+  case WL_SHM_FORMAT_ABGR8888:
+    return 2;
+  case WL_SHM_FORMAT_XBGR8888:
+    return 1;
+  default:
+    return 0;
+  }
+}

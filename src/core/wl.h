@@ -51,6 +51,7 @@ struct swell_wl {
   struct wp_cursor_shape_manager_v1 *cursor_shape;
   struct ext_idle_notifier_v1 *idle_notifier; /* NULL if unsupported */
   struct ext_foreign_toplevel_image_capture_source_manager_v1 *source_manager;
+  struct ext_output_image_capture_source_manager_v1 *output_source_manager;
   struct ext_image_copy_capture_manager_v1 *copy_manager;
   /* ext_foreign_toplevel_list_v1 is bound on demand (wl_bind_toplevel_list)
    * because its listener must be attached at bind time. */

@@ -30,6 +30,7 @@ struct swell_module {
   bool needs_wayland;
   bool needs_wm;   /* sway or niri (wm.h) */
   bool needs_sway; /* sway only (sway.h) */
+  bool off_by_default; /* runs only with `enable = true` */
 
   /* config */
   size_t config_size;

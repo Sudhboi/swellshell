@@ -227,22 +227,6 @@ static void session_buffer_size(void *data,
   cap->height = height;
 }
 
-/* Higher is better; 0 = unusable. */
-static int format_rank(uint32_t format) {
-  switch (format) {
-  case WL_SHM_FORMAT_ARGB8888:
-    return 4;
-  case WL_SHM_FORMAT_XRGB8888:
-    return 3;
-  case WL_SHM_FORMAT_ABGR8888:
-    return 2;
-  case WL_SHM_FORMAT_XBGR8888:
-    return 1;
-  default:
-    return 0;
-  }
-}
-
 static bool format_swaps_rb(uint32_t format) {
   return format == WL_SHM_FORMAT_ABGR8888 || format == WL_SHM_FORMAT_XBGR8888;
 }
@@ -251,7 +235,7 @@ static void session_shm_format(void *data,
                                struct ext_image_copy_capture_session_v1 *s,
                                uint32_t format) {
   struct capture *cap = data;
-  int rank = format_rank(format);
+  int rank = buffer_format_rank(format);
   if (rank > cap->format_rank) {
     cap->format_rank = rank;
     cap->format = format;

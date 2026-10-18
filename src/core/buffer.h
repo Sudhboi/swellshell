@@ -23,4 +23,8 @@ struct buffer *buffer_create(struct wl_shm *shm, int width, int height,
                              uint32_t format);
 void buffer_destroy(struct buffer *buf);
 
+/* How well buffer_create handles a wl_shm format offered for capture:
+ * higher is better, 0 = unusable. */
+int buffer_format_rank(uint32_t format);
+
 #endif

@@ -63,7 +63,7 @@ static void *build_config(const struct swell_module *m,
   extra[n] = NULL;
   cfg_apply(sec, m->name, m->fields, m->nfields, cfg, extra);
 
-  *enabled = true;
+  *enabled = !m->off_by_default;
   if (sec.type == TOML_TABLE) {
     toml_datum_t en = toml_get(sec, "enable");
     if (en.type == TOML_BOOLEAN)
@@ -396,7 +396,8 @@ static int print_config(int argc, char **argv) {
     const struct swell_module *m = swell_modules[i];
     bool enabled;
     void *cfg = build_config(m, &doc, &enabled);
-    printf("\n[%s]\n# false turns the module off\nenable = %s\n", m->name,
+    printf("\n[%s]\n# %s\nenable = %s\n", m->name,
+           m->off_by_default ? "off unless true" : "false turns the module off",
            enabled ? "true" : "false");
     cfg_dump(stdout, m->fields, m->nfields, cfg);
     if (m->dump_extra)

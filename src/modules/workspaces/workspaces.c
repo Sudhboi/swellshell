@@ -7,6 +7,7 @@
  *
  * niri already works this way, so there the commands map onto its actions
  * and nothing is renumbered. */
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +19,7 @@
 #include "plan.h"
 #include "sway.h"
 #include "util.h"
+#include "wsswitch.h"
 
 struct workspaces_config {
   bool renumber;
@@ -112,6 +114,35 @@ static void go_to(int num) {
   maybe_renumber();
 }
 
+static void run_next(void *data) { go_next(); }
+static void run_prev(void *data) { go_prev(); }
+static void run_goto(void *data) { go_to((int)(intptr_t)data); }
+
+/* Switch through whoever animates it (wsswitch.h). dir is where the target
+ * lies from the focused workspace: +1 later, -1 earlier, 0 nowhere. */
+static void animated(int dir, wsswitch_go_fn go, void *data) {
+  sway_workspaces_invalidate();
+  const struct wm_workspace *list;
+  int n = sway_workspaces(&list);
+  char output[sizeof list->output] = "";
+  for (int i = 0; i < n; ++i)
+    if (list[i].focused)
+      copy_str(output, sizeof output, list[i].output);
+  wsswitch_run(dir, output, go, data);
+}
+
+static void switch_sway(const char *cmd, int num) {
+  if (strcmp(cmd, "next") == 0) {
+    animated(1, run_next, NULL);
+  } else if (strcmp(cmd, "prev") == 0) {
+    maybe_renumber();
+    animated(focused_number(NULL) > 1 ? -1 : 0, run_prev, NULL);
+  } else {
+    int cur = focused_number(NULL);
+    animated((num > cur) - (num < cur), run_goto, (void *)(intptr_t)num);
+  }
+}
+
 /* niri: its own focus actions do the right thing at either end. */
 static int niri_go(const char *action) {
   char *req = xasprintf("{\"Action\":%s}", action);
@@ -166,14 +197,10 @@ static int dispatch(int argc, char **argv, struct reply *r) {
   }
   if (ws.sw->wm == WM_NIRI)
     return dispatch_niri(cmd, num, r);
-  if (strcmp(cmd, "next") == 0)
-    go_next();
-  else if (strcmp(cmd, "prev") == 0)
-    go_prev();
-  else if (strcmp(cmd, "reorder") == 0)
+  if (strcmp(cmd, "reorder") == 0)
     renumber();
   else
-    go_to(num);
+    switch_sway(cmd, num);
   return 0;
 }
 

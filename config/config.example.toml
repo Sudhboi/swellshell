@@ -779,3 +779,15 @@ crt_color = "#e8f0ff"
 [power]
 # false turns the module off
 enable = true
+
+[wsfade]
+# off unless true
+enable = false
+# layer-shell namespace of the overlay
+namespace = "swell-wsfade"
+# the old workspace fading out
+fade_ms = 160
+# how far the old workspace moves while it fades, logical px
+drift_px = 60
+# switch without a fade if the snapshot takes longer than this
+snapshot_timeout_ms = 50

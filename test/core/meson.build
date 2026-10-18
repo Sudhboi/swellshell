@@ -17,3 +17,7 @@ test('core-handover', test_handover, timeout: 20)
 
 test_mpris = executable('test_mpris', 'test_mpris.c', dependencies: core_dep)
 test('core-mpris', test_mpris, timeout: 20)
+
+test_wsswitch = executable('test_wsswitch', 'test_wsswitch.c',
+  dependencies: core_dep)
+test('core-wsswitch', test_wsswitch)

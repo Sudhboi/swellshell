@@ -9,6 +9,7 @@ A small shell for sway and niri in one daemon. It merges five earlier tools and 
 | `media` | (new) | what's playing (cover, title, artist, album, progress) in a panel at the top while the popup shows its details |
 | `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav (sway only; niri has its own) |
 | `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n (on niri: `next`/`prev`/`goto` map to niri's own actions) |
+| `wsfade` | (new) | off by default: on sway, `swell ws` switches fade the old workspace out over the new one with a small drift (`[wsfade] enable = true`) |
 | `runner` | awww-kill | runs shell commands on events (none by default) |
 | `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar, a turning Nix snowflake and a cava-like ring of audio bars around it (PipeWire, stereo); animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
 
@@ -92,6 +93,8 @@ bindgesture swipe:right exec swell ws prev
 bindsym $mod+1 exec swell ws goto 1
 # ... through $mod+0 -> swell ws goto 10
 ```
+
+Workspace switches made through `swell ws` (keys or swipes) can fade: with `[wsfade] enable = true`, swell snapshots the output, switches behind the snapshot and fades it out over `fade_ms` (160) while it drifts `drift_px` (60) away from the new workspace. It adds about one frame before the switch (`swell wsfade status` shows the last delay). Switches made any other way (`swaymsg workspace`, a bar) aren't faded. On niri, use niri's own workspace animation.
 
 Remove the old `dynwork daemon`, `awww-kill`, `nixosd` and `popup` exec lines, `awww-daemon` and any wallpaper script (the `wallpaper` module draws the wallpaper), the FIFO variables, and the `socat` bindings. `exec_always` means a `swaymsg reload` restarts the daemon with the current config. If you use the home-manager module's systemd service instead, drop the `exec_always` line.
 

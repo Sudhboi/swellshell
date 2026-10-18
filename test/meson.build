@@ -16,7 +16,7 @@ subdir('core')
 # Per-module tests live in test/<module>/meson.build. Keep this list in sync
 # with the one in ../meson.build and src/modules/modules.c.
 foreach m : ['osd', 'popup', 'media', 'overview', 'workspaces', 'runner',
-    'wallpaper', 'power', 'wsosd']
+    'wallpaper', 'power', 'wsosd', 'wsfade']
   subdir(m)
 endforeach
 subdir('live')

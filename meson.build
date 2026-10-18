@@ -90,6 +90,7 @@ core_src = files(
   'src/core/util.c',
   'src/core/wm.c',
   'src/core/wl.c',
+  'src/core/wsswitch.c',
 )
 deps = [wayland_client, cairo, pango, libjpeg, xkbcommon, math, pipewire, egl, glesv2,
   wayland_egl, protocols_dep,
@@ -103,7 +104,7 @@ core_dep = declare_dependency(link_with: core, include_directories: core_inc,
 # Keep this list in sync with src/modules/modules.c and test/meson.build.
 module_src = files('src/modules/modules.c')
 foreach m : ['osd', 'popup', 'media', 'overview', 'workspaces', 'runner',
-    'wallpaper', 'power', 'wsosd']
+    'wallpaper', 'power', 'wsosd', 'wsfade']
   subdir('src/modules' / m)
   module_src += get_variable(m + '_src')
 endforeach

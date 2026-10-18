@@ -388,6 +388,10 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
     wl->source_manager = wl_registry_bind(
         reg, name,
         &ext_foreign_toplevel_image_capture_source_manager_v1_interface, 1);
+  } else if (strcmp(iface, ext_output_image_capture_source_manager_v1_interface
+                               .name) == 0) {
+    wl->output_source_manager = wl_registry_bind(
+        reg, name, &ext_output_image_capture_source_manager_v1_interface, 1);
   } else if (strcmp(iface, ext_image_copy_capture_manager_v1_interface.name) ==
              0) {
     wl->copy_manager = wl_registry_bind(
@@ -525,6 +529,9 @@ void wl_destroy(struct swell_wl *wl) {
   if (wl->source_manager)
     ext_foreign_toplevel_image_capture_source_manager_v1_destroy(
         wl->source_manager);
+  if (wl->output_source_manager)
+    ext_output_image_capture_source_manager_v1_destroy(
+        wl->output_source_manager);
   if (wl->idle_notifier)
     ext_idle_notifier_v1_destroy(wl->idle_notifier);
   if (wl->cursor_shape)
