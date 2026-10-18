@@ -1,8 +1,9 @@
-/* What's playing, polled with playerctl (wallpaper, media): `playerctl
- * metadata --format ...` run every interval on the daemon loop, its output
- * handed to the module to parse, and the track's cover followed (a file://
- * one read directly, an http(s) one fetched by curl first). A struct mpris
- * is one poller; the module owns it and its parsed track. */
+/* What's playing, from playerctl (wallpaper, media): one `playerctl
+ * metadata --format ...` for the state now, then a `--follow` one printing
+ * a line on every change, both on the daemon loop; each output is handed
+ * to the module to parse, and the track's cover followed (a file:// one
+ * read directly, an http(s) one fetched by curl first). A struct mpris is
+ * one poller; the module owns it and its parsed track. */
 #ifndef SWELL_MPRIS_H
 #define SWELL_MPRIS_H
 
@@ -39,6 +40,15 @@ struct mpris {
   int64_t started;
   char buf[8192];
   size_t len;
+  /* the playerctl --follow: a line whenever the player changes (and each
+   * second while it plays, for the position) */
+  pid_t fpid;
+  bool fwatched;
+  int ffd;
+  struct loop_watch *fwatch;
+  char fbuf[8192];
+  size_t flen;
+  bool followed; /* it answered since the poll started: the poll is older */
   /* the cover */
   char art_url[1024]; /* the cover shown or being fetched */
   cairo_surface_t *art;
@@ -52,12 +62,14 @@ void mpris_init(struct mpris *m, struct loop *loop, const struct mpris_ops *ops,
                 void *data);
 /* The player and timeout the next polls use. */
 void mpris_configure(struct mpris *m, const char *player, int kill_ms);
-/* Poll every interval_ms from now on, starting now (a no-op if polling). */
+/* Poll now and follow from now on (a no-op if following); a follower that
+ * exits is restarted within interval_ms. */
 void mpris_start(struct mpris *m, int interval_ms);
-/* Stop polling, kill playerctl and curl; the cover is kept. */
+/* Stop following, kill playerctl and curl; the cover is kept. */
 void mpris_stop(struct mpris *m);
 bool mpris_running(const struct mpris *m);
-/* Drop a poll in flight (it may report an old state) and poll now. */
+/* Drop what's in flight (it may report an old state), poll and follow
+ * afresh. */
 void mpris_repoll(struct mpris *m);
 /* The cover (RGB24, a centred square), or NULL; id changes whenever it
  * does. */

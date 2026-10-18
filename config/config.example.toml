@@ -299,7 +299,7 @@ gap_time = 8.0
 bar_h = 4.0
 # playerctl -p ("": playerctl's pick)
 player = ""
-# playerctl poll period while the popup shows
+# while the popup shows, a playerctl follower that died is restarted within this
 interval_ms = 1000
 # kill playerctl if it is still running after this
 command_timeout_ms = 3000
@@ -697,7 +697,7 @@ react_shake_ms = 200
 media = true
 # playerctl player to follow (its -p; "" = playerctl's pick)
 media_player = ""
-# how often playerctl is asked while the wallpaper animates
+# while the wallpaper animates, a playerctl follower that died is restarted within this
 media_interval_ms = 2000
 # a line runs clockwise round the snowflake's hexagonal hole from its top as the track plays
 media_progress = true

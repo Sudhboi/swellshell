@@ -163,7 +163,7 @@ struct wallpaper_config {
    * track's progress lighting its lambdas */
   bool media;
   char media_player[128]; /* playerctl -p, "": playerctl's pick */
-  int media_interval_ms;  /* playerctl poll while animating */
+  int media_interval_ms;  /* playerctl follower restart while animating */
   bool media_progress;    /* a line round the hexagon shows the progress */
   bool media_art;         /* the cover, in grey, fills the hexagon */
   double media_art_alpha; /* the cover's opacity, 0..1 */

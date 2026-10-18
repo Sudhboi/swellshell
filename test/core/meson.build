@@ -14,3 +14,6 @@ test('core-peek', test_peek)
 test_handover = executable('test_handover', 'test_handover.c',
   dependencies: core_dep)
 test('core-handover', test_handover, timeout: 20)
+
+test_mpris = executable('test_mpris', 'test_mpris.c', dependencies: core_dep)
+test('core-mpris', test_mpris, timeout: 20)

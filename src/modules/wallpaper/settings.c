@@ -486,7 +486,8 @@ static const struct cfg_field fields[] = {
                "playerctl player to follow (its -p; \"\" = playerctl's "
                "pick)"),
     CFG_INT(S, media_interval_ms, 100, 60000,
-            "how often playerctl is asked while the wallpaper animates"),
+            "while the wallpaper animates, a playerctl follower that died "
+            "is restarted within this"),
     CFG_BOOL(S, media_progress,
              "a line runs clockwise round the snowflake's hexagonal hole from "
              "its top as the track plays"),

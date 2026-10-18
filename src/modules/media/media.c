@@ -88,7 +88,8 @@ static const struct cfg_field fields[] = {
     CFG_DOUBLE(S, bar_h, 0, 1024, "progress bar height"),
     CFG_STRING(S, player, "playerctl -p (\"\": playerctl's pick)"),
     CFG_INT(S, interval_ms, 100, 600000,
-            "playerctl poll period while the popup shows"),
+            "while the popup shows, a playerctl follower that died is "
+            "restarted within this"),
     CFG_INT(S, command_timeout_ms, 100, 600000,
             "kill playerctl if it is still running after this"),
     CFG_INT(S, slide_ms, 0, 10000, "drop down into place"),
