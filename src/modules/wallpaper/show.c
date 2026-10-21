@@ -40,12 +40,13 @@ static const char *const names[WP_SHOW_COUNT] = {
     [WP_SHOW_SCATTER] = "scatter", [WP_SHOW_CRT] = "crt",
     [WP_SHOW_SHOCK] = "shock",     [WP_SHOW_RISE] = "rise",
     [WP_SHOW_UNFURL] = "unfurl",   [WP_SHOW_DRAIN] = "drain",
+    [WP_SHOW_SINK] = "sink",
 };
 
 /* topo's, each as likely as the others */
 static const enum wp_show topo_intros[] = {WP_SHOW_SHOCK, WP_SHOW_RISE,
                                            WP_SHOW_UNFURL};
-static const enum wp_show topo_outros[] = {WP_SHOW_DRAIN};
+static const enum wp_show topo_outros[] = {WP_SHOW_DRAIN, WP_SHOW_SINK};
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
 const char *wp_show_name(enum wp_show s) {
@@ -335,6 +336,39 @@ static void drain(const struct wallpaper_config *c, double p,
   dot(f, 10, clamp01((p - 0.85) / 0.06) * (1 - clamp01((p - 0.93) / 0.07)));
 }
 
+/* The contours go from the highest level down, the top one lit as it
+ * goes; then the lambdas scatter on a last wave that pushes the low lines
+ * left off the screen. */
+static void sink(const struct wallpaper_config *c, double p,
+                 struct wp_frame *f) {
+  struct wp_show_map *m = map_on(f);
+  double n = fmax(c->topo_levels, 1);
+  m->levels = n + 0.5 - (n - 2) * smoothstep(p / 0.55);
+  m->level_lit = 1.8;
+  m->cpu_dim = 1 - clamp01(m->levels / n);
+  double w = clamp01((p - 0.5) / 0.4);
+  if (p > 0.5) {
+    double r = c->logo_radius + (REACH + 300) * ease_out_cubic(w);
+    f->nrings = 1;
+    f->rings[0].radius = r;
+    f->rings[0].size = 1.2 * (1 - w);
+    m->ring_px = 90;
+    m->ring_w = 220;
+    m->out_r = r - 100;
+    m->out_band = 200;
+    m->lit_r = r;
+    m->lit_w = 150;
+    m->lit = 1.5 * (1 - w);
+  }
+  for (int k = 0; k < 6; ++k) {
+    double u = clamp01((p - 0.42 - 0.04 * k) / 0.35);
+    f->slide[k] += c->intro_dist * ease_in_cubic(u);
+    f->lambda_fade[k] = fmax(f->lambda_fade[k], smoothstep((u - 0.2) / 0.8));
+  }
+  f->angle += f->dir * 1.2 * M_PI * p * p;
+  f->flash = fmax(f->flash, clamp01((p - 0.3) * 3));
+}
+
 void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
                    double t, struct wp_frame *f) {
   int len = wp_show_ms(c, s);
@@ -371,6 +405,10 @@ void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
     return;
   case WP_SHOW_DRAIN:
     drain(c, p, f);
+    details_out(p, f, len);
+    return;
+  case WP_SHOW_SINK:
+    sink(c, p, f);
     details_out(p, f, len);
     return;
   default:

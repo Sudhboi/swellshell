@@ -773,6 +773,20 @@ static void check_shows(const char *dir) {
   }
   assert(prev * 10 < all);
   free_maps(m);
+
+  /* Sink: fewer levels each step, then the wave leaves none behind it. */
+  show_maps(c, WP_SHOW_SINK, base, dir, f, m);
+  prev = 1L << 30;
+  for (int j = 1; j <= 3; ++j) {
+    long n = lit_in(m[j], 0, 1e9);
+    fprintf(stderr, "sink %d: %ld of %ld\n", j, n, all);
+    assert(n < prev);
+    prev = n;
+  }
+  r = f[4].smap.out_r;
+  assert(r > 300 && lit_in(m[4], 0, r - 200) == 0);
+  assert(lit_in(m[5], 0, 1e9) * 10 < all);
+  free_maps(m);
   cairo_surface_destroy(rest);
 }
 
