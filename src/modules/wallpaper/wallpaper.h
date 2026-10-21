@@ -235,7 +235,9 @@ struct wp_frame {
   unsigned art_id;      /* changes with the cover */
   /* the launch and power-off animations (all 0 otherwise) */
   double lambda_fade[6]; /* lambda k's opacity taken away, 0..1 */
-  double logo_shrink;    /* the logo's size taken away, 0..1 */
+  double logo_shrink;    /* the logo's size taken away, 0..1 (< 0: grown) */
+  double logo_untraced;  /* topo: the outline's length not drawn, 0..1 */
+  double logo_unfilled;  /* topo: the glass and shadow taken away, 0..1 */
   double bar_fade;       /* the bar's opacity taken away, 0..1 */
   double flash;          /* a bloom without speed lines, 0..1 */
   double crt_w, crt_h, crt_alpha; /* the CRT's line or dot, reference px */
@@ -607,6 +609,7 @@ enum wp_show {
   WP_SHOW_CRT,     /* spin up and collapse like an old CRT */
   /* topo's, the contour lines carrying them */
   WP_SHOW_SHOCK, /* intro: the snowflake blooms and a wave reveals the map */
+  WP_SHOW_RISE,  /* intro: the contours draw in, lowest level first */
   WP_SHOW_COUNT
 };
 const char *wp_show_name(enum wp_show s);

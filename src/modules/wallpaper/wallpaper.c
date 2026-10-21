@@ -543,6 +543,7 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->bar_fade = saver;
   f->crt_w = f->crt_h = f->crt_alpha = 0;
   f->smap = (struct wp_show_map){0};
+  f->logo_untraced = f->logo_unfilled = 0;
   advance_map(now);
   f->map_fade = 1 - w.map_alpha;
   f->map_under = false;

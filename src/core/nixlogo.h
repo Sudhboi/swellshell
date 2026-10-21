@@ -25,5 +25,7 @@ void nixlogo_lambda_path(cairo_t *cr, int k, double slide);
 /* The unrotated lambda 0's outward direction, a unit vector: slide moves
  * lambda k along it turned by k x 60 degrees. */
 void nixlogo_lambda_dir(double *dx, double *dy);
+/* One lambda's outline's length at outer radius 1. */
+double nixlogo_lambda_length(void);
 
 #endif

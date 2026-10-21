@@ -376,7 +376,7 @@ struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph,
 }
 
 bool wp_logo_whole(const struct wp_frame *f) {
-  if (f->logo_shrink != 0)
+  if (f->logo_shrink != 0 || f->logo_untraced != 0 || f->logo_unfilled != 0)
     return false;
   for (int i = 0; i < 6; ++i)
     if (f->slide[i] != 0 || f->lambda_fade[i] != 0)
@@ -395,17 +395,19 @@ void wp_draw_glass_logo(cairo_t *cr, const struct wallpaper_config *c,
   for (int i = 0; i < 6; ++i)
     alpha[i] = 1 - fmin(fmax(f->lambda_fade[i], 0), 1);
   double s = r / r0; /* sizes follow the pulse and the shrink */
+  double filled = 1 - fmin(fmax(f->logo_unfilled, 0), 1);
+  double traced = 1 - fmin(fmax(f->logo_untraced, 0), 1);
 
   /* One mask for the lot unless the lambdas slide or fade apart. */
   bool whole = true;
   for (int i = 0; i < 6; ++i)
     whole = whole && f->slide[i] == 0 && alpha[i] == 1;
   double sd = c->topo_shadow_px * k * s;
-  if (sd > 0 && c->topo_shadow_alpha > 0) {
+  if (sd > 0 && c->topo_shadow_alpha > 0 && filled > 0) {
     const struct shadow *m =
         shadow_mask(whole ? 0 : 1, r0, c->topo_shadow_px * k, 0);
     paint_lambda_mask(cr, m, whole, f, alpha, cx, cy, 0.7 * sd, 0.7 * sd, r0, r,
-                      NULL, c->topo_shadow_alpha);
+                      NULL, c->topo_shadow_alpha * filled);
   }
 
   struct wp_glass g;
@@ -415,6 +417,7 @@ void wp_draw_glass_logo(cairo_t *cr, const struct wallpaper_config *c,
 
   /* The glow: a blurred outline, cached, under the glass. */
   double np = c->topo_neon_px * k;
+  g.neon *= traced;
   if (g.neon > 0 && np > 0) {
     const struct shadow *m = shadow_mask(whole ? 2 : 3, r0, np / 2, np * 0.4);
     paint_lambda_mask(cr, m, whole, f, alpha, cx, cy, 0, 0, r0, r, edge,
@@ -439,18 +442,24 @@ void wp_draw_glass_logo(cairo_t *cr, const struct wallpaper_config *c,
         nixlogo_lambda_path(cr, j, f->slide[j]);
         cairo_restore(cr);
       }
-    set_rgba(cr, fill, a);
-    if (ew <= 0) {
+    set_rgba(cr, fill, a * filled);
+    if (ew <= 0 || traced <= 0) {
       cairo_fill(cr);
       continue;
     }
     cairo_fill_preserve(cr);
+    /* Traced: each lambda's outline drawn this far round from its start. */
+    double dash[2] = {traced * nixlogo_lambda_length() * r, 0};
+    dash[1] = dash[0] > 0 ? nixlogo_lambda_length() * r : 0;
+    if (traced < 1)
+      cairo_set_dash(cr, dash, 2, 0);
     /* Over the lambdas' extent (not the bounding box's corners). */
     cairo_pattern_t *p =
         wp_topo_edge_pattern(edge, cx, cy, 0.6 * r, a * ea, false);
     cairo_set_source(cr, p);
     cairo_set_line_width(cr, ew);
     cairo_stroke(cr);
+    cairo_set_dash(cr, NULL, 0, 0);
     cairo_pattern_destroy(p);
   }
 }

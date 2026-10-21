@@ -38,11 +38,11 @@ static double intro_lock_ms(const struct wallpaper_config *c) {
 static const char *const names[WP_SHOW_COUNT] = {
     [WP_SHOW_NONE] = "none",       [WP_SHOW_INTRO] = "intro",
     [WP_SHOW_SCATTER] = "scatter", [WP_SHOW_CRT] = "crt",
-    [WP_SHOW_SHOCK] = "shock",
+    [WP_SHOW_SHOCK] = "shock",     [WP_SHOW_RISE] = "rise",
 };
 
 /* topo's, each as likely as the others */
-static const enum wp_show topo_intros[] = {WP_SHOW_SHOCK};
+static const enum wp_show topo_intros[] = {WP_SHOW_SHOCK, WP_SHOW_RISE};
 static const enum wp_show topo_outros[] = {WP_SHOW_SCATTER};
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
@@ -58,7 +58,7 @@ enum wp_show wp_show_named(const char *name) {
 }
 
 bool wp_show_is_intro(enum wp_show s) {
-  return s == WP_SHOW_INTRO || s == WP_SHOW_SHOCK;
+  return s == WP_SHOW_INTRO || s == WP_SHOW_SHOCK || s == WP_SHOW_RISE;
 }
 
 enum wp_show wp_show_pick(const struct wallpaper_config *c, bool intro,
@@ -241,6 +241,39 @@ static void shock(const struct wallpaper_config *c, double t,
   details_in(t, 1700, f);
 }
 
+/* The contours draw in a level at a time, lowest first, the newest lit;
+ * the snowflake's outline traces itself, fills, flashes and sends out a
+ * soft ring. */
+static void rise(const struct wallpaper_config *c, double t,
+                 struct wp_frame *f) {
+  struct wp_show_map *m = map_on(f);
+  double n = fmax(c->topo_levels, 1);
+  /* Eased in: the high levels have fewer lines, so they come faster. */
+  m->levels = 0.2 + (n + 0.8) * pow(clamp01((t - 80) / 1450), 1.6);
+  m->level_lit = 2 * (1 - clamp01((t - 1500) / 500));
+  m->cpu_dim = 1 - clamp01(m->levels / n);
+  double traced = smoothstep((t - 1000) / 800);
+  double filled = clamp01((t - 1600) / 450);
+  f->logo_untraced = 1 - traced;
+  f->logo_unfilled = 1 - filled;
+  if (traced <= 0)
+    for (int k = 0; k < 6; ++k)
+      f->lambda_fade[k] = 1;
+  f->angle -= f->dir * 40 * M_PI / 180 * (1 - ease_out_cubic((t - 1000) / 900));
+  double lock = t > 1800 ? 1 - clamp01((t - 1800) / 700) : 0;
+  f->flash = fmax(f->flash, fmax(0.4 * traced * (1 - filled), lock));
+  f->glow = fmax(f->glow, 0.5 * lock * lock);
+  double a = (t - 1800) / 1000;
+  if (a > 0 && a < 0.55) {
+    f->nrings = 1;
+    f->rings[0].radius = c->logo_radius + a * 1600;
+    f->rings[0].size = 0.9 * pow(1 - a / 0.55, 2);
+    m->ring_px = 40;
+    m->ring_w = 160;
+  }
+  details_in(t, 1800, f);
+}
+
 void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
                    double t, struct wp_frame *f) {
   int len = wp_show_ms(c, s);
@@ -253,6 +286,9 @@ void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
     switch (s) {
     case WP_SHOW_SHOCK:
       shock(c, u, f);
+      return;
+    case WP_SHOW_RISE:
+      rise(c, u, f);
       return;
     default:
       intro(c, t, f);

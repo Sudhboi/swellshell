@@ -678,7 +678,7 @@ static void check_logo(const char *dir) {
 }
 
 /* Lit pixels (of the map at least this bright) within r0..r1 of the
- * centre, per 1000 of those sampled. */
+ * centre, per 100000 of those sampled. */
 static long lit_in(cairo_surface_t *m, double r0, double r1) {
   long n = 0, lit = 0;
   for (int y = 0; y < H; y += 3)
@@ -689,35 +689,59 @@ static long lit_in(cairo_surface_t *m, double r0, double r1) {
       n++;
       lit += lum(m, x, y) >= 60;
     }
-  return n ? lit * 1000 / n : 0;
+  return n ? lit * 100000 / n : 0;
 }
 
-/* topo's shows on the GPU's map: wallpaper_gl_show_<name>_*. */
+/* Show s's map at 0, 1/6 .. 6/6 of its length, into f and m;
+ * wallpaper_gl_show_<name>_*. */
+static void show_maps(const struct wallpaper_config *c, enum wp_show s,
+                      struct wp_frame base, const char *dir,
+                      struct wp_frame f[7], cairo_surface_t *m[7]) {
+  char name[96];
+  int len = wp_show_ms(c, s);
+  for (int j = 0; j <= 6; ++j) {
+    f[j] = base;
+    wp_show_apply(c, s, len * j / 6.0, &f[j]);
+    snprintf(name, sizeof name, "wallpaper_gl_show_%s_%d", wp_show_name(s), j);
+    m[j] = gpu_map(c, &f[j], dir, name);
+  }
+}
+
+static void free_maps(cairo_surface_t *m[7]) {
+  for (int j = 0; j <= 6; ++j)
+    cairo_surface_destroy(m[j]);
+}
+
+/* topo's shows on the GPU's map. */
 static void check_shows(const char *dir) {
   const struct wallpaper_config *c = wallpaper_module.defaults;
   struct wp_frame base = {.percent = 50, .level = 1, .dir = 1};
   cairo_surface_t *rest = gpu_map(c, &base, NULL, NULL);
   long all = lit_in(rest, 0, 1e9);
-  char name[96];
-  int len = wp_show_ms(c, WP_SHOW_SHOCK);
   struct wp_frame f[7];
   cairo_surface_t *m[7];
-  for (int j = 0; j <= 6; ++j) {
-    f[j] = base;
-    wp_show_apply(c, WP_SHOW_SHOCK, len * j / 6.0, &f[j]);
-    snprintf(name, sizeof name, "wallpaper_gl_show_shock_%d", j);
-    m[j] = gpu_map(c, &f[j], dir, name);
-  }
+
   /* Shock: black, then lines only inside the wave, then all of them. */
+  show_maps(c, WP_SHOW_SHOCK, base, dir, f, m);
   assert(lit_in(m[0], 0, 1e9) == 0);
   double r = f[2].smap.in_r;
   assert(r > 400 && r < 1400);
-  fprintf(stderr, "shock: inside %ld outside %ld\n", lit_in(m[2], 0, r - 300),
-          lit_in(m[2], r + 50, 1e9));
   assert(lit_in(m[2], 0, r - 300) * 2 > all && lit_in(m[2], r + 50, 1e9) == 0);
   assert(labs(lit_in(m[6], 0, 1e9) - all) * 10 < all);
-  for (int j = 0; j <= 6; ++j)
-    cairo_surface_destroy(m[j]);
+  free_maps(m);
+
+  /* Rise: more lines at each step, then all of them. */
+  show_maps(c, WP_SHOW_RISE, base, dir, f, m);
+  long prev = -1;
+  for (int j = 0; j <= 2; ++j) {
+    long n = lit_in(m[j], 0, 1e9);
+    fprintf(stderr, "rise %d: %ld of %ld\n", j, n, all);
+    assert(n > prev && n < all);
+    prev = n;
+  }
+  assert(lit_in(m[0], 0, 1e9) * 10 < all && lit_in(m[1], 0, 1e9) * 2 < all);
+  assert(labs(lit_in(m[6], 0, 1e9) - all) * 10 < all);
+  free_maps(m);
   cairo_surface_destroy(rest);
 }
 

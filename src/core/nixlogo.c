@@ -43,6 +43,15 @@ static void lambda_path(cairo_t *cr, int k, double slide, double dx,
 
 void nixlogo_lambda_dir(double *dx, double *dy) { lambda_dir(dx, dy); }
 
+double nixlogo_lambda_length(void) {
+  double l = 0;
+  for (int i = 0; i < lambda_n; i++) {
+    const double *a = lambda_pts[i], *b = lambda_pts[(i + 1) % lambda_n];
+    l += hypot(b[0] - a[0], b[1] - a[1]);
+  }
+  return l;
+}
+
 void nixlogo_lambda_path(cairo_t *cr, int k, double slide) {
   double dx = 0, dy = 0;
   if (slide != 0)
