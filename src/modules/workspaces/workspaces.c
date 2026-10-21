@@ -133,7 +133,12 @@ static void animated(int dir, wsswitch_go_fn go, void *data) {
 
 static void switch_sway(const char *cmd, int num) {
   if (strcmp(cmd, "next") == 0) {
-    animated(1, run_next, NULL);
+    /* next from an empty last workspace only swaps it for another empty
+     * one: nothing to see, so not animated. */
+    int count;
+    maybe_renumber();
+    bool fresh = focused_number(&count) == count && sway_focused_empty() == 1;
+    animated(fresh ? 0 : 1, run_next, NULL);
   } else if (strcmp(cmd, "prev") == 0) {
     maybe_renumber();
     animated(focused_number(NULL) > 1 ? -1 : 0, run_prev, NULL);
