@@ -611,6 +611,7 @@ enum wp_show {
   WP_SHOW_SHOCK,  /* intro: the snowflake blooms and a wave reveals the map */
   WP_SHOW_RISE,   /* intro: the contours draw in, lowest level first */
   WP_SHOW_UNFURL, /* intro: the lines spring out from the centre */
+  WP_SHOW_DRAIN,  /* power-off: the lines drain into the snowflake */
   WP_SHOW_COUNT
 };
 const char *wp_show_name(enum wp_show s);

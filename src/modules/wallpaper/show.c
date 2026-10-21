@@ -39,13 +39,13 @@ static const char *const names[WP_SHOW_COUNT] = {
     [WP_SHOW_NONE] = "none",       [WP_SHOW_INTRO] = "intro",
     [WP_SHOW_SCATTER] = "scatter", [WP_SHOW_CRT] = "crt",
     [WP_SHOW_SHOCK] = "shock",     [WP_SHOW_RISE] = "rise",
-    [WP_SHOW_UNFURL] = "unfurl",
+    [WP_SHOW_UNFURL] = "unfurl",   [WP_SHOW_DRAIN] = "drain",
 };
 
 /* topo's, each as likely as the others */
 static const enum wp_show topo_intros[] = {WP_SHOW_SHOCK, WP_SHOW_RISE,
                                            WP_SHOW_UNFURL};
-static const enum wp_show topo_outros[] = {WP_SHOW_SCATTER};
+static const enum wp_show topo_outros[] = {WP_SHOW_DRAIN};
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
 const char *wp_show_name(enum wp_show s) {
@@ -300,6 +300,41 @@ static void unfurl(const struct wallpaper_config *c, double t,
   details_in(t, 1500, f);
 }
 
+/* A power-off's common part at p (0..1 of its length): the details go,
+ * the bar drains and fades, and it's black by the end whatever the rest
+ * does. */
+static void details_out(double p, struct wp_frame *f, double len) {
+  f->media_alpha *= 1 - clamp01(p * len / 300);
+  f->bar_fade = fmax(f->bar_fade, clamp01(p / 0.3));
+  f->percent *= 1 - smoothstep(p / 0.75);
+  f->fade = fmax(f->fade, clamp01((p - 0.92) / 0.08));
+}
+
+/* The lines are pulled into the snowflake, lit as they go, while the dark
+ * closes in from the corners; it spins up, swallows them, flashes and
+ * shrinks to a dot that goes out. */
+static void drain(const struct wallpaper_config *c, double p,
+                  struct wp_frame *f) {
+  struct wp_show_map *m = map_on(f);
+  double r0 = c->logo_radius;
+  m->gather = 1800 * ease_in_cubic(p / 0.8);
+  m->gather_reach = 700 + 2200 * clamp01(p / 0.8);
+  double r = REACH + 250 - (REACH + 250 - 0.6 * r0) * smoothstep(p / 0.82);
+  m->in_r = r;
+  m->in_band = 280;
+  m->lit_r = r - 120;
+  m->lit_w = 160;
+  m->lit = 1.6 * smoothstep(p / 0.15);
+  m->lit_all = 0.5 * smoothstep(p / 0.6);
+  f->bg_fade = fmax(f->bg_fade, smoothstep((p - 0.85) / 0.15));
+  f->angle += f->dir * 1.6 * M_PI * p * p;
+  double flash = 0.8 * exp(-pow((p - 0.8) / 0.06, 2));
+  f->flash = fmax(f->flash, fmax(clamp01(p * 1.6), flash));
+  f->glow = fmax(f->glow, flash);
+  f->logo_shrink = fmax(f->logo_shrink, ease_in_cubic((p - 0.78) / 0.15));
+  dot(f, 10, clamp01((p - 0.85) / 0.06) * (1 - clamp01((p - 0.93) / 0.07)));
+}
+
 void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
                    double t, struct wp_frame *f) {
   int len = wp_show_ms(c, s);
@@ -329,9 +364,14 @@ void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
     f->fade = 1;
     return;
   }
+  double p = t / len;
   switch (s) {
   case WP_SHOW_CRT:
     crt(c, t, f);
+    return;
+  case WP_SHOW_DRAIN:
+    drain(c, p, f);
+    details_out(p, f, len);
     return;
   default:
     scatter(c, t, f);

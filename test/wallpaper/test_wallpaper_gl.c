@@ -758,6 +758,21 @@ static void check_shows(const char *dir) {
   assert(differ * 50 > n);
   assert(labs(lit_in(m[6], 0, 1e9) - all) * 10 < all);
   free_maps(m);
+
+  /* Drain: the dark closes in, no lines left past it, fewer each step
+   * (once lit, wider, they count more at first). */
+  show_maps(c, WP_SHOW_DRAIN, base, dir, f, m);
+  r = f[3].smap.in_r;
+  assert(r < 1300 && lit_in(m[3], r + 50, 1e9) == 0);
+  prev = 1L << 30;
+  for (int j = 2; j <= 5; ++j) {
+    long n = lit_in(m[j], 0, 1e9);
+    fprintf(stderr, "drain %d: %ld of %ld\n", j, n, all);
+    assert(n <= prev);
+    prev = n;
+  }
+  assert(prev * 10 < all);
+  free_maps(m);
   cairo_surface_destroy(rest);
 }
 
