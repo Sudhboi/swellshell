@@ -198,11 +198,12 @@ struct wallpaper_config {
   int intro_stagger_ms; /* between one lambda's start and the next's */
   double intro_dist;    /* where they start, x logo_radius out */
   double intro_turn;    /* the logo unwinds from this many extra deg */
-  /* the power-off animation (`swell power off`): the lambdas scatter, or
-   * now and then the logo collapses like an old CRT */
+  /* the power-off animation (`swell power off`): classic's lambdas
+   * scatter, or now and then the logo collapses like an old CRT; topo's
+   * are its own (show.c) */
   bool outro;
-  int outro_ms;            /* the scatter */
-  double outro_crt_chance; /* 0..1, of the CRT collapse instead */
+  int outro_ms;            /* all but the CRT */
+  double outro_crt_chance; /* 0..1, of the CRT collapse instead (classic) */
   int outro_crt_ms;
   int outro_hold_ms; /* black this long, then the wallpaper comes back */
   uint32_t crt_color;
@@ -613,6 +614,7 @@ enum wp_show {
   WP_SHOW_UNFURL, /* intro: the lines spring out from the centre */
   WP_SHOW_DRAIN,  /* power-off: the lines drain into the snowflake */
   WP_SHOW_SINK,   /* power-off: the contours sink, a wave takes the rest */
+  WP_SHOW_BLAST,  /* power-off: a ring blows the lines off the screen */
   WP_SHOW_COUNT
 };
 const char *wp_show_name(enum wp_show s);

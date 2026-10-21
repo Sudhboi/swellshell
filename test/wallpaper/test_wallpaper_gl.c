@@ -787,6 +787,17 @@ static void check_shows(const char *dir) {
   assert(r > 300 && lit_in(m[4], 0, r - 200) == 0);
   assert(lit_in(m[5], 0, 1e9) * 10 < all);
   free_maps(m);
+
+  /* Blast: the lines drawn in a little, then none behind the ring. */
+  show_maps(c, WP_SHOW_BLAST, base, dir, f, m);
+  assert(f[1].smap.gather > 0 && f[1].nrings == 0);
+  r = f[2].smap.out_r;
+  fprintf(stderr, "blast: ring %.0f, %ld inside, %ld outside\n", r,
+          lit_in(m[2], 0, r - 200), lit_in(m[2], r + 300, 1e9));
+  assert(r > 300 && lit_in(m[2], 0, r - 200) == 0);
+  assert(lit_in(m[2], r + 300, 1e9) * 2 > all);
+  assert(lit_in(m[4], 0, 1e9) * 10 < all);
+  free_maps(m);
   cairo_surface_destroy(rest);
 }
 

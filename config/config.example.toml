@@ -753,7 +753,7 @@ peek_hold_width = 4.0
 peek_warn = "#ff5a5a"
 # when the daemon is restarted (run again, e.g. by `exec_always` on a sway reload) the old map's lines fade out and the new one's fade in, each this long; the snowflake stays
 handover_ms = 500
-# launch animation: the lambdas fly in and lock together, when the daemon starts on an empty workspace (once per login)
+# launch animation when the daemon starts on an empty workspace (once per login): classic, the lambdas fly in and lock together; topo, one of shock, rise and unfurl, each as likely (as long as classic's)
 intro = true
 # each lambda's flight
 intro_ms = 1100
@@ -763,11 +763,11 @@ intro_stagger_ms = 90
 intro_dist = 4.0
 # the snowflake turns this many degrees into place as they fly in
 intro_turn = 120.0
-# power-off animation (`swell power off`) on an empty workspace: the lambdas scatter
+# power-off animation (`swell power off`) on an empty workspace: classic, the lambdas scatter (or the CRT); topo, one of drain, sink and blast, each as likely
 outro = true
-# the scatter's length
+# the power-off's length (all but classic's CRT), black by its end
 outro_ms = 1800
-# chance of an old CRT's collapse instead of the scatter
+# classic: chance of an old CRT's collapse instead of the scatter
 outro_crt_chance = 0.15
 # the CRT collapse's length
 outro_crt_ms = 1500

@@ -542,8 +542,10 @@ static const struct cfg_field fields[] = {
             "on a sway reload) the old map's lines fade out and the new "
             "one's fade in, each this long; the snowflake stays"),
     CFG_BOOL(S, intro,
-             "launch animation: the lambdas fly in and lock together, when "
-             "the daemon starts on an empty workspace (once per login)"),
+             "launch animation when the daemon starts on an empty workspace "
+             "(once per login): classic, the lambdas fly in and lock "
+             "together; topo, one of shock, rise and unfurl, each as likely "
+             "(as long as classic's)"),
     CFG_INT(S, intro_ms, 0, 10000, "each lambda's flight"),
     CFG_INT(S, intro_stagger_ms, 0, 2000,
             "between one lambda's start and the next one's"),
@@ -554,10 +556,14 @@ static const struct cfg_field fields[] = {
                "fly in"),
     CFG_BOOL(S, outro,
              "power-off animation (`swell power off`) on an empty workspace: "
-             "the lambdas scatter"),
-    CFG_INT(S, outro_ms, 1, 10000, "the scatter's length"),
+             "classic, the lambdas scatter (or the CRT); topo, one of drain, "
+             "sink and blast, each as likely"),
+    CFG_INT(S, outro_ms, 1, 10000,
+            "the power-off's length (all but classic's CRT), black by its "
+            "end"),
     CFG_DOUBLE(S, outro_crt_chance, 0, 1,
-               "chance of an old CRT's collapse instead of the scatter"),
+               "classic: chance of an old CRT's collapse instead of the "
+               "scatter"),
     CFG_INT(S, outro_crt_ms, 1, 10000, "the CRT collapse's length"),
     CFG_INT(S, outro_hold_ms, 0, 600000,
             "the screen stays black this long after a power-off animation, "
@@ -571,11 +577,14 @@ const struct swell_module wallpaper_module = {
     .aliases = (const char *const[]){"wp", NULL},
     .usage = "  status                 animation state, battery, fps\n"
              "  percent N|auto         show N% instead of the battery\n"
-             "  intro [NAME]           play the launch animation (topo: "
-             "shock)\n"
+             "  intro [NAME]           play the launch animation (NAME: "
+             "intro, shock,\n"
+             "                         rise, unfurl; default: the style's, "
+             "at random)\n"
              "  outro [NAME]           play the power-off animation (see "
              "`swell power`;\n"
-             "                         classic: scatter, crt)\n",
+             "                         NAME: scatter, crt, drain, sink, "
+             "blast)\n",
     .needs_wayland = true,
     .config_size = sizeof(struct wallpaper_config),
     .defaults = &defaults,

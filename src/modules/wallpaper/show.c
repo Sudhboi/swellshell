@@ -40,13 +40,14 @@ static const char *const names[WP_SHOW_COUNT] = {
     [WP_SHOW_SCATTER] = "scatter", [WP_SHOW_CRT] = "crt",
     [WP_SHOW_SHOCK] = "shock",     [WP_SHOW_RISE] = "rise",
     [WP_SHOW_UNFURL] = "unfurl",   [WP_SHOW_DRAIN] = "drain",
-    [WP_SHOW_SINK] = "sink",
+    [WP_SHOW_SINK] = "sink",       [WP_SHOW_BLAST] = "blast",
 };
 
 /* topo's, each as likely as the others */
 static const enum wp_show topo_intros[] = {WP_SHOW_SHOCK, WP_SHOW_RISE,
                                            WP_SHOW_UNFURL};
-static const enum wp_show topo_outros[] = {WP_SHOW_DRAIN, WP_SHOW_SINK};
+static const enum wp_show topo_outros[] = {WP_SHOW_DRAIN, WP_SHOW_SINK,
+                                           WP_SHOW_BLAST};
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
 const char *wp_show_name(enum wp_show s) {
@@ -369,6 +370,41 @@ static void sink(const struct wallpaper_config *c, double p,
   f->flash = fmax(f->flash, clamp01((p - 0.3) * 3));
 }
 
+/* The snowflake charges, drawing the lines in a little, then fires a
+ * strong ring that blows them off the screen behind it; it fades to a
+ * dot. */
+static void blast(const struct wallpaper_config *c, double p,
+                  struct wp_frame *f) {
+  struct wp_show_map *m = map_on(f);
+  double r0 = c->logo_radius, charge = clamp01(p / 0.28);
+  f->flash = fmax(f->flash, charge);
+  f->angle += f->dir * 2 * M_PI * p * p;
+  m->gather_reach = 700;
+  if (p < 0.28) {
+    m->gather = 80 * smoothstep(charge);
+    f->logo_shrink = fmax(f->logo_shrink, 0.12 * smoothstep(charge));
+    return;
+  }
+  m->gather = 80 * (1 - ease_out_cubic((p - 0.28) / 0.1));
+  double w = clamp01((p - 0.28) / 0.55);
+  double r = 0.7 * r0 + (REACH + 450) * ease_out_cubic(w);
+  f->nrings = 1;
+  f->rings[0].radius = r;
+  f->rings[0].size = 1.3;
+  m->ring_px = 140;
+  m->ring_w = 240;
+  m->out_r = r - 160;
+  m->out_band = 220;
+  m->lit_r = r;
+  m->lit_w = 140;
+  m->lit = 2.2 * (1 - 0.6 * w);
+  double flash = 0.9 * pow(1 - clamp01((p - 0.28) / 0.15), 2);
+  f->glow = fmax(f->glow, flash);
+  f->logo_shrink =
+      fmax(f->logo_shrink, 1 - 0.88 * (1 - ease_in_cubic((p - 0.3) / 0.3)));
+  dot(f, 9, clamp01((p - 0.5) / 0.1) * (1 - clamp01((p - 0.85) / 0.12)));
+}
+
 void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
                    double t, struct wp_frame *f) {
   int len = wp_show_ms(c, s);
@@ -409,6 +445,10 @@ void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
     return;
   case WP_SHOW_SINK:
     sink(c, p, f);
+    details_out(p, f, len);
+    return;
+  case WP_SHOW_BLAST:
+    blast(c, p, f);
     details_out(p, f, len);
     return;
   default:
