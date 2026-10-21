@@ -35,7 +35,8 @@ static struct {
       m_axis, m_rings, m_nrings, m_centre, m_ring_px, m_ring_w, m_sway, m_time,
       m_k, m_gorigin, m_shake, m_spec, m_spec_on, m_logo_r, m_spec_px,
       m_spec_reach, m_ripple_px, m_ripple_span, m_light, m_light_w, m_gather,
-      m_gather_reach, m_hold_front, m_hold_lit, m_hold_band, m_drift, m_drift_l;
+      m_gather_reach, m_hold_front, m_hold_lit, m_hold_band, m_drift, m_drift_l,
+      m_s_in, m_s_out, m_s_lit, m_s_lit_all, m_s_levels;
   /* the topo snowflake */
   GLuint logo_prog, logo_tex[3]; /* distance field, shadow, glow */
   unsigned logo_ids[3];          /* what's in them */
@@ -131,8 +132,11 @@ static const char *fs_src =
  * line by its place along the gradient. A held popup key draws them in
  * towards the logo by gather px (out when < 0), less further out, and
  * lights them (as the spectrum does, by hold_lit) outside a front that
- * closes in from the corners to the logo as the hold runs. q: the pixel in
- * the cairo buffer's coordinates. */
+ * closes in from the corners to the logo as the hold runs. The topo shows
+ * keep lines only inside s_in.x (soft over s_in.y) and outside s_out.x,
+ * light a band (s_lit: radius, width, strength) and every line by
+ * s_lit_all, and keep only the levels below s_levels.x (lighting the top
+ * one by s_levels.y). q: the pixel in the cairo buffer's coordinates. */
 static const char *map_fs_src =
     "#version 300 es\n"
     "precision highp float;\n"
@@ -142,7 +146,9 @@ static const char *map_fs_src =
     "uniform float cell, bh, levels, lw, iw, bright, ring_px, ring_w,\n"
     "    sway, time, k, logo_r, spec_px, spec_reach, ripple_px, ripple_span,\n"
     "    light, light_w, gather, gather_reach, hold_front, hold_lit,\n"
-    "    hold_band, drift_l;\n"
+    "    hold_band, drift_l, s_lit_all;\n"
+    "uniform vec2 s_in, s_out, s_levels;\n"
+    "uniform vec3 s_lit;\n"
     "uniform int every, nrings;\n"
     "uniform bool spec_on;\n"
     "uniform float spec[2 * " WP_SPEC_STR "];\n"
@@ -213,6 +219,12 @@ static const char *map_fs_src =
     "    lit = max(lit, hold_lit * smoothstep(hold_front - hold_band,\n"
     "                                         hold_front, length(q - "
     "centre)));\n"
+    "  float sl = length(q - centre);\n"
+    "  if (s_lit.z > 0.0) {\n"
+    "    float u = (sl - s_lit.x) / s_lit.y;\n"
+    "    lit = max(lit, s_lit.z * exp(-u * u));\n"
+    "  }\n"
+    "  lit = max(lit, s_lit_all);\n"
     "  if (sway > 0.0) {\n"
     "    float wl = 420.0 * k;\n"
     "    p += sway * vec2(sin(q.y / wl + time * 1.7),\n"
@@ -225,9 +237,15 @@ static const char *map_fs_src =
     "  float li = floor(v + 0.5);\n"
     "  float dist = abs(v - li) / fw;\n"
     "  bool index = every > 0 && int(li) % every == every / 2;\n"
+    "  float dl = s_levels.x - li;\n"
+    "  if (s_levels.y > 0.0 && dl > 0.0)\n"
+    "    lit = max(lit, s_levels.y * exp(-(dl - 0.6) * (dl - 0.6) * 2.5));\n"
     "  float w = lw * (index ? iw : 1.0) * (1.0 + light_w * lit);\n"
     "  float cov = li < 0.0 || li >= levels ? 0.0\n"
     "            : clamp(w * 0.5 - dist + 0.5, 0.0, 1.0);\n"
+    "  cov *= clamp(dl, 0.0, 1.0) *\n"
+    "         (1.0 - smoothstep(s_in.x - s_in.y, s_in.x, sl)) *\n"
+    "         smoothstep(s_out.x - s_out.y, s_out.x, sl);\n"
     "  vec4 lc = x < 0.5 ? mix(line0, line1, x * 2.0)\n"
     "                    : mix(line1, line2, x * 2.0 - 1.0);\n"
     "  float a = min(lc.a * (1.0 + light * lit), 1.0);\n"
@@ -342,6 +360,7 @@ static bool build_program(void) {
   M(spec), M(spec_on), M(logo_r), M(spec_px), M(spec_reach), M(ripple_px);
   M(ripple_span), M(light), M(light_w), M(gather), M(gather_reach);
   M(hold_front), M(hold_lit), M(hold_band), M(drift), M(drift_l);
+  M(s_in), M(s_out), M(s_lit), M(s_lit_all), M(s_levels);
 #undef M
   g.m_step = glGetUniformLocation(g.map_prog, "stp");
 
@@ -682,8 +701,24 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform4fv(g.m_rings, WP_RINGS, rings[0]);
   glUniform1i(g.m_nrings, n);
   glUniform2f(g.m_centre, pw / 2.0, ph / 2.0);
-  glUniform1f(g.m_ring_px, c->topo_ring_px * k);
-  glUniform1f(g.m_ring_w, c->topo_ring_width * k);
+  /* A topo show's own rings, pull and lines. */
+  const struct wp_show_map *sm = &f->smap;
+  bool sring = sm->on && sm->ring_px > 0;
+  glUniform1f(g.m_ring_px, (sring ? sm->ring_px : c->topo_ring_px) * k);
+  glUniform1f(g.m_ring_w, (sring ? sm->ring_w : c->topo_ring_width) * k);
+  if (sm->on) {
+    glUniform2f(g.m_s_in, sm->in_r * k, fmax(sm->in_band * k, 1));
+    glUniform2f(g.m_s_out, sm->out_r * k, fmax(sm->out_band * k, 1));
+    glUniform3f(g.m_s_lit, sm->lit_r * k, fmax(sm->lit_w * k, 1), sm->lit);
+    glUniform1f(g.m_s_lit_all, sm->lit_all);
+    glUniform2f(g.m_s_levels, sm->levels, sm->level_lit);
+  } else {
+    glUniform2f(g.m_s_in, 1e6, 1);
+    glUniform2f(g.m_s_out, -1e6, 1);
+    glUniform3f(g.m_s_lit, 0, 1, 0);
+    glUniform1f(g.m_s_lit_all, 0);
+    glUniform2f(g.m_s_levels, 1e4, 0);
+  }
   glUniform1f(g.m_sway, f->sway * c->topo_sway_px * k);
   glUniform1f(g.m_time, f->time);
   glUniform2f(g.m_drift, f->drift_x * k, f->drift_y * k);
@@ -697,8 +732,11 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform1f(g.m_ripple_span, c->topo_ripple_span * k);
   glUniform1f(g.m_light, c->topo_light);
   glUniform1f(g.m_light_w, c->topo_light_width);
-  glUniform1f(g.m_gather, f->peek_gather * c->topo_gather_px * k);
-  glUniform1f(g.m_gather_reach, fmax(c->topo_gather_reach * k, 1));
+  bool sgather = sm->on && sm->gather != 0;
+  glUniform1f(g.m_gather,
+              (sgather ? sm->gather : f->peek_gather * c->topo_gather_px) * k);
+  glUniform1f(g.m_gather_reach,
+              fmax((sgather ? sm->gather_reach : c->topo_gather_reach) * k, 1));
   /* The front starts past the corners and reaches the logo as the hold
    * ends; the lit lines go with the expand. */
   double band = 120 * k, logo = c->logo_radius * k;

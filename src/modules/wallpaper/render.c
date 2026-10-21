@@ -199,6 +199,41 @@ static void draw_bar(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
 }
 
+/* What the topo shows do to the map that cairo can: black outside in_r
+ * and inside out_r, and cpu_dim over the lot. */
+static void show_map_mask(cairo_t *cr, int pw, int ph,
+                          const struct wp_show_map *m) {
+  double k = pw / WP_REF_WIDTH, cx = pw / 2.0, cy = ph / 2.0;
+  if (m->cpu_dim > 0) {
+    cairo_set_source_rgba(cr, 0, 0, 0, fmin(m->cpu_dim, 1));
+    cairo_paint(cr);
+  }
+  double ri = m->in_r * k, ro = m->out_r * k;
+  if (ri <= 0) {
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_paint(cr);
+  } else if (ri < hypot(pw, ph)) {
+    cairo_pattern_t *p = cairo_pattern_create_radial(cx, cy, 0, cx, cy, ri);
+    cairo_pattern_add_color_stop_rgba(
+        p, fmax(1 - fmax(m->in_band, 1) * k / ri, 0), 0, 0, 0, 0);
+    cairo_pattern_add_color_stop_rgba(p, 1, 0, 0, 0, 1);
+    cairo_pattern_set_extend(p, CAIRO_EXTEND_PAD);
+    cairo_set_source(cr, p);
+    cairo_paint(cr);
+    cairo_pattern_destroy(p);
+  }
+  if (ro > 0) {
+    cairo_pattern_t *p = cairo_pattern_create_radial(cx, cy, 0, cx, cy, ro);
+    cairo_pattern_add_color_stop_rgba(
+        p, fmax(1 - fmax(m->out_band, 1) * k / ro, 0), 0, 0, 0, 1);
+    cairo_pattern_add_color_stop_rgba(p, 1, 0, 0, 0, 0);
+    cairo_pattern_set_extend(p, CAIRO_EXTEND_PAD);
+    cairo_set_source(cr, p);
+    cairo_paint(cr);
+    cairo_pattern_destroy(p);
+  }
+}
+
 /* The power-off CRT: a bright pill (a dot or a line) in a soft glow. */
 static void draw_crt(cairo_t *cr, const struct wallpaper_config *c,
                      double cx, double cy, double k,
@@ -407,6 +442,8 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
     cairo_set_source_rgba(cr, 0, 0, 0, fmin(dim, 1));
     cairo_paint(cr);
   }
+  if (topo && !f->map_under && f->smap.on)
+    show_map_mask(cr, pw, ph, &f->smap);
   double k = pw / WP_REF_WIDTH, r = c->logo_radius * k;
   /* A shake moves everything over the background, by whole pixels so the
    * cached tiles stay sharp. */
@@ -437,7 +474,7 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   /* The logo reacts to the music: it grows on bass hits and its lambdas
    * slide out (both 0 without music). */
   double rp = r * (1 + c->react_pulse_scale * f->pulse) *
-              (1 - fmin(fmax(f->logo_shrink, 0), 1));
+              (1 - fmin(fmax(f->logo_shrink, -0.5), 1));
   wp_draw_hex(cr, c, cx, cy, r, rp, f);
   if (rp > 0 && topo && f->logo_gpu)
     ; /* the GPU draws it over the buffer */

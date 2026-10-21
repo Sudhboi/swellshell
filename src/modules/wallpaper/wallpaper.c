@@ -127,7 +127,7 @@ bool wp_saving(void) { return w.saving; }
 #define SHOW_RETURN_MS 800
 
 static bool outro_show(void) {
-  return w.show == WP_SHOW_SCATTER || w.show == WP_SHOW_CRT;
+  return w.show != WP_SHOW_NONE && !wp_show_is_intro(w.show);
 }
 
 /* After a power-off: black, waiting for hold_timer. */
@@ -423,7 +423,7 @@ static void show_frame(int64_t now, struct wp_frame *f) {
     return;
   double t = now - w.show_start;
   int len = wp_show_ms(&w.cfg, w.show);
-  if (w.show == WP_SHOW_INTRO) {
+  if (wp_show_is_intro(w.show)) {
     if (t >= len)
       w.show = WP_SHOW_NONE;
     else
@@ -542,6 +542,7 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->logo_shrink = f->flash = f->fade = f->bg_fade = 0;
   f->bar_fade = saver;
   f->crt_w = f->crt_h = f->crt_alpha = 0;
+  f->smap = (struct wp_show_map){0};
   advance_map(now);
   f->map_fade = 1 - w.map_alpha;
   f->map_under = false;
@@ -605,11 +606,11 @@ static void show_start(enum wp_show s) {
   if (outro_show())
     loop_timer_arm(w.hold_timer,
                    wp_show_ms(&w.cfg, s) + (int64_t)w.cfg.outro_hold_ms, 0);
-  bus_emit(s == WP_SHOW_INTRO ? "wallpaper.intro" : "wallpaper.outro",
-           s == WP_SHOW_INTRO   ? NULL
-           : s == WP_SHOW_CRT ? "SWELL_OUTRO=crt"
-                                : "SWELL_OUTRO=scatter",
-           NULL);
+  bool intro = wp_show_is_intro(s);
+  char env[64];
+  snprintf(env, sizeof env, "%s=%s", intro ? "SWELL_INTRO" : "SWELL_OUTRO",
+           wp_show_name(s));
+  bus_emit(intro ? "wallpaper.intro" : "wallpaper.outro", env, NULL);
   wp_surfaces_draw(false); /* and every draw asks for the next frame */
 }
 
@@ -1006,7 +1007,7 @@ bool wp_init(struct swell *sw, const void *cfg) {
   }
   update_animating();
   if (w.cfg.intro && w.animating && !w.join_at && intro_first())
-    show_start(WP_SHOW_INTRO);
+    show_start(wp_show_pick(&w.cfg, true, drand48()));
   return true;
 }
 
@@ -1152,19 +1153,24 @@ int wp_command(int argc, char **argv, struct reply *r) {
     reply_printf(r, "outputs: %d\n", wp_surfaces_count());
     return 0;
   }
-  /* Play the launch animation, or the power-off one; the reply is the ms
-   * until it ends (for a power-off, in black), 0 if it doesn't play. */
+  /* Play the launch animation, or the power-off one (that one, if named);
+   * the reply is the ms until it ends (for a power-off, in black), 0 if it
+   * doesn't play. */
   if ((strcmp(argv[0], "intro") == 0 || strcmp(argv[0], "outro") == 0) &&
-      argc == 1) {
+      argc <= 2) {
     bool intro = argv[0][0] == 'i';
+    enum wp_show named = argc == 2 ? wp_show_named(argv[1]) : WP_SHOW_NONE;
+    if (argc == 2 &&
+        (named == WP_SHOW_NONE || wp_show_is_intro(named) != intro)) {
+      reply_printf(r, "wallpaper: no %s called '%s'\n", argv[0], argv[1]);
+      return 1;
+    }
     int64_t left = 0;
     if (outro_show() && !intro) {
       /* Already powering off: the same one, not a restart. */
       left = w.show_start + wp_show_ms(&w.cfg, w.show) - now_ms();
     } else if (w.ws_empty && (intro || w.cfg.outro)) {
-      enum wp_show s = intro ? WP_SHOW_INTRO
-                       : drand48() < w.cfg.outro_crt_chance ? WP_SHOW_CRT
-                                                            : WP_SHOW_SCATTER;
+      enum wp_show s = named ? named : wp_show_pick(&w.cfg, intro, drand48());
       show_start(s);
       left = wp_show_ms(&w.cfg, s);
     }

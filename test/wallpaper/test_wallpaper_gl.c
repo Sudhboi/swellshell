@@ -677,6 +677,50 @@ static void check_logo(const char *dir) {
   cairo_surface_destroy(a);
 }
 
+/* Lit pixels (of the map at least this bright) within r0..r1 of the
+ * centre, per 1000 of those sampled. */
+static long lit_in(cairo_surface_t *m, double r0, double r1) {
+  long n = 0, lit = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3) {
+      double r = hypot(x - W / 2.0, y - H / 2.0);
+      if (r < r0 || r > r1)
+        continue;
+      n++;
+      lit += lum(m, x, y) >= 60;
+    }
+  return n ? lit * 1000 / n : 0;
+}
+
+/* topo's shows on the GPU's map: wallpaper_gl_show_<name>_*. */
+static void check_shows(const char *dir) {
+  const struct wallpaper_config *c = wallpaper_module.defaults;
+  struct wp_frame base = {.percent = 50, .level = 1, .dir = 1};
+  cairo_surface_t *rest = gpu_map(c, &base, NULL, NULL);
+  long all = lit_in(rest, 0, 1e9);
+  char name[96];
+  int len = wp_show_ms(c, WP_SHOW_SHOCK);
+  struct wp_frame f[7];
+  cairo_surface_t *m[7];
+  for (int j = 0; j <= 6; ++j) {
+    f[j] = base;
+    wp_show_apply(c, WP_SHOW_SHOCK, len * j / 6.0, &f[j]);
+    snprintf(name, sizeof name, "wallpaper_gl_show_shock_%d", j);
+    m[j] = gpu_map(c, &f[j], dir, name);
+  }
+  /* Shock: black, then lines only inside the wave, then all of them. */
+  assert(lit_in(m[0], 0, 1e9) == 0);
+  double r = f[2].smap.in_r;
+  assert(r > 400 && r < 1400);
+  fprintf(stderr, "shock: inside %ld outside %ld\n", lit_in(m[2], 0, r - 300),
+          lit_in(m[2], r + 50, 1e9));
+  assert(lit_in(m[2], 0, r - 300) * 2 > all && lit_in(m[2], r + 50, 1e9) == 0);
+  assert(labs(lit_in(m[6], 0, 1e9) - all) * 10 < all);
+  for (int j = 0; j <= 6; ++j)
+    cairo_surface_destroy(m[j]);
+  cairo_surface_destroy(rest);
+}
+
 int main(int argc, char **argv) {
   const char *dir = argc > 1 ? argv[1] : ".";
   if (!wp_gl_init(NULL) || !wp_gl_current()) {
@@ -723,6 +767,7 @@ int main(int argc, char **argv) {
   check(c, &qf, dir, "wallpaper_gl_silent");
 
   check_map(dir);
+  check_shows(dir);
   check_logo(dir);
   wp_gl_finish();
   wp_render_finish();

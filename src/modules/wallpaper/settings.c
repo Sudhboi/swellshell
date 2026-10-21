@@ -571,9 +571,11 @@ const struct swell_module wallpaper_module = {
     .aliases = (const char *const[]){"wp", NULL},
     .usage = "  status                 animation state, battery, fps\n"
              "  percent N|auto         show N% instead of the battery\n"
-             "  intro                  play the launch animation\n"
-             "  outro                  play the power-off animation (see "
-             "`swell power`)\n",
+             "  intro [NAME]           play the launch animation (topo: "
+             "shock)\n"
+             "  outro [NAME]           play the power-off animation (see "
+             "`swell power`;\n"
+             "                         classic: scatter, crt)\n",
     .needs_wayland = true,
     .config_size = sizeof(struct wallpaper_config),
     .defaults = &defaults,

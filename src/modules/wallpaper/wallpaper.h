@@ -241,6 +241,20 @@ struct wp_frame {
   double crt_w, crt_h, crt_alpha; /* the CRT's line or dot, reference px */
   double fade;           /* black over everything, 0..1 */
   double bg_fade;        /* black over the topo map only, 0..1 */
+  /* The topo shows move the map's lines (on the GPU; without it, only the
+   * radii and cpu_dim show). Lengths are reference px from the centre. */
+  struct wp_show_map {
+    bool on;
+    double in_r, in_band;     /* lines only inside in_r, soft over in_band */
+    double out_r, out_band;   /* and only outside out_r */
+    double lit_r, lit_w, lit; /* a band of lit lines round lit_r */
+    double lit_all;           /* every line lit this much */
+    double levels;            /* lines only below this level (of topo_levels) */
+    double level_lit;         /* the highest of those lit this much */
+    double gather, gather_reach; /* drawn in as the popup's hold does */
+    double ring_px, ring_w;      /* the rings' push, for topo_ring_* */
+    double cpu_dim; /* without the GPU, the map dimmed this much instead */
+  } smap;
   double map_fade;       /* the topo map taken away (windows), 0..1 */
   bool map_under; /* the GPU draws the map under the buffer: leave it clear */
   /* The GPU draws the topo snowflake over the buffer: leave it out, and
@@ -591,8 +605,19 @@ enum wp_show {
   WP_SHOW_INTRO,   /* the lambdas assemble */
   WP_SHOW_SCATTER, /* the lambdas scatter */
   WP_SHOW_CRT,     /* spin up and collapse like an old CRT */
+  /* topo's, the contour lines carrying them */
+  WP_SHOW_SHOCK, /* intro: the snowflake blooms and a wave reveals the map */
+  WP_SHOW_COUNT
 };
 const char *wp_show_name(enum wp_show s);
+/* The show called name, WP_SHOW_NONE if none is. */
+enum wp_show wp_show_named(const char *name);
+/* A launch animation (else a power-off one). */
+bool wp_show_is_intro(enum wp_show s);
+/* The style's launch (intro) or power-off animation for r, 0..1 uniformly
+ * random: topo's each as likely, classic's per outro_crt_chance. */
+enum wp_show wp_show_pick(const struct wallpaper_config *c, bool intro,
+                          double r);
 /* The show's length in ms. The power-off ones end in black. */
 int wp_show_ms(const struct wallpaper_config *c, enum wp_show s);
 /* Change f, a normal frame, into the show's frame t ms in. Past its length

@@ -296,6 +296,59 @@ static void test_shows(const struct wallpaper_config *c, const char *dir,
   cairo_surface_destroy(plain);
 }
 
+/* topo's shows (the map's part drawn by cairo, where there's no GPU):
+ * wallpaper_topo_show_<name>_*. Each as likely; intros end on the plain
+ * frame, power-offs in black by their length. */
+static const enum wp_show topo_shows[] = {WP_SHOW_SHOCK};
+#define NTOPO ((int)(sizeof(topo_shows) / sizeof(topo_shows[0])))
+
+static void test_topo_shows(const struct wallpaper_config *c, const char *dir) {
+  int seen[WP_SHOW_COUNT] = {0}, intros = 0;
+  for (int i = 0; i < 6000; ++i) {
+    bool intro = i % 2;
+    enum wp_show s = wp_show_pick(c, intro, (i / 2) / 3000.0);
+    assert(s != WP_SHOW_CRT && wp_show_is_intro(s) == intro);
+    seen[s]++;
+  }
+  for (int i = 0; i < NTOPO; ++i) {
+    enum wp_show s = topo_shows[i];
+    intros += wp_show_is_intro(s);
+    assert(wp_show_named(wp_show_name(s)) == s);
+  }
+  for (int i = 0; i < NTOPO; ++i) {
+    enum wp_show s = topo_shows[i];
+    int n = wp_show_is_intro(s) ? intros : NTOPO - intros;
+    assert(abs(seen[s] - 3000 / n) <= 1);
+  }
+  assert(wp_show_named("nope") == WP_SHOW_NONE);
+
+  struct wp_frame base = {.percent = 60, .level = 1, .angle = 0.3, .dir = 1};
+  cairo_surface_t *plain = render(c, base, dir, NULL);
+  char name[96];
+  for (int i = 0; i < NTOPO; ++i) {
+    enum wp_show s = topo_shows[i];
+    int len = wp_show_ms(c, s);
+    assert(len ==
+           (wp_show_is_intro(s) ? wp_show_ms(c, WP_SHOW_INTRO) : c->outro_ms));
+    for (int j = 0; j <= 6; ++j) {
+      snprintf(name, sizeof name, "wallpaper_topo_show_%s_%d", wp_show_name(s),
+               j);
+      cairo_surface_destroy(
+          render(c, show_at(c, s, len * j / 6.0, base), dir, name));
+    }
+    cairo_surface_t *e = render(c, show_at(c, s, len, base), dir, NULL);
+    if (wp_show_is_intro(s)) {
+      for (int y = 0; y < H; y += 3)
+        for (int x = 0; x < W; x += 3)
+          assert(px(e, x, y) == px(plain, x, y));
+    } else {
+      assert(all_black(e));
+    }
+    cairo_surface_destroy(e);
+  }
+  cairo_surface_destroy(plain);
+}
+
 /* The topo style (the default): the contour map under the glass snowflake,
  * wallpaper_topo_*. */
 /* The GPU snowflake's distance field: negative inside the lambdas, the
@@ -560,6 +613,7 @@ static void test_topo(const char *dir) {
   cairo_surface_destroy(b);
 
   test_shows(c, dir, "wallpaper_topo");
+  test_topo_shows(c, dir);
 }
 
 int main(int argc, char **argv) {
