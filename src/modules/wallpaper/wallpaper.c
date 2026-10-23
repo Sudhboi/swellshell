@@ -64,6 +64,9 @@ static struct {
   bool have_pointer;
   double px, py;
   int64_t last_motion; /* ms of the last boosting pointer motion */
+  /* the pointer pushing the topo lines apart, 0..1, on that output */
+  double poke;
+  const void *poke_out;
   struct wp_viz viz;
   struct wp_viz_in viz_in; /* the last audio block's band levels */
   double viz_time; /* s, drives the bars' wobble */
@@ -175,7 +178,7 @@ static bool viz_showing(void) {
 static bool reacting(void) {
   if (w.react.loud > 1e-3 || w.react.pulse > 0 || w.react.kick > 0 ||
       w.react.shake > 0 ||
-      w.spin_glow > 1e-3 || w.playing > 1e-3 || w.nrings > 0)
+      w.spin_glow > 1e-3 || w.playing > 1e-3 || w.nrings > 0 || w.poke > 0)
     return true;
   for (int k = 0; k < 6; ++k)
     if (w.react.slices[k] > 1e-3)
@@ -270,6 +273,9 @@ static double advance(int64_t now, bool bar_only) {
     w.boost *= exp(-dt / w.cfg.spin_decay_s);
   if (w.boost < 1e-3)
     w.boost = 0;
+  w.poke *= exp(-dt / w.cfg.topo_poke_decay_s);
+  if (w.poke < 1e-3)
+    w.poke = 0;
   return dt;
 }
 
@@ -553,6 +559,10 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   double drift = wp_topo(&w.cfg) ? w.cfg.topo_drift_px : 0;
   f->drift_x = drift * sin(2 * M_PI * w.drift_t / w.cfg.topo_drift_s);
   f->drift_y = drift * sin(2 * M_PI * w.drift_t * 0.75 / w.cfg.topo_drift_s);
+  f->poke = wp_topo(&w.cfg) && !wp_showing() ? w.poke : 0;
+  f->poke_x = w.px;
+  f->poke_y = w.py;
+  f->poke_out = w.poke_out;
   f->spec_on = waves && viz_showing() &&
                (w.cfg.topo_spectrum_px > 0 || w.cfg.topo_ripple_px > 0 ||
                 w.cfg.topo_light > 0 || w.cfg.topo_light_width > 0);
@@ -833,6 +843,9 @@ static void pointer_enter(void *data, struct wl_surface *s, double x,
   w.have_pointer = true;
   w.px = x;
   w.py = y;
+  if (w.poke_out != data)
+    w.poke = 0;
+  w.poke_out = data;
 }
 
 static void pointer_leave(void *data, struct wl_surface *s) {
@@ -854,6 +867,8 @@ static void pointer_motion(void *data, double x, double y) {
     return;
   arm_idle_fallback();
   w.boost = fmin(w.boost + w.cfg.spin_gain * d, w.cfg.spin_max);
+  if (wp_topo(&w.cfg) && w.cfg.topo_poke_px > 0)
+    w.poke = fmin(w.poke + w.cfg.topo_poke_gain * d, 1);
   if (d > 0)
     w.last_motion = now_ms();
 }

@@ -36,7 +36,7 @@ static struct {
       m_k, m_gorigin, m_shake, m_spec, m_spec_on, m_logo_r, m_spec_px,
       m_spec_reach, m_ripple_px, m_ripple_span, m_light, m_light_w, m_gather,
       m_gather_reach, m_hold_front, m_hold_lit, m_hold_band, m_drift, m_drift_l,
-      m_s_in, m_s_out, m_s_lit, m_s_lit_all, m_s_levels;
+      m_s_in, m_s_out, m_s_lit, m_s_lit_all, m_s_levels, m_poke, m_poke_r;
   /* the topo snowflake */
   GLuint logo_prog, logo_tex[3]; /* distance field, shadow, glow */
   unsigned logo_ids[3];          /* what's in them */
@@ -125,7 +125,8 @@ static const char *fs_src =
 /* The topo map: the contour lines of the height grid, antialiased by the
  * heights' screen derivative, over the background, dimmed by bright. Rings
  * (centre-relative radius, size) push the lines outwards as they pass; the
- * sway moves them gently, and at rest they drift slowly (bending a little,
+ * sway moves them gently, the pointer (poke: where, push px) pushes them
+ * away round it, most at poke_r, and at rest they drift slowly (bending a little,
  * by drift_l). The spectrum (bass first, left then right) bulges
  * them out round the logo by angle (bass at the bottom, each channel on
  * its side), ripples them out over the map by distance, and lights each
@@ -146,9 +147,9 @@ static const char *map_fs_src =
     "uniform float cell, bh, levels, lw, iw, bright, ring_px, ring_w,\n"
     "    sway, time, k, logo_r, spec_px, spec_reach, ripple_px, ripple_span,\n"
     "    light, light_w, gather, gather_reach, hold_front, hold_lit,\n"
-    "    hold_band, drift_l, s_lit_all;\n"
+    "    hold_band, drift_l, s_lit_all, poke_r;\n"
     "uniform vec2 s_in, s_out, s_levels;\n"
-    "uniform vec3 s_lit;\n"
+    "uniform vec3 s_lit, poke;\n"
     "uniform int every, nrings;\n"
     "uniform bool spec_on;\n"
     "uniform float spec[2 * " WP_SPEC_STR "];\n"
@@ -191,6 +192,11 @@ static const char *map_fs_src =
     "    float u = (l - rings[r].x) / ring_w;\n"
     "    float fall = exp(-u * u) * (1.0 - smoothstep(1.5, 2.1, abs(u)));\n"
     "    p -= d / l * rings[r].y * ring_px * fall;\n"
+    "  }\n"
+    "  if (poke.z != 0.0) {\n"
+    "    vec2 d = q - poke.xy;\n"
+    "    float l = max(length(d), 1e-3), u = l / poke_r;\n"
+    "    p -= d / l * poke.z * u * exp(0.5 - 0.5 * u * u);\n"
     "  }\n"
     "  if (gather != 0.0) {\n"
     "    vec2 d = q - centre;\n"
@@ -360,7 +366,8 @@ static bool build_program(void) {
   M(spec), M(spec_on), M(logo_r), M(spec_px), M(spec_reach), M(ripple_px);
   M(ripple_span), M(light), M(light_w), M(gather), M(gather_reach);
   M(hold_front), M(hold_lit), M(hold_band), M(drift), M(drift_l);
-  M(s_in), M(s_out), M(s_lit), M(s_lit_all), M(s_levels);
+  M(s_in), M(s_out), M(s_lit), M(s_lit_all), M(s_levels), M(poke);
+  M(poke_r);
 #undef M
   g.m_step = glGetUniformLocation(g.map_prog, "stp");
 
@@ -720,6 +727,8 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
     glUniform2f(g.m_s_levels, 1e4, 0);
   }
   glUniform1f(g.m_sway, f->sway * c->topo_sway_px * k);
+  glUniform3f(g.m_poke, f->poke_x, f->poke_y, f->poke * c->topo_poke_px * k);
+  glUniform1f(g.m_poke_r, fmax(c->topo_poke_radius * k, 1));
   glUniform1f(g.m_time, f->time);
   glUniform2f(g.m_drift, f->drift_x * k, f->drift_y * k);
   glUniform1f(g.m_drift_l, 900 * k);

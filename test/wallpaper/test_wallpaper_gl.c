@@ -245,6 +245,33 @@ static void check_map(const char *dir) {
   assert(in > 500 && out == 0);
   cairo_surface_destroy(rm);
 
+  /* The pointer at full push, off the centre: the lines round it move,
+   * spread out (fewer lit pixels close by), and none far away. */
+  struct wp_frame kf = f;
+  kf.poke = 1;
+  kf.poke_x = 720;
+  kf.poke_y = 900;
+  cairo_surface_t *km = gpu_map(c, &kf, dir, "wallpaper_gl_map_poke");
+  double pr = c->topo_poke_radius;
+  long near_k = 0, far_k = 0, lit_g = 0, lit_k = 0;
+  for (int y = 0; y < H; y += 3)
+    for (int x = 0; x < W; x += 3) {
+      double r = hypot(x - 720.0, y - 900.0);
+      bool differ = abs(lum(gm, x, y) - lum(km, x, y)) > 60;
+      if (r > 0.3 * pr && r < 2 * pr)
+        near_k += differ;
+      else if (r > 4 * pr)
+        far_k += differ;
+      if (r < 0.8 * pr) {
+        lit_g += lum(gm, x, y) >= 120;
+        lit_k += lum(km, x, y) >= 120;
+      }
+    }
+  fprintf(stderr, "poke: %ld changed round it, %ld far; lit inside %ld -> %ld\n",
+          near_k, far_k, lit_g, lit_k);
+  assert(near_k > 300 && far_k == 0 && lit_k < lit_g);
+  cairo_surface_destroy(km);
+
   /* The spectrum: silent, nothing moves; playing, the lines bulge round the
    * logo, ripple out on the map and brighten. */
   struct wp_frame pf = f;

@@ -60,6 +60,10 @@ static const struct wallpaper_config defaults = {
     .topo_ring_speed = 1600,
     .topo_ring_ms = 1800,
     .topo_sway_px = 10,
+    .topo_poke_px = 70,
+    .topo_poke_radius = 260,
+    .topo_poke_gain = 0.004,
+    .topo_poke_decay_s = 0.3,
     .topo_drift_px = 12,
     .topo_drift_s = 90,
     .topo_spectrum_px = 120,
@@ -292,6 +296,16 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, topo_ring_ms, 1, 60000, "how long a ring lasts"),
     CFG_DOUBLE(S, topo_sway_px, 0, 1000,
                "how far the lines sway at full loudness, px"),
+    CFG_DOUBLE(S, topo_poke_px, 0, 1000,
+               "moving the pointer over the map pushes the lines away from it "
+               "this far at most, px (needs a GPU; 0 = off)"),
+    CFG_DOUBLE(S, topo_poke_radius, 1, 10000,
+               "how far from the pointer the push is strongest, px"),
+    CFG_DOUBLE(S, topo_poke_gain, 0, 1,
+               "the push's strength (0..1) gained per px the pointer moves"),
+    CFG_DOUBLE(S, topo_poke_decay_s, 0.01, 60,
+               "the push fades once the pointer stops, by e every this many "
+               "s"),
     CFG_DOUBLE(S, topo_drift_px, 0, 200,
                "at rest the lines drift slowly round a small loop this far, "
                "against burn-in, px (0 = still)"),

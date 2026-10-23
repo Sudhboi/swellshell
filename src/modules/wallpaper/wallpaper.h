@@ -75,6 +75,12 @@ struct wallpaper_config {
   double topo_ring_speed;  /* ref px/s */
   int topo_ring_ms;        /* each ring's life */
   double topo_sway_px;     /* at full loudness, ref px */
+  /* moving the pointer over the map pushes the lines away from it (GPU
+   * only); the push fades once it stops */
+  double topo_poke_px;      /* the push at full strength, ref px, 0: off */
+  double topo_poke_radius;  /* where it pushes most, ref px */
+  double topo_poke_gain;    /* strength per px of pointer travel */
+  double topo_poke_decay_s; /* its fading's time constant */
   /* at rest they drift slowly round a small loop (against burn-in) */
   double topo_drift_px; /* ref px, 0: still */
   double topo_drift_s;  /* the loop's x period, s (y takes 4/3 of it) */
@@ -270,6 +276,10 @@ struct wp_frame {
   double sway;    /* the map's sway, 0..1 (loudness) */
   double time;    /* s, drives the sway */
   double drift_x, drift_y; /* the map's slow drift at rest, ref px */
+  /* the pointer pushing the lines apart: strength 0..1, where (logical px
+   * on poke_out; surface.c turns them into buffer px for its output) */
+  double poke, poke_x, poke_y;
+  const void *poke_out;
   int nrings;
   struct wp_ring {
     double radius; /* ref px from the logo's centre */
