@@ -36,7 +36,8 @@ static struct {
       m_k, m_gorigin, m_shake, m_spec, m_spec_on, m_logo_r, m_spec_px,
       m_spec_reach, m_ripple_px, m_ripple_span, m_light, m_light_w, m_gather,
       m_gather_reach, m_hold_front, m_hold_lit, m_hold_band, m_drift, m_drift_l,
-      m_s_in, m_s_out, m_s_lit, m_s_lit_all, m_s_levels, m_poke, m_poke_r;
+      m_s_in, m_s_out, m_s_lit, m_s_lit_all, m_s_levels, m_pokes, m_npokes,
+      m_poke_r, m_poke_light;
   /* the topo snowflake */
   GLuint logo_prog, logo_tex[3]; /* distance field, shadow, glow */
   unsigned logo_ids[3];          /* what's in them */
@@ -125,9 +126,10 @@ static const char *fs_src =
 /* The topo map: the contour lines of the height grid, antialiased by the
  * heights' screen derivative, over the background, dimmed by bright. Rings
  * (centre-relative radius, size) push the lines outwards as they pass; the
- * sway moves them gently, the pointer (poke: where, push px) pushes them
- * away round it, most at poke_r, and at rest they drift slowly (bending a little,
- * by drift_l). The spectrum (bass first, left then right) bulges
+ * sway moves them gently, the pointer's wake (pokes: where, how open)
+ * parts them, pushing them aside within about poke_r and pressing them
+ * together (brighter by poke_light) round it, and at rest they drift
+ * slowly (bending a little, by drift_l). The spectrum (bass first, left then right) bulges
  * them out round the logo by angle (bass at the bottom, each channel on
  * its side), ripples them out over the map by distance, and lights each
  * line by its place along the gradient. A held popup key draws them in
@@ -147,10 +149,11 @@ static const char *map_fs_src =
     "uniform float cell, bh, levels, lw, iw, bright, ring_px, ring_w,\n"
     "    sway, time, k, logo_r, spec_px, spec_reach, ripple_px, ripple_span,\n"
     "    light, light_w, gather, gather_reach, hold_front, hold_lit,\n"
-    "    hold_band, drift_l, s_lit_all, poke_r;\n"
+    "    hold_band, drift_l, s_lit_all, poke_r, poke_light;\n"
     "uniform vec2 s_in, s_out, s_levels;\n"
-    "uniform vec3 s_lit, poke;\n"
-    "uniform int every, nrings;\n"
+    "uniform vec3 s_lit;\n"
+    "uniform vec3 pokes[" WP_WAKE_STR "];\n"
+    "uniform int every, nrings, npokes;\n"
     "uniform bool spec_on;\n"
     "uniform float spec[2 * " WP_SPEC_STR "];\n"
     "uniform vec2 origin, stp, centre, shake, drift;\n"
@@ -193,10 +196,27 @@ static const char *map_fs_src =
     "    float fall = exp(-u * u) * (1.0 - smoothstep(1.5, 2.1, abs(u)));\n"
     "    p -= d / l * rings[r].y * ring_px * fall;\n"
     "  }\n"
-    "  if (poke.z != 0.0) {\n"
-    "    vec2 d = q - poke.xy;\n"
-    "    float l = max(length(d), 1e-3), u = l / poke_r;\n"
-    "    p -= d / l * poke.z * u * exp(0.5 - 0.5 * u * u);\n"
+    /* The wake: each point, oldest first, pulls where the lines are
+     * looked up towards itself (open·e^-x², x = distance / poke_r), which
+     * spreads them out round it and presses them together further out.
+     * The newest is the pointer; the others pull more the further it has
+     * gone from them, so each comes in smoothly. Where a point is still
+     * open the line that would run through it is cut, leaving a clean
+     * hole the others bend round. */
+    "  float pclear = 0.0, plit = 0.0;\n"
+    "  if (npokes > 0) {\n"
+    "    vec2 head = pokes[npokes - 1].xy;\n"
+    "    for (int i = 0; i < npokes; ++i) {\n"
+    "      vec2 c = pokes[i].xy;\n"
+    "      float o = pokes[i].z;\n"
+    "      if (i < npokes - 1)\n"
+    "        o *= smoothstep(0.0, poke_r * 0.5, length(c - head));\n"
+    "      float x = length(p - c) / poke_r;\n"
+    "      p += o * exp(-x * x) * (c - p);\n"
+    "      pclear = max(pclear, smoothstep(0.6, 0.9, o) *\n"
+    "                               (1.0 - smoothstep(0.32, 0.42, x)));\n"
+    "      plit = max(plit, o * exp(-4.0 * (x - 1.1) * (x - 1.1)));\n"
+    "    }\n"
     "  }\n"
     "  if (gather != 0.0) {\n"
     "    vec2 d = q - centre;\n"
@@ -230,7 +250,7 @@ static const char *map_fs_src =
     "    float u = (sl - s_lit.x) / s_lit.y;\n"
     "    lit = max(lit, s_lit.z * exp(-u * u));\n"
     "  }\n"
-    "  lit = max(lit, s_lit_all);\n"
+    "  lit = max(lit, max(s_lit_all, poke_light * plit));\n"
     "  if (sway > 0.0) {\n"
     "    float wl = 420.0 * k;\n"
     "    p += sway * vec2(sin(q.y / wl + time * 1.7),\n"
@@ -249,7 +269,7 @@ static const char *map_fs_src =
     "  float w = lw * (index ? iw : 1.0) * (1.0 + light_w * lit);\n"
     "  float cov = li < 0.0 || li >= levels ? 0.0\n"
     "            : clamp(w * 0.5 - dist + 0.5, 0.0, 1.0);\n"
-    "  cov *= clamp(dl, 0.0, 1.0) *\n"
+    "  cov *= clamp(dl, 0.0, 1.0) * (1.0 - pclear) *\n"
     "         (1.0 - smoothstep(s_in.x - s_in.y, s_in.x, sl)) *\n"
     "         smoothstep(s_out.x - s_out.y, s_out.x, sl);\n"
     "  vec4 lc = x < 0.5 ? mix(line0, line1, x * 2.0)\n"
@@ -366,8 +386,8 @@ static bool build_program(void) {
   M(spec), M(spec_on), M(logo_r), M(spec_px), M(spec_reach), M(ripple_px);
   M(ripple_span), M(light), M(light_w), M(gather), M(gather_reach);
   M(hold_front), M(hold_lit), M(hold_band), M(drift), M(drift_l);
-  M(s_in), M(s_out), M(s_lit), M(s_lit_all), M(s_levels), M(poke);
-  M(poke_r);
+  M(s_in), M(s_out), M(s_lit), M(s_lit_all), M(s_levels), M(pokes);
+  M(npokes), M(poke_r), M(poke_light);
 #undef M
   g.m_step = glGetUniformLocation(g.map_prog, "stp");
 
@@ -727,8 +747,17 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
     glUniform2f(g.m_s_levels, 1e4, 0);
   }
   glUniform1f(g.m_sway, f->sway * c->topo_sway_px * k);
-  glUniform3f(g.m_poke, f->poke_x, f->poke_y, f->poke * c->topo_poke_px * k);
+  float pokes[WP_WAKE][3] = {{0}};
+  int np = f->npokes < WP_WAKE ? f->npokes : WP_WAKE;
+  for (int i = 0; i < np; ++i) {
+    pokes[i][0] = (float)f->pokes[i].x;
+    pokes[i][1] = (float)f->pokes[i].y;
+    pokes[i][2] = (float)f->pokes[i].open;
+  }
+  glUniform3fv(g.m_pokes, WP_WAKE, pokes[0]);
+  glUniform1i(g.m_npokes, np);
   glUniform1f(g.m_poke_r, fmax(c->topo_poke_radius * k, 1));
+  glUniform1f(g.m_poke_light, c->topo_poke_light);
   glUniform1f(g.m_time, f->time);
   glUniform2f(g.m_drift, f->drift_x * k, f->drift_y * k);
   glUniform1f(g.m_drift_l, 900 * k);

@@ -527,14 +527,16 @@ topo_ring_speed = 1600.0
 topo_ring_ms = 1800
 # how far the lines sway at full loudness, px
 topo_sway_px = 10.0
-# moving the pointer over the map pushes the lines away from it this far at most, px (needs a GPU; 0 = off)
-topo_poke_px = 70.0
-# how far from the pointer the push is strongest, px
-topo_poke_radius = 260.0
-# the push's strength (0..1) gained per px the pointer moves
-topo_poke_gain = 0.004
-# the push fades once the pointer stops, by e every this many s
-topo_poke_decay_s = 0.3
+# moving the pointer over the map parts the lines round it, leaving a wake that closes behind it (needs a GPU)
+topo_poke = true
+# how far round the pointer the lines are pushed aside, px
+topo_poke_radius = 110.0
+# the wake is made of points left this far apart, px
+topo_poke_spacing = 40.0
+# each part of the wake closes this long after the pointer left it, s
+topo_poke_close_s = 0.6
+# the lines pushed together brighten this much
+topo_poke_light = 0.6
 # at rest the lines drift slowly round a small loop this far, against burn-in, px (0 = still)
 topo_drift_px = 12.0
 # one turn of that drift, s

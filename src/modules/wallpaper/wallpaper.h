@@ -75,12 +75,13 @@ struct wallpaper_config {
   double topo_ring_speed;  /* ref px/s */
   int topo_ring_ms;        /* each ring's life */
   double topo_sway_px;     /* at full loudness, ref px */
-  /* moving the pointer over the map pushes the lines away from it (GPU
-   * only); the push fades once it stops */
-  double topo_poke_px;      /* the push at full strength, ref px, 0: off */
-  double topo_poke_radius;  /* where it pushes most, ref px */
-  double topo_poke_gain;    /* strength per px of pointer travel */
-  double topo_poke_decay_s; /* its fading's time constant */
+  /* the pointer parts the lines where it moves over the map (GPU only),
+   * leaving a wake that closes behind it */
+  bool topo_poke;
+  double topo_poke_radius;  /* the parting's size, ref px */
+  double topo_poke_spacing; /* the wake's points this far apart, ref px */
+  double topo_poke_close_s; /* each point closes in this long */
+  double topo_poke_light;   /* the lines pressed together brighten, 0..1 */
   /* at rest they drift slowly round a small loop (against burn-in) */
   double topo_drift_px; /* ref px, 0: still */
   double topo_drift_s;  /* the loop's x period, s (y takes 4/3 of it) */
@@ -217,6 +218,9 @@ struct wallpaper_config {
 
 #define WP_RINGS 8
 #define WP_RINGS_STR "8"
+/* Points the pointer's wake has (the newest follows it). */
+#define WP_WAKE 16
+#define WP_WAKE_STR "16"
 /* Bands per channel the map's spectrum has (the bars resampled). */
 #define WP_SPEC 32
 #define WP_SPEC_STR "32"
@@ -276,9 +280,13 @@ struct wp_frame {
   double sway;    /* the map's sway, 0..1 (loudness) */
   double time;    /* s, drives the sway */
   double drift_x, drift_y; /* the map's slow drift at rest, ref px */
-  /* the pointer pushing the lines apart: strength 0..1, where (logical px
-   * on poke_out; surface.c turns them into buffer px for its output) */
-  double poke, poke_x, poke_y;
+  /* the pointer's wake parting the lines: where (logical px on poke_out;
+   * surface.c turns them into buffer px for its output) and how open, 1
+   * down to 0 as it closes, a little below while it springs back */
+  int npokes;
+  struct wp_poke {
+    double x, y, open;
+  } pokes[WP_WAKE];
   const void *poke_out;
   int nrings;
   struct wp_ring {

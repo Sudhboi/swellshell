@@ -245,32 +245,87 @@ static void check_map(const char *dir) {
   assert(in > 500 && out == 0);
   cairo_surface_destroy(rm);
 
-  /* The pointer at full push, off the centre: the lines round it move,
-   * spread out (fewer lit pixels close by), and none far away. */
+  /* The pointer's wake, one point fully open off the centre: the lines
+   * part round it (none lit close to it), press together round that
+   * (more lit), and nothing moves far away. */
   struct wp_frame kf = f;
-  kf.poke = 1;
-  kf.poke_x = 720;
-  kf.poke_y = 900;
+  kf.npokes = 1;
+  kf.pokes[0] = (struct wp_poke){720, 900, 1};
   cairo_surface_t *km = gpu_map(c, &kf, dir, "wallpaper_gl_map_poke");
   double pr = c->topo_poke_radius;
-  long near_k = 0, far_k = 0, lit_g = 0, lit_k = 0;
-  for (int y = 0; y < H; y += 3)
-    for (int x = 0; x < W; x += 3) {
+  long in_k = 0, rim_g = 0, rim_k = 0, far_k = 0;
+  for (int y = 0; y < H; y += 2)
+    for (int x = 0; x < W; x += 2) {
       double r = hypot(x - 720.0, y - 900.0);
       bool differ = abs(lum(gm, x, y) - lum(km, x, y)) > 60;
-      if (r > 0.3 * pr && r < 2 * pr)
-        near_k += differ;
-      else if (r > 4 * pr)
+      if (r < 0.4 * pr)
+        in_k += lum(km, x, y) >= 60;
+      else if (r > 0.9 * pr && r < 1.4 * pr) {
+        rim_g += lum(gm, x, y) >= 120;
+        rim_k += lum(km, x, y) >= 120;
+      } else if (r > 3 * pr)
         far_k += differ;
-      if (r < 0.8 * pr) {
-        lit_g += lum(gm, x, y) >= 120;
-        lit_k += lum(km, x, y) >= 120;
-      }
     }
-  fprintf(stderr, "poke: %ld changed round it, %ld far; lit inside %ld -> %ld\n",
-          near_k, far_k, lit_g, lit_k);
-  assert(near_k > 300 && far_k == 0 && lit_k < lit_g);
+  fprintf(stderr, "poke: %ld lit in the parting, rim lit %ld -> %ld, %ld far\n",
+          in_k, rim_g, rim_k, far_k);
+  assert(in_k == 0 && rim_k > rim_g && far_k == 0);
   cairo_surface_destroy(km);
+
+  /* A wake along a line, closed behind: no lines on its path where it is
+   * still open, the plain map where it has closed. */
+  kf.npokes = 11;
+  for (int i = 0; i < 11; ++i)
+    kf.pokes[i] = (struct wp_poke){900 + 40 * i, 900, i < 6 ? 0 : 1};
+  km = gpu_map(c, &kf, dir, NULL);
+  long path_k = 0, closed_d = 0;
+  for (int y = 700; y <= 1100; ++y)
+    for (int x = 700; x <= 1500; ++x)
+      if (x >= 1180 && x <= 1300 && y >= 880 && y <= 920)
+        path_k += lum(km, x, y) >= 60;
+      else if (x < 760) /* 3 radii past where it opens */
+        closed_d += abs(lum(gm, x, y) - lum(km, x, y)) > 60;
+  fprintf(stderr, "wake: %ld lit on its open path, %ld changed where closed\n",
+          path_k, closed_d);
+  assert(path_k == 0 && closed_d == 0);
+  cairo_surface_destroy(km);
+
+  /* A wake as the pointer leaves it, for the eye: a curve, older parts
+   * closing (wallpaper.c's curve, 40 px and 50 ms apart). */
+  kf.npokes = WP_WAKE;
+  for (int i = 0; i < WP_WAKE; ++i) {
+    double t = (WP_WAKE - 1 - i) * 0.05 / c->topo_poke_close_s;
+    kf.pokes[i] = (struct wp_poke){1100 + 40 * i, 900 - 200 * sin(i / 5.0),
+                                   exp(-1.5 * t) * cos(M_PI / 2 * t)};
+  }
+  km = gpu_map(c, &kf, dir, "wallpaper_gl_map_wake");
+  cairo_surface_destroy(km);
+
+  /* Springing back past closed it pulls them in a little: some move, less
+   * than when open, none far away. */
+  long open_d = 0;
+  kf.npokes = 1;
+  for (int pass = 0; pass < 2; ++pass) {
+    kf.pokes[0] = (struct wp_poke){720, 900, pass ? -0.1 : 1};
+    km = gpu_map(c, &kf, dir, NULL);
+    long near_d = 0, far_d = 0;
+    for (int y = 0; y < H; y += 3)
+      for (int x = 0; x < W; x += 3) {
+        double r = hypot(x - 720.0, y - 900.0);
+        bool differ = abs(lum(gm, x, y) - lum(km, x, y)) > 60;
+        if (r < 2 * pr)
+          near_d += differ;
+        else if (r > 3 * pr)
+          far_d += differ;
+      }
+    if (!pass)
+      open_d = near_d;
+    else {
+      fprintf(stderr, "spring: %ld moved (open %ld), %ld far\n", near_d,
+              open_d, far_d);
+      assert(near_d > 0 && near_d < open_d && far_d == 0);
+    }
+    cairo_surface_destroy(km);
+  }
 
   /* The spectrum: silent, nothing moves; playing, the lines bulge round the
    * logo, ripple out on the map and brighten. */

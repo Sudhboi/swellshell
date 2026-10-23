@@ -442,13 +442,15 @@ static void draw(struct output *out, bool full) {
                    (f.peek && f.peek_hold > 0 && f.peek_pop > 0 &&
                     f.peek_expand < 1 && wp_config()->topo_hold_light > 0);
   /* The pointer pushes the lines on its own output only. */
-  if (f.poke_out != out || wp_config()->topo_poke_px <= 0 || out->width <= 0 ||
+  if (f.poke_out != out || !wp_config()->topo_poke || out->width <= 0 ||
       out->height <= 0)
-    f.poke = 0;
-  f.poke_x *= (double)pw / out->width;
-  f.poke_y *= (double)ph / out->height;
+    f.npokes = 0;
+  for (int i = 0; i < f.npokes; ++i) {
+    f.pokes[i].x *= (double)pw / out->width;
+    f.pokes[i].y *= (double)ph / out->height;
+  }
   bool moving = f.nrings > 0 || f.sway > 0 || f.spec_on || shaking ||
-                gathering || f.smap.on || f.poke > 0;
+                gathering || f.smap.on || f.npokes > 0;
   /* The slow drift at rest redraws the GPU's map only once it has moved a
    * quarter pixel (its bend moves the lines up to 1.3 times the drift), and
    * cairo's whole buffer once it has moved a whole one. */

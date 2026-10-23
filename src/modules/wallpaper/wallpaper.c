@@ -64,8 +64,14 @@ static struct {
   bool have_pointer;
   double px, py;
   int64_t last_motion; /* ms of the last boosting pointer motion */
-  /* the pointer pushing the topo lines apart, 0..1, on that output */
-  double poke;
+  /* the pointer's wake through the topo lines, on poke_out: points
+   * dropped every topo_poke_spacing (logical px), oldest first, the last
+   * one following the pointer; wake_drop is where the last was dropped */
+  struct {
+    double x, y, age; /* age: s since the pointer was there */
+  } wake[WP_WAKE];
+  int nwake;
+  double wake_drop_x, wake_drop_y;
   const void *poke_out;
   struct wp_viz viz;
   struct wp_viz_in viz_in; /* the last audio block's band levels */
@@ -178,7 +184,7 @@ static bool viz_showing(void) {
 static bool reacting(void) {
   if (w.react.loud > 1e-3 || w.react.pulse > 0 || w.react.kick > 0 ||
       w.react.shake > 0 ||
-      w.spin_glow > 1e-3 || w.playing > 1e-3 || w.nrings > 0 || w.poke > 0)
+      w.spin_glow > 1e-3 || w.playing > 1e-3 || w.nrings > 0 || w.nwake > 0)
     return true;
   for (int k = 0; k < 6; ++k)
     if (w.react.slices[k] > 1e-3)
@@ -273,10 +279,44 @@ static double advance(int64_t now, bool bar_only) {
     w.boost *= exp(-dt / w.cfg.spin_decay_s);
   if (w.boost < 1e-3)
     w.boost = 0;
-  w.poke *= exp(-dt / w.cfg.topo_poke_decay_s);
-  if (w.poke < 1e-3)
-    w.poke = 0;
+  int n = 0;
+  for (int i = 0; i < w.nwake; ++i) {
+    w.wake[i].age += dt;
+    if (w.wake[i].age < 3 * w.cfg.topo_poke_close_s)
+      w.wake[n++] = w.wake[i];
+  }
+  w.nwake = n;
   return dt;
+}
+
+/* How open a wake point is this long after the pointer left it: 1, 0 at
+ * topo_poke_close_s, then a little spring back past it. */
+static double wake_open(double age) {
+  double t = age / w.cfg.topo_poke_close_s;
+  return exp(-1.5 * t) * cos(M_PI / 2 * t);
+}
+
+/* The pointer moved over the map: the newest point follows it, and once
+ * it has gone topo_poke_spacing since the last drop, a fresh point is left
+ * behind there (the oldest making way). */
+static void wake_move(double x, double y) {
+  if (w.nwake == 0) {
+    w.wake[w.nwake++] = (typeof(w.wake[0])){x, y, 0};
+    w.wake_drop_x = x;
+    w.wake_drop_y = y;
+    return;
+  }
+  if (hypot(x - w.wake_drop_x, y - w.wake_drop_y) >=
+      w.cfg.topo_poke_spacing) {
+    if (w.nwake == WP_WAKE)
+      memmove(w.wake, w.wake + 1, sizeof(w.wake[0]) * --w.nwake);
+    w.wake[w.nwake++] = (typeof(w.wake[0])){x, y, 0};
+    w.wake_drop_x = x;
+    w.wake_drop_y = y;
+  }
+  w.wake[w.nwake - 1].x = x;
+  w.wake[w.nwake - 1].y = y;
+  w.wake[w.nwake - 1].age = 0;
 }
 
 static double spin_glow(void);
@@ -559,9 +599,10 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   double drift = wp_topo(&w.cfg) ? w.cfg.topo_drift_px : 0;
   f->drift_x = drift * sin(2 * M_PI * w.drift_t / w.cfg.topo_drift_s);
   f->drift_y = drift * sin(2 * M_PI * w.drift_t * 0.75 / w.cfg.topo_drift_s);
-  f->poke = wp_topo(&w.cfg) && !wp_showing() ? w.poke : 0;
-  f->poke_x = w.px;
-  f->poke_y = w.py;
+  f->npokes = wp_topo(&w.cfg) && !wp_showing() ? w.nwake : 0;
+  for (int i = 0; i < f->npokes; ++i)
+    f->pokes[i] = (struct wp_poke){w.wake[i].x, w.wake[i].y,
+                                   wake_open(w.wake[i].age)};
   f->poke_out = w.poke_out;
   f->spec_on = waves && viz_showing() &&
                (w.cfg.topo_spectrum_px > 0 || w.cfg.topo_ripple_px > 0 ||
@@ -844,7 +885,7 @@ static void pointer_enter(void *data, struct wl_surface *s, double x,
   w.px = x;
   w.py = y;
   if (w.poke_out != data)
-    w.poke = 0;
+    w.nwake = 0;
   w.poke_out = data;
 }
 
@@ -867,8 +908,8 @@ static void pointer_motion(void *data, double x, double y) {
     return;
   arm_idle_fallback();
   w.boost = fmin(w.boost + w.cfg.spin_gain * d, w.cfg.spin_max);
-  if (wp_topo(&w.cfg) && w.cfg.topo_poke_px > 0)
-    w.poke = fmin(w.poke + w.cfg.topo_poke_gain * d, 1);
+  if (wp_topo(&w.cfg) && w.cfg.topo_poke && d > 0)
+    wake_move(x, y);
   if (d > 0)
     w.last_motion = now_ms();
 }
