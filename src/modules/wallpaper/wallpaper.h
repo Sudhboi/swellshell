@@ -452,16 +452,16 @@ struct wp_logo_mask {
 bool wp_logo_mask(const struct wallpaper_config *c, int pw, int which,
                   struct wp_logo_mask *m);
 /* logo.c: the distance to the resting snowflake's nearest edge (buffer px,
- * negative inside) at w x h texel centres from (x, y) px from its centre;
- * cached per size, id changes with it. */
+ * negative inside) at w x h texel centres, res per px, from (x, y) px
+ * from its centre; cached per size, id changes with it. */
 struct wp_logo_sdf {
-  int w, h;
+  int w, h, res; /* texels; per px of the resting snowflake */
   double x, y;
   float *d;
   unsigned id;
 };
 const struct wp_logo_sdf *wp_logo_sdf(const struct wallpaper_config *c,
-                                      int pw);
+                                      int pw, int res);
 void wp_logo_finish(void);
 
 /* viz.c: the visualiser's analysis, cava-style */

@@ -357,11 +357,11 @@ static void test_topo_shows(const struct wallpaper_config *c, const char *dir) {
  * distance to their edges, agreeing with cairo's fill. */
 static void test_logo_sdf(void) {
   const struct wallpaper_config *c = wallpaper_module.defaults;
-  const struct wp_logo_sdf *s = wp_logo_sdf(c, W);
+  const struct wp_logo_sdf *s = wp_logo_sdf(c, W, 1);
   double r0 = c->logo_radius;
   assert(s->w > 2 * 0.85 * r0 && s->h > 2 * 0.85 * r0);
-  assert(wp_logo_sdf(c, W) == s && wp_logo_sdf(c, W / 2) != s);
-  s = wp_logo_sdf(c, W);
+  assert(wp_logo_sdf(c, W, 1) == s && wp_logo_sdf(c, W / 2, 1) != s);
+  s = wp_logo_sdf(c, W, 1);
 #define D(px, py)                                                             \
   s->d[(int)floor((py) - s->y) * s->w + (int)floor((px) - s->x)]
   /* The hole in the middle: outside, about its inner radius from an edge. */
@@ -405,6 +405,24 @@ static void test_logo_sdf(void) {
     }
   assert(in > 1000);
   cairo_surface_destroy(m);
+  /* Four texels per px (the snowflake grown aside): over the same box,
+   * the coarse one still cached; near the edges it is exact, so within
+   * its texel's 1/8 px offset of the coarse one at each coarse centre,
+   * and in or out alike everywhere. */
+  const struct wp_logo_sdf *f = wp_logo_sdf(c, W, 4);
+  assert(f != s && f->res == 4 && wp_logo_sdf(c, W, 1) == s);
+  assert(f->x == s->x && f->y == s->y && f->w == 4 * s->w &&
+         f->h == 4 * s->h);
+  long near = 0;
+  for (int y = 0; y < s->h; ++y)
+    for (int x = 0; x < s->w; ++x) {
+      float d = s->d[y * s->w + x], e = f->d[(4 * y + 1) * f->w + 4 * x + 1];
+      if (fabsf(d) < 4)
+        assert(fabsf(d - e) < 0.2), ++near;
+      if (fabsf(d) > 1)
+        assert((d < 0) == (e < 0));
+    }
+  assert(near > 1000);
 #undef D
 }
 

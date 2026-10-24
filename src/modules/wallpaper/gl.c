@@ -837,7 +837,10 @@ void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
   double s = ls * (1 + c->react_pulse_scale * f->pulse);
   if (r0 <= 0 || s <= 0 || !wp_logo_whole(f) || f->fade >= 1)
     return;
-  const struct wp_logo_sdf *sdf = wp_logo_sdf(c, pw);
+  /* Grown aside for the popup, a field at rest's px would lose the gaps
+   * between the lambdas' outlines: as many texels per px as it grows. */
+  int res = ls > 1.01 ? (int)fmin(fmax(ceil(c->peek_side_scale), 1), 4) : 1;
+  const struct wp_logo_sdf *sdf = wp_logo_sdf(c, pw, res);
   glUseProgram(g.logo_prog);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, g.logo_tex[0]);
@@ -851,7 +854,8 @@ void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform1i(g.l_shadow, 1);
   glUniform1i(g.l_neon, 2);
   glUniform2f(g.l_sdf_org, sdf->x, sdf->y);
-  glUniform2f(g.l_sdf_size, sdf->w, sdf->h);
+  glUniform2f(g.l_sdf_size, (double)sdf->w / sdf->res,
+              (double)sdf->h / sdf->res);
   glUniform2f(g.l_origin, ox, oy);
   glUniform2f(g.l_step, sx, sy);
   glUniform1f(g.l_bh, bh);

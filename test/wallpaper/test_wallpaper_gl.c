@@ -663,7 +663,7 @@ static void compare_logo(const struct wallpaper_config *c,
  * unpulsed, unshaken). */
 static double outside_light(const struct wallpaper_config *c,
                             cairo_surface_t *s, int side) {
-  const struct wp_logo_sdf *sdf = wp_logo_sdf(c, W);
+  const struct wp_logo_sdf *sdf = wp_logo_sdf(c, W, 1);
   long sum = 0, n = 0;
   for (int j = 0; j < sdf->h; ++j)
     for (int i = 0; i < sdf->w; ++i) {

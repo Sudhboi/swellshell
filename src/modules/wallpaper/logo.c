@@ -86,17 +86,108 @@ static double field(double x, double y) {
   return inside ? -sqrt(d2) : sqrt(d2);
 }
 
+/* The distance from (x, y) to the nearest of segments ids[0..n), at most
+ * reach, in snowflake units. */
+static double near_dist(double x, double y, const unsigned char *ids, int n,
+                        double reach) {
+  double d2 = reach * reach;
+  for (int m = 0; m < n; ++m) {
+    const struct seg *s = &segs[ids[m]];
+    double ex = s->bx - s->ax, ey = s->by - s->ay;
+    double t = ((x - s->ax) * ex + (y - s->ay) * ey) / (ex * ex + ey * ey);
+    t = fmin(fmax(t, 0), 1);
+    double dx = x - s->ax - ex * t, dy = y - s->ay - ey * t;
+    d2 = fmin(d2, dx * dx + dy * dy);
+  }
+  return sqrt(d2);
+}
+
+/* res > 1: the field at res texels per px, from the coarse one (res 1)
+ * over the same box. Away from the edges (beyond pad) the coarse field's
+ * blend, where only its sign counts and pad covers its error (under half
+ * a px); near them the exact distance to the segments listed for each
+ * CELL px square, signed as the blend beyond 1 px, as field() does within. */
+#define CELL 8
+/* Whether (x, y) is inside a lambda, as field() decides it, from rays to
+ * the right through segments ids[0..n) (those spanning y). */
+static bool inside_row(double x, double y, const unsigned char *ids, int n) {
+  bool in[6] = {0};
+  for (int m = 0; m < n; ++m) {
+    const struct seg *s = &segs[ids[m]];
+    if ((s->ay > y) != (s->by > y) &&
+        x < s->ax + (y - s->ay) / (s->by - s->ay) * (s->bx - s->ax)) {
+      int k = 0;
+      while (ids[m] >= seg_end[k])
+        ++k;
+      in[k] = !in[k];
+    }
+  }
+  return in[0] || in[1] || in[2] || in[3] || in[4] || in[5];
+}
+
+static void fine_field(struct wp_logo_sdf *s, const struct wp_logo_sdf *coarse,
+                       double r0, int pad) {
+  int res = s->res;
+  /* Each cell's segments: those whose box, grown by reach, meets it. */
+  double reach = (pad + 2) / r0;
+  int gw = coarse->w / CELL + 1, gh = coarse->h / CELL + 1;
+  unsigned char *ids = xcalloc((size_t)gw * gh, MAX_SEGS);
+  int *n = xcalloc((size_t)gw * gh, sizeof(*n));
+  for (int gj = 0; gj < gh; ++gj)
+    for (int gi = 0; gi < gw; ++gi) {
+      double cx0 = (s->x + gi * CELL) / r0, cy0 = (s->y + gj * CELL) / r0;
+      double cx1 = cx0 + CELL / r0, cy1 = cy0 + CELL / r0;
+      int g = gj * gw + gi;
+      for (int i = 0; i < nsegs; ++i) {
+        const struct seg *q = &segs[i];
+        if (fmax(q->ax, q->bx) + reach >= cx0 &&
+            fmin(q->ax, q->bx) - reach <= cx1 &&
+            fmax(q->ay, q->by) + reach >= cy0 &&
+            fmin(q->ay, q->by) - reach <= cy1)
+          ids[(size_t)g * MAX_SEGS + n[g]++] = (unsigned char)i;
+      }
+    }
+  unsigned char row[MAX_SEGS];
+  for (int j = 0; j < s->h; ++j) {
+    double v = (j + 0.5) / res, y = (s->y + v) / r0;
+    int nr = 0;
+    for (int i = 0; i < nsegs; ++i)
+      if ((segs[i].ay > y) != (segs[i].by > y))
+        row[nr++] = (unsigned char)i;
+    for (int i = 0; i < s->w; ++i) {
+      double u = (i + 0.5) / res;
+      double cu = fmin(fmax(u - 0.5, 0), coarse->w - 1.001);
+      double cv = fmin(fmax(v - 0.5, 0), coarse->h - 1.001);
+      int ci = (int)cu, cj = (int)cv;
+      double fu = cu - ci, fv = cv - cj;
+      const float *q = coarse->d + cj * coarse->w + ci;
+      double d = (q[0] * (1 - fu) + q[1] * fu) * (1 - fv) +
+                 (q[coarse->w] * (1 - fu) + q[coarse->w + 1] * fu) * fv;
+      if (fabs(d) <= pad) {
+        int g = (int)(v / CELL) * gw + (int)(u / CELL);
+        double x = (s->x + u) / r0;
+        double e = near_dist(x, y, ids + (size_t)g * MAX_SEGS, n[g], reach);
+        d = (e * r0 < 1 ? inside_row(x, y, row, nr) : d < 0) ? -e * r0
+                                                              : e * r0;
+      }
+      s->d[j * s->w + i] = (float)d;
+    }
+  }
+  free(ids);
+  free(n);
+}
+
 #define CACHE 4
 static struct entry {
   struct wp_logo_sdf sdf;
   double r0;
-  int pad;
+  int pad, res;
 } cache[CACHE];
 static int cache_next;
 static unsigned ids;
 
 const struct wp_logo_sdf *wp_logo_sdf(const struct wallpaper_config *c,
-                                      int pw) {
+                                      int pw, int res) {
   double k = pw / WP_REF_WIDTH, r0 = c->logo_radius * k;
   /* Room for the widest outline and the antialiasing round it: the edge
    * texels must read as clear outside. */
@@ -104,8 +195,10 @@ const struct wp_logo_sdf *wp_logo_sdf(const struct wallpaper_config *c,
                       k / 2) +
             3;
   for (int i = 0; i < CACHE; ++i)
-    if (cache[i].sdf.d && cache[i].r0 == r0 && cache[i].pad == pad)
+    if (cache[i].sdf.d && cache[i].r0 == r0 && cache[i].pad == pad &&
+        cache[i].res == res)
       return &cache[i].sdf;
+  const struct wp_logo_sdf *coarse = res > 1 ? wp_logo_sdf(c, pw, 1) : NULL;
   load_segments();
   double x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
   for (int i = 0; i < nsegs; ++i) {
@@ -114,22 +207,30 @@ const struct wp_logo_sdf *wp_logo_sdf(const struct wallpaper_config *c,
     x1 = fmax(x1, fmax(segs[i].ax, segs[i].bx));
     y1 = fmax(y1, fmax(segs[i].ay, segs[i].by));
   }
+  if (coarse && &cache[cache_next].sdf == coarse)
+    cache_next = (cache_next + 1) % CACHE;
   struct entry *e = &cache[cache_next];
   cache_next = (cache_next + 1) % CACHE;
   free(e->sdf.d);
   struct wp_logo_sdf *s = &e->sdf;
   s->x = floor(x0 * r0) - pad;
   s->y = floor(y0 * r0) - pad;
-  s->w = (int)(ceil(x1 * r0) + pad - s->x);
-  s->h = (int)(ceil(y1 * r0) + pad - s->y);
+  s->res = res;
+  s->w = (int)(ceil(x1 * r0) + pad - s->x) * res;
+  s->h = (int)(ceil(y1 * r0) + pad - s->y) * res;
   s->d = xcalloc((size_t)s->w * s->h, sizeof(*s->d));
-  for (int j = 0; j < s->h; ++j)
-    for (int i = 0; i < s->w; ++i)
-      s->d[j * s->w + i] =
-          (float)(field((s->x + i + 0.5) / r0, (s->y + j + 0.5) / r0) * r0);
+  if (coarse)
+    fine_field(s, coarse, r0, pad);
+  else
+    for (int j = 0; j < s->h; ++j)
+      for (int i = 0; i < s->w; ++i)
+        s->d[j * s->w + i] =
+            (float)(field((s->x + i + 0.5) / r0, (s->y + j + 0.5) / r0) *
+                    r0);
   s->id = ++ids;
   e->r0 = r0;
   e->pad = pad;
+  e->res = res;
   return s;
 }
 
