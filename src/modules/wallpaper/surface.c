@@ -77,7 +77,7 @@ struct output {
   bool lgpu;            /* the GPU draws it (but in shows and slides) */
   struct strip logo;    /* surface NULL until the GPU first draws it */
   bool logo_on;         /* it holds a snowflake, not nothing */
-  double logo_key[10];  /* the frame it was drawn from, NAN: redraw */
+  double logo_key[11];  /* the frame it was drawn from, NAN: redraw */
   double bar_sx, bar_sy; /* the shake of the last commit, px */
   double bar_fade;       /* of the last commit */
   struct wp_text_key text_shown; /* the title the compositor last got */
@@ -348,10 +348,10 @@ static bool logo_draw(struct output *out, int pw, int ph,
 }
 
 /* What the GPU's snowflake is drawn from. */
-static void logo_key(const struct wp_frame *f, double key[10]) {
-  double k[10] = {f->angle,   f->pulse,   f->glow,     f->over,
-                  f->flash,   f->map_fade, f->shake_x, f->shake_y,
-                  f->wander_x, f->wander_y};
+static void logo_key(const struct wp_frame *f, double key[11]) {
+  double k[11] = {f->angle,    f->pulse,    f->glow,     f->over,
+                  f->flash,    f->map_fade, f->shake_x,  f->shake_y,
+                  f->wander_x, f->wander_y, wp_peek_side(wp_config(), f)};
   memcpy(key, k, sizeof(k));
 }
 
@@ -435,12 +435,17 @@ static void draw(struct output *out, bool full) {
   if (showing || p->showed)
     whole = true;
   /* The map fading: the GPU redraws it, or cairo the whole buffer. */
-  double bright = wp_map_brightness(&f);
+  double bright = wp_map_brightness(wp_config(), &f);
   bool shaking = f.shake_x != 0 || f.shake_y != 0;
   /* The held popup key gathers the lines in and lights them. */
-  bool gathering = (f.peek_gather != 0 && wp_config()->topo_gather_px > 0) ||
-                   (f.peek && f.peek_hold > 0 && f.peek_pop > 0 &&
-                    f.peek_expand < 1 && wp_config()->topo_hold_light > 0);
+  /* (Or, side layout, the snowflake moves aside and the lines follow.) */
+  double side = wp_peek_side(wp_config(), &f);
+  bool sided = strcmp(wp_config()->peek_layout, "flanks") != 0;
+  bool gathering =
+      sided ? side > 0 && side < 1
+            : (f.peek_gather != 0 && wp_config()->topo_gather_px > 0) ||
+                  (f.peek && f.peek_hold > 0 && f.peek_pop > 0 &&
+                   f.peek_expand < 1 && wp_config()->topo_hold_light > 0);
   /* The pointer pushes the lines on its own output only. */
   if (f.poke_out != out || !wp_config()->topo_poke || out->width <= 0 ||
       out->height <= 0)
@@ -472,11 +477,13 @@ static void draw(struct output *out, bool full) {
   /* Off the centre, what the buffer draws round the snowflake (all of it on
    * the CPU, speed lines on the GPU) leaves the regions: draw whole, and
    * again once it's back. */
-  bool off = f.wander_x != 0 || f.wander_y != 0;
-  bool wandering = off && (!gl_logo || f.over > 0);
+  /* Moved aside, so is the hexagon. */
+  bool hex = wp_hex_shows(wp_config(), &f);
+  bool off = f.wander_x != 0 || f.wander_y != 0 || side > 0;
+  bool wandering = off && (!gl_logo || f.over > 0 || (side > 0 && hex));
   if (wandering || p->wandered)
     whole = true;
-  double key[10];
+  double key[11];
   logo_key(&f, key);
   bool logo_due = gl_logo ? !out->logo_on || memcmp(key, out->logo_key,
                                                     sizeof(key)) != 0
@@ -550,7 +557,6 @@ static void draw(struct output *out, bool full) {
   bool text =
       !wp_text_key_eq(&tk, &p->text) || !wp_text_key_eq(&tk, &out->text_shown);
   cf.text_kept = !text;
-  bool hex = wp_hex_shows(wp_config(), &f);
   /* With the snowflake on the GPU, and no hexagon, bars or changing title,
    * only the bar can change in the buffer: repaint just it, and only if it
    * changed (or moved with a shake); otherwise commit the GPU's surfaces
@@ -627,8 +633,9 @@ static void draw(struct output *out, bool full) {
       struct wp_rect pr[WP_PEEK_REGIONS];
       wp_peek_regions(wp_config(), pw, ph, pr);
       for (int k = 0; k < WP_PEEK_REGIONS; ++k)
-        wl_surface_damage_buffer(out->surface, pr[k].x, pr[k].y, pr[k].w,
-                                 pr[k].h);
+        if (pr[k].w > 0 && pr[k].h > 0)
+          wl_surface_damage_buffer(out->surface, pr[k].x, pr[k].y, pr[k].w,
+                                   pr[k].h);
     }
   }
   if (wp_ticking() || wp_joining())

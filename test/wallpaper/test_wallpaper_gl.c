@@ -198,7 +198,11 @@ static double no_shift(double r, double sign) { return 0; }
 /* The GPU's map against cairo's: the same lines (antialiasing and the
  * smoothing aside); a ring moves them only where it passes; dimmed, black. */
 static void check_map(const char *dir) {
-  const struct wallpaper_config *c = wallpaper_module.defaults;
+  /* (The held popup's gather and lit lines are the flanks layout's.) */
+  struct wallpaper_config flanks =
+      *(const struct wallpaper_config *)wallpaper_module.defaults;
+  strcpy(flanks.peek_layout, "flanks");
+  const struct wallpaper_config *c = &flanks;
   struct wp_frame f = {.percent = 50, .level = 1};
   cairo_surface_t *gm = gpu_map(c, &f, dir, "wallpaper_gl_map");
   cairo_surface_t *cm = wp_topo_background(c, W, H);
@@ -551,7 +555,7 @@ static cairo_surface_t *gpu_logo(const struct wallpaper_config *c,
   assert(glGetError() == GL_NO_ERROR);
   glDeleteFramebuffers(1, &fbo);
   glDeleteRenderbuffers(1, &rb);
-  int bg = (int)lround(((c->topo_bg_left >> 24) & 0xff) * wp_map_brightness(f));
+  int bg = (int)lround(((c->topo_bg_left >> 24) & 0xff) * wp_map_brightness(c, f));
   cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_RGB24, W, H);
   unsigned char *od = cairo_image_surface_get_data(out);
   int os = cairo_image_surface_get_stride(out);
@@ -596,8 +600,8 @@ static void compare_logo(const struct wallpaper_config *c,
                          const struct wp_frame *f, const char *dir,
                          const char *name) {
   struct wp_rect r = wp_logo_box(c, W, H, f);
-  double dx, dy;
-  wp_logo_offset(c, W, H, f, &dx, &dy);
+  double cx, cy, ls;
+  wp_logo_place(c, W, H, f, &cx, &cy, &ls);
   cairo_surface_t *gs = gpu_logo(c, f, dir, name);
   cairo_surface_t *cs = render(c, f);
   int bg = lum(cs, r.x + 1, r.y + 1);
@@ -624,8 +628,8 @@ static void compare_logo(const struct wallpaper_config *c,
       for (int s = 0; s < 2; ++s) {
         uint32_t v = s ? b : a;
         int rr = (v >> 16) & 0xff, bb = v & 0xff;
-        bool tl = x < W / 2 + dx - 80 && y < H / 2 + dy - 80;
-        bool br = x > W / 2 + dx + 80 && y > H / 2 + dy + 80;
+        bool tl = x < cx - 80 * ls && y < cy - 80 * ls;
+        bool br = x > cx + 80 * ls && y > cy + 80 * ls;
         /* Lit outline pixels: pink (red over blue) or blue. */
         if (lum(s ? gs : cs, x, y) < bg + 150)
           continue;
@@ -707,6 +711,15 @@ static void check_logo(const char *dir) {
   v.wander_x = 0.83;
   v.wander_y = -0.61;
   compare_logo(&c, &v, dir, "wallpaper_gl_logo_wander");
+  /* Moved aside and grown for the popup's details (off the right edge). */
+  struct info pin;
+  memset(&pin, 0, sizeof pin);
+  struct wp_frame sd = t;
+  sd.peek = &pin;
+  sd.peek_side = 1;
+  compare_logo(&c, &sd, dir, "wallpaper_gl_logo_side");
+  sd.peek_side = 0.4;
+  compare_logo(&c, &sd, dir, "wallpaper_gl_logo_side_half");
   /* At the far corners its box just fits, unclipped. */
   struct wp_rect mid = wp_logo_box(&c, W, H, NULL);
   for (int s = -1; s <= 1; s += 2) {

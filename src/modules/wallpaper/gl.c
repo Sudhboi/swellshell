@@ -718,7 +718,7 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   double len2 = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
   glUniform2f(g.m_axis0, x0, y0);
   glUniform2f(g.m_axis, (x1 - x0) / len2, (y1 - y0) / len2);
-  glUniform1f(g.m_bright, wp_map_brightness(f));
+  glUniform1f(g.m_bright, wp_map_brightness(c, f));
   float rings[WP_RINGS][4] = {{0}};
   int n = f->nrings < WP_RINGS ? f->nrings : WP_RINGS;
   for (int i = 0; i < n; ++i) {
@@ -727,7 +727,10 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   }
   glUniform4fv(g.m_rings, WP_RINGS, rings[0]);
   glUniform1i(g.m_nrings, n);
-  glUniform2f(g.m_centre, pw / 2.0, ph / 2.0);
+  /* Round the snowflake, moved aside (not wandering: no rings then). */
+  double side = wp_peek_side(c, f), ls = 1 + (c->peek_side_scale - 1) * side;
+  glUniform2f(g.m_centre, pw / 2.0 + (c->peek_side_x - 0.5) * pw * side,
+              ph / 2.0 + (c->peek_side_y - 0.5) * ph * side);
   /* A topo show's own rings, pull and lines. */
   const struct wp_show_map *sm = &f->smap;
   bool sring = sm->on && sm->ring_px > 0;
@@ -763,7 +766,7 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform1f(g.m_drift_l, 900 * k);
   glUniform1i(g.m_spec_on, f->spec_on);
   glUniform1fv(g.m_spec, 2 * WP_SPEC, f->spec[0]);
-  glUniform1f(g.m_logo_r, c->logo_radius * k);
+  glUniform1f(g.m_logo_r, c->logo_radius * k * ls);
   glUniform1f(g.m_spec_px, c->topo_spectrum_px * k);
   glUniform1f(g.m_spec_reach, c->topo_spectrum_reach * k);
   glUniform1f(g.m_ripple_px, c->topo_ripple_px * k);
@@ -771,15 +774,17 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform1f(g.m_light, c->topo_light);
   glUniform1f(g.m_light_w, c->topo_light_width);
   bool sgather = sm->on && sm->gather != 0;
-  glUniform1f(g.m_gather,
-              (sgather ? sm->gather : f->peek_gather * c->topo_gather_px) * k);
+  /* Moving the snowflake aside shows the hold instead of the lines. */
+  bool sided = strcmp(c->peek_layout, "flanks") != 0;
+  double pg = sided ? 0 : f->peek_gather;
+  glUniform1f(g.m_gather, (sgather ? sm->gather : pg * c->topo_gather_px) * k);
   glUniform1f(g.m_gather_reach,
               fmax((sgather ? sm->gather_reach : c->topo_gather_reach) * k, 1));
   /* The front starts past the corners and reaches the logo as the hold
    * ends; the lit lines go with the expand. */
   double band = 120 * k, logo = c->logo_radius * k;
   double rmax = hypot(pw, ph) / 2 + band;
-  bool held = f->peek && f->peek_hold > 0;
+  bool held = f->peek && f->peek_hold > 0 && !sided;
   glUniform1f(g.m_hold_front, logo + (rmax - logo) * (1 - f->peek_hold));
   glUniform1f(g.m_hold_band, band);
   glUniform1f(g.m_hold_lit,
@@ -827,8 +832,9 @@ void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
   glDisable(GL_BLEND);
   glClearColor(0, 0, 0, 0);
   glClear(GL_COLOR_BUFFER_BIT);
-  double k = pw / WP_REF_WIDTH, r0 = c->logo_radius * k;
-  double s = 1 + c->react_pulse_scale * f->pulse;
+  double k = pw / WP_REF_WIDTH, r0 = c->logo_radius * k, cx, cy, ls;
+  wp_logo_place(c, pw, ph, f, &cx, &cy, &ls);
+  double s = ls * (1 + c->react_pulse_scale * f->pulse);
   if (r0 <= 0 || s <= 0 || !wp_logo_whole(f) || f->fade >= 1)
     return;
   const struct wp_logo_sdf *sdf = wp_logo_sdf(c, pw);
@@ -850,16 +856,18 @@ void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform2f(g.l_step, sx, sy);
   glUniform1f(g.l_bh, bh);
   /* As cairo: shaken by whole pixels. */
-  double dx, dy;
-  wp_logo_offset(c, pw, ph, f, &dx, &dy);
-  double cx = pw / 2.0 + dx + round(f->shake_x * k);
-  double cy = ph / 2.0 + dy + round(f->shake_y * k);
+  cx += round(f->shake_x * k);
+  cy += round(f->shake_y * k);
   glUniform2f(g.l_centre, cx, cy);
   glUniform2f(g.l_rot, cos(f->angle), sin(f->angle));
   glUniform1f(g.l_inv_s, 1 / s);
   glUniform1f(g.l_scale, s);
   double sd = c->topo_shadow_px * k * s;
   bool shadow = logo_mask(c, pw, 0, g.l_sh_org, g.l_sh_size);
+  /* Grown aside for the popup, its texels would show: smooth them. */
+  GLint filter = ls > 1.01 ? GL_LINEAR : GL_NEAREST;
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
   glUniform2f(g.l_sh_off, 0.7 * sd, 0.7 * sd);
   glUniform1f(g.l_sh_alpha, shadow ? c->topo_shadow_alpha : 0);
   struct wp_glass look;

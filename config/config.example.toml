@@ -761,6 +761,20 @@ peek_slide = 60.0
 peek_hold_width = 4.0
 # low battery and urgent workspaces
 peek_warn = "#ff5a5a"
+# "side": while the key is held the snowflake moves right and grows, and the details stack in a column on the left; "flanks": they stay either side of it
+peek_layout = "side"
+# side: the snowflake's centre, share of the width
+peek_side_x = 0.76
+# side: and of the height
+peek_side_y = 0.53
+# side: its size there (x logo_radius; it may run off the screen)
+peek_side_scale = 4.0
+# side: the contour lines dimmed this much
+peek_side_dim = 0.8
+# side: widest column, px
+peek_side_width = 1100.0
+# side: the column's distance from the left edge, px
+peek_side_margin = 240.0
 # when the daemon is restarted (run again, e.g. by `exec_always` on a sway reload) the old map's lines fade out and the new one's fade in, each this long; the snowflake stays
 handover_ms = 500
 # launch animation when the daemon starts on an empty workspace (once per login): classic, the lambdas fly in and lock together; topo, one of shock, rise and unfurl, each as likely (as long as classic's)

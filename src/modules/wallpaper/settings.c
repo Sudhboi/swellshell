@@ -177,6 +177,13 @@ static const struct wallpaper_config defaults = {
     .peek_slide = 60,
     .peek_hold_width = 4,
     .peek_warn = 0xff5a5affu,
+    .peek_layout = "side",
+    .peek_side_x = 0.76,
+    .peek_side_y = 0.53,
+    .peek_side_scale = 4,
+    .peek_side_dim = 0.8,
+    .peek_side_width = 1100,
+    .peek_side_margin = 240,
     .handover_ms = 500,
     .intro = true,
     .intro_ms = 1100,
@@ -554,6 +561,21 @@ static const struct cfg_field fields[] = {
                "the line that grows under the clock while the key is held, "
                "px (0: none)"),
     CFG_COLOR(S, peek_warn, "low battery and urgent workspaces"),
+    CFG_STRING(S, peek_layout,
+               "\"side\": while the key is held the snowflake moves right "
+               "and grows, and the details stack in a column on the left; "
+               "\"flanks\": they stay either side of it"),
+    CFG_DOUBLE(S, peek_side_x, 0, 1,
+               "side: the snowflake's centre, share of the width"),
+    CFG_DOUBLE(S, peek_side_y, 0, 1, "side: and of the height"),
+    CFG_DOUBLE(S, peek_side_scale, 0.1, 20,
+               "side: its size there (x logo_radius; it may run off the "
+               "screen)"),
+    CFG_DOUBLE(S, peek_side_dim, 0, 1,
+               "side: the contour lines dimmed this much"),
+    CFG_DOUBLE(S, peek_side_width, 1, 10000, "side: widest column, px"),
+    CFG_DOUBLE(S, peek_side_margin, 0, 10000,
+               "side: the column's distance from the left edge, px"),
     CFG_INT(S, handover_ms, 0, 2500,
             "when the daemon is restarted (run again, e.g. by `exec_always` "
             "on a sway reload) the old map's lines fade out and the new "

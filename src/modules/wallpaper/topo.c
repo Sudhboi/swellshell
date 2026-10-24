@@ -14,8 +14,11 @@ bool wp_topo(const struct wallpaper_config *c) {
   return strcmp(c->style, "classic") != 0;
 }
 
-double wp_map_brightness(const struct wp_frame *f) {
+double wp_map_brightness(const struct wallpaper_config *c,
+                         const struct wp_frame *f) {
   double a = 1 - fmin(fmax(f->map_fade, 0), 1);
+  /* dimmed under the popup's details */
+  a *= 1 - c->peek_side_dim * wp_peek_side(c, f);
   return a * (1 - fmin(fmax(f->bg_fade, 0), 1));
 }
 

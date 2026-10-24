@@ -143,6 +143,10 @@ static void test_style(const struct wallpaper_config *c, const char *style) {
   wp_peek_regions(c, W, H, r);
   double reach = wp_logo_reach(c, W);
   for (int i = 0; i < WP_PEEK_REGIONS; ++i) {
+    if (i == 3) { /* the side column: none under flanks */
+      assert(r[i].w == 0 && r[i].h == 0);
+      continue;
+    }
     assert(r[i].w > 0 && r[i].h > 0);
     assert(r[i].x >= 0 && r[i].y >= 0 && r[i].x + r[i].w <= W &&
            r[i].y + r[i].h <= H);
@@ -397,18 +401,185 @@ static void test_gather(void) {
   assert(fabs(f.peek_gather - before * v.pop) < 1e-9);
 }
 
+/* "side": the hold moves the snowflake right and grows it, the flanks'
+ * parts fade as it goes, the expand shows them all in one column on the
+ * left, the lines dim. */
+static void test_side(const struct wallpaper_config *c, const char *style,
+                      bool gpu) {
+  struct wallpaper_config flanks = *c;
+  strcpy(flanks.peek_layout, "flanks");
+  struct info in = info();
+  struct wp_frame base = {.percent = 60,
+                          .level = 1,
+                          .angle = 0.3,
+                          .dir = 1,
+                          .map_under = gpu,
+                          .logo_gpu = gpu};
+  cairo_surface_t *plain = render(c, &base, NULL);
+  char name[64];
+
+  /* The column: on screen, left of where the snowflake goes. */
+  struct wp_rect r[WP_PEEK_REGIONS];
+  wp_peek_regions(c, W, H, r);
+  const struct wp_rect *col = &r[3];
+  assert(col->w > 0 && col->h > 0 && col->x >= 0 && col->y >= 0 &&
+         col->x + col->w <= W && col->y + col->h <= H);
+  double logo_left =
+      c->peek_side_x * W - c->logo_radius * W / WP_REF_WIDTH * c->peek_side_scale;
+  assert(col->x + col->w < logo_left);
+  assert(col->x < W / 4);
+
+  /* Compact, not held: the flanks' look. */
+  struct wp_frame f = base;
+  f.peek = &in;
+  f.peek_low_pct = 15;
+  f.peek_pop = 1;
+  cairo_surface_t *s = render(c, &f, NULL);
+  cairo_surface_t *fl = render(&flanks, &f, NULL);
+  assert(diff_box(s, fl).n == 0);
+  cairo_surface_destroy(fl);
+  cairo_surface_destroy(s);
+
+  /* Placement: in the middle at 0, at the side place and size at 1. */
+  double cx, cy, ls;
+  wp_logo_place(c, W, H, &f, &cx, &cy, &ls);
+  assert(cx == W / 2.0 && cy == H / 2.0 && ls == 1);
+  f.peek_side = 1;
+  wp_logo_place(c, W, H, &f, &cx, &cy, &ls);
+  assert(fabs(cx - c->peek_side_x * W) < 1e-9 &&
+         fabs(cy - c->peek_side_y * H) < 1e-9 && ls == c->peek_side_scale);
+  wp_logo_place(&flanks, W, H, &f, &cx, &cy, &ls);
+  assert(cx == W / 2.0 && ls == 1);
+  struct wp_rect box = wp_logo_box(c, W, H, &f);
+  assert(box.x + box.w == W && box.w > W / 3);
+  assert(wp_map_brightness(c, &f) < 1 - c->peek_side_dim + 1e-9);
+  assert(wp_map_brightness(&flanks, &f) == 1);
+
+  /* Half way through the hold: the flanks' parts half faded, nothing in
+   * the column yet. */
+  f.peek_hold = 0.5;
+  f.peek_side = 0.5;
+  snprintf(name, sizeof name, "wallpaper_%s%s_peek_side_hold", style,
+           gpu ? "_gpu" : "");
+  s = render(c, &f, name);
+  cairo_surface_destroy(s);
+
+  /* Expanded: the column; nothing of the flanks' parts. */
+  f.peek_hold = 1;
+  f.peek_side = 1;
+  f.peek_expand = 1;
+  snprintf(name, sizeof name, "wallpaper_%s%s_peek_side_full", style,
+           gpu ? "_gpu" : "");
+  s = render(c, &f, name);
+  struct wp_frame bare = base;
+  bare.peek = &in; /* the snowflake aside, the map dimmed, no text */
+  bare.peek_side = 1;
+  bare.peek_pop = 1e-9;
+  cairo_surface_t *aside = render(c, &bare, NULL);
+  struct box text = diff_box(aside, s);
+  printf("%s%s side: column %d..%d x %d..%d (region %d..%d x %d..%d)\n",
+         style, gpu ? " gpu" : "", text.x0, text.x1, text.y0, text.y1, col->x,
+         col->x + col->w, col->y, col->y + col->h);
+  assert(text.n > 20000);
+  assert(in_rect(col, text.x0, text.y0) && in_rect(col, text.x1, text.y1));
+  /* without the GPU the snowflake is in the buffer, moved */
+  if (!gpu) {
+    long moved = 0;
+    for (int y = H / 2 - 300; y < H / 2 + 300; y += 4)
+      for (int x = W / 2 - 300; x < W / 2 + 300; x += 4)
+        moved += px(aside, x, y) != px(plain, x, y);
+    assert(moved > 1000);
+  }
+  cairo_surface_destroy(aside);
+
+  /* Partial frames over the GPU (the snowflake on its own surface): drawn
+   * over the plain frame it matches the whole one. */
+  if (gpu) {
+    cairo_surface_t *t = render(c, &base, NULL);
+    struct wp_frame pf = f;
+    pf.peek_area = true;
+    cairo_t *cr = cairo_create(t);
+    wp_render(cr, c, W, H, &pf, false, false, false);
+    cairo_destroy(cr);
+    assert(diff_box(t, s).n == 0);
+    cairo_surface_destroy(t);
+  }
+
+  /* Low battery shows in peek_warn, in the column. */
+  struct info low = in;
+  low.battery = 9;
+  f.peek = &low;
+  cairo_surface_t *w = render(c, &f, NULL);
+  int warn = 0;
+  uint32_t wc = c->peek_warn >> 8;
+  for (int y = col->y; y < col->y + col->h; y += 2)
+    for (int x = col->x; x < col->x + col->w; x += 2)
+      warn += px(w, x, y) == wc;
+  assert(warn > 20);
+  cairo_surface_destroy(w);
+  cairo_surface_destroy(s);
+  cairo_surface_destroy(plain);
+}
+
+/* The snowflake's move aside from the timeline: none popping, along the
+ * hold, all the way once expanded, back with a close. */
+static void test_side_frame(void) {
+  struct info in = info();
+  struct peek pk = {.info = &in,
+                    .pop_ms = 200,
+                    .close_ms = 100,
+                    .expand_ms = 300,
+                    .expand_delay_ms = 2000,
+                    .hold_line = true};
+  struct wp_frame f;
+  memset(&f, 0, sizeof f);
+  f.peek_side = 0.5; /* stale */
+  wp_peek_frame(NULL, true, 1000, &f);
+  assert(f.peek_side == 0);
+  peek_open(&pk, true, 1000);
+  wp_peek_frame(&pk, true, 1000, &f);
+  assert(f.peek_side == 0);
+  double last = 0;
+  for (int64_t t = 1200; t < 3000; t += 200) {
+    wp_peek_frame(&pk, true, t, &f);
+    assert(f.peek_side > last && f.peek_side < 1);
+    last = f.peek_side;
+  }
+  peek_expand(&pk, 3000);
+  wp_peek_frame(&pk, true, 3000, &f);
+  assert(f.peek_side == 1);
+  wp_peek_frame(&pk, true, 5000, &f);
+  assert(f.peek_side == 1);
+  peek_close(&pk, 6000);
+  wp_peek_frame(&pk, true, 6050, &f);
+  assert(f.peek_side > 0 && f.peek_side < 1);
+  wp_peek_frame(&pk, true, 6100, &f);
+  assert(f.peek_side == 0);
+  wp_peek_frame(&pk, false, 5000, &f); /* a window: none */
+  assert(f.peek_side == 0);
+}
+
 int main(int argc, char **argv) {
   dir = argc > 1 ? argv[1] : ".";
   setenv("TZ", "UTC", 1);
   test_frame();
   test_gather();
-  const struct wallpaper_config *topo = wallpaper_module.defaults;
-  assert(wp_topo(topo));
-  test_style(topo, "topo");
-  struct wallpaper_config classic = *topo;
+  test_side_frame();
+  const struct wallpaper_config *side = wallpaper_module.defaults;
+  assert(wp_topo(side) && !strcmp(side->peek_layout, "side"));
+  /* The flanks layout (all of it as before). */
+  struct wallpaper_config topo = *side;
+  strcpy(topo.peek_layout, "flanks");
+  test_style(&topo, "topo");
+  struct wallpaper_config classic = topo;
   strcpy(classic.style, "classic");
   test_style(&classic, "classic");
-  test_gpu_frame(topo);
+  test_gpu_frame(&topo);
+  test_side(side, "topo", false);
+  test_side(side, "topo", true);
+  struct wallpaper_config side_classic = *side;
+  strcpy(side_classic.style, "classic");
+  test_side(&side_classic, "classic", false);
   wp_render_finish();
   printf("wallpaper peek: ok\n");
   return 0;

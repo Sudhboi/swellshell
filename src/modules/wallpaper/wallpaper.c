@@ -501,6 +501,7 @@ void wp_peek_frame(const struct peek *pk, bool ws_empty, int64_t now,
                    struct wp_frame *f) {
   f->peek = NULL;
   f->peek_pop = f->peek_expand = f->peek_hold = f->peek_gather = 0;
+  f->peek_side = 0;
   if (!pk || !ws_empty)
     return;
   struct peek_values v;
@@ -519,6 +520,9 @@ void wp_peek_frame(const struct peek *pk, bool ws_empty, int64_t now,
             : 0;
   }
   f->peek_gather = g * v.pop;
+  /* The snowflake moves aside through the hold, stays once expanded, and
+   * goes back with the pop. */
+  f->peek_side = smooth(pk->expand_at ? 1 : fmin(fmax(v.hold, 0), 1)) * v.pop;
 }
 
 bool wp_peek_moving(const struct peek *pk, int64_t now) {
@@ -927,6 +931,9 @@ static void check_style(void) {
   if (strcmp(w.cfg.style, "topo") && strcmp(w.cfg.style, "classic"))
     warn("wallpaper: unknown style '%s' (topo or classic); using topo",
          w.cfg.style);
+  if (strcmp(w.cfg.peek_layout, "side") && strcmp(w.cfg.peek_layout, "flanks"))
+    warn("wallpaper: unknown peek_layout '%s' (side or flanks); using side",
+         w.cfg.peek_layout);
 }
 
 /* topo_new_map: one map per daemon, so reloads keep it. */
@@ -1073,7 +1080,8 @@ void wp_reconfigure(const void *cfg) {
   w.cfg = *(const struct wallpaper_config *)cfg;
   wp_viz_forget(&w.viz_in); /* bands may have changed */
   pick_map();
-  if (strcmp(old.style, w.cfg.style))
+  if (strcmp(old.style, w.cfg.style) ||
+      strcmp(old.peek_layout, w.cfg.peek_layout))
     check_style();
   if (old.idle_timeout_s != w.cfg.idle_timeout_s) {
     setup_idle();

@@ -296,8 +296,9 @@ static void paint_lambda_mask(cairo_t *cr, const struct shadow *m, bool whole,
     cairo_matrix_t mm;
     cairo_matrix_init_translate(&mm, -m->x, -m->y);
     cairo_pattern_set_matrix(mp, &mm);
-    cairo_pattern_set_filter(mp, edge ? CAIRO_FILTER_BILINEAR
-                                      : CAIRO_FILTER_NEAREST);
+    /* (Grown aside for the popup, its pixels would show.) */
+    cairo_pattern_set_filter(mp, edge || r > 1.5 * r0 ? CAIRO_FILTER_BILINEAR
+                                                      : CAIRO_FILTER_NEAREST);
     cairo_mask(cr, mp);
     cairo_pattern_destroy(mp);
     if (src)
@@ -367,11 +368,34 @@ void wp_logo_offset(const struct wallpaper_config *c, int pw, int ph,
   *dy = round(f->wander_y * fmax(floor(ph / 2.0 - r), 0));
 }
 
+double wp_peek_side(const struct wallpaper_config *c,
+                    const struct wp_frame *f) {
+  if (!f || !f->peek || !strcmp(c->peek_layout, "flanks"))
+    return 0;
+  return fmin(fmax(f->peek_side, 0), 1);
+}
+
+void wp_logo_place(const struct wallpaper_config *c, int pw, int ph,
+                   const struct wp_frame *f, double *cx, double *cy,
+                   double *s) {
+  double dx, dy;
+  wp_logo_offset(c, pw, ph, f, &dx, &dy);
+  *cx = pw / 2.0 + dx;
+  *cy = ph / 2.0 + dy;
+  *s = 1;
+  double m = wp_peek_side(c, f);
+  if (m <= 0)
+    return;
+  *cx += (c->peek_side_x * pw - *cx) * m;
+  *cy += (c->peek_side_y * ph - *cy) * m;
+  *s += (c->peek_side_scale - 1) * m;
+}
+
 struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph,
                            const struct wp_frame *f) {
-  double r = wp_logo_reach(c, pw), dx, dy;
-  wp_logo_offset(c, pw, ph, f, &dx, &dy);
-  double cx = pw / 2.0 + dx, cy = ph / 2.0 + dy;
+  double r = wp_logo_reach(c, pw), cx, cy, s;
+  wp_logo_place(c, pw, ph, f, &cx, &cy, &s);
+  r *= s;
   return wp_clamp_rect(cx - r, cy - r, cx + r, cy + r, pw, ph);
 }
 

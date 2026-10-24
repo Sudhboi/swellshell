@@ -282,9 +282,16 @@ static double text_line(cairo_t *cr, PangoLayout *l,
   return y + lh;
 }
 
+/* The title and artist's opacity: gone as the snowflake moves aside for
+ * the popup's details. */
+static double text_alpha(const struct wallpaper_config *c,
+                         const struct wp_frame *f) {
+  return fmin(f->media_alpha, 1) * (1 - wp_peek_side(c, f));
+}
+
 static void draw_text(cairo_t *cr, const struct wallpaper_config *c, int pw,
                       int ph, const struct wp_frame *f) {
-  if (!c->media_title || f->media_alpha <= 0 || !f->title)
+  if (!c->media_title || text_alpha(c, f) <= 0 || !f->title)
     return;
   const char *artist = f->artist ? f->artist : "";
   double x, y, w, h;
@@ -350,7 +357,7 @@ static void draw_text(cairo_t *cr, const struct wallpaper_config *c, int pw,
   cairo_set_source_surface(cr, text_cache.tile, x, y);
   cairo_rectangle(cr, x, y, ceil(w), h);
   cairo_clip(cr);
-  cairo_paint_with_alpha(cr, fmin(f->media_alpha, 1));
+  cairo_paint_with_alpha(cr, text_alpha(c, f));
   cairo_restore(cr);
 }
 
@@ -364,11 +371,11 @@ void wp_text_key(const struct wallpaper_config *c, int pw,
                  const struct wp_frame *f, struct wp_text_key *k) {
   /* What draw_text() draws, and where. */
   *k = (struct wp_text_key){0};
-  if (!c->media_title || f->media_alpha <= 0 || !f->title)
+  if (!c->media_title || text_alpha(c, f) <= 0 || !f->title)
     return;
   double s = pw / WP_REF_WIDTH;
   k->shown = true;
-  k->alpha = fmin(f->media_alpha, 1);
+  k->alpha = text_alpha(c, f);
   k->x = lround(f->shake_x * s);
   k->y = lround(f->shake_y * s);
   k->text =
@@ -397,7 +404,7 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
     struct wp_rect r[WP_REGIONS];
     wp_regions_ex(c, pw, ph, ring || f->nbars > 0,
                   !f->text_kept &&
-                      (text || (c->media_title && f->media_alpha > 0)),
+                      (text || (c->media_title && text_alpha(c, f) > 0)),
                   f->logo_gpu, f->logo_box, r);
     for (int i = 0; i < WP_REGIONS; ++i)
       if (r[i].w > 0 && r[i].h > 0)
@@ -406,7 +413,8 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
       struct wp_rect pr[WP_PEEK_REGIONS];
       wp_peek_regions(c, pw, ph, pr);
       for (int i = 0; i < WP_PEEK_REGIONS; ++i)
-        cairo_rectangle(cr, pr[i].x, pr[i].y, pr[i].w, pr[i].h);
+        if (pr[i].w > 0 && pr[i].h > 0)
+          cairo_rectangle(cr, pr[i].x, pr[i].y, pr[i].w, pr[i].h);
     }
     cairo_clip(cr);
   }
@@ -437,7 +445,7 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   }
   cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
   /* Windows and the shows take the map away and bring it back. */
-  double dim = 1 - wp_map_brightness(f);
+  double dim = 1 - wp_map_brightness(c, f);
   if (topo && !f->map_under && dim > 0) {
     cairo_set_source_rgba(cr, 0, 0, 0, fmin(dim, 1));
     cairo_paint(cr);
@@ -449,9 +457,10 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
    * cached tiles stay sharp. */
   cairo_translate(cr, round(f->shake_x * k), round(f->shake_y * k));
   /* The snowflake, and what's drawn round it, wander while idle. */
-  double dx, dy;
+  double dx, dy, cx, cy, ls;
   wp_logo_offset(c, pw, ph, f, &dx, &dy);
-  double cx = pw / 2.0 + dx, cy = ph / 2.0 + dy;
+  /* (and move aside for the popup's details, growing) */
+  wp_logo_place(c, pw, ph, f, &cx, &cy, &ls);
   /* over the background, first */
   /* (Under topo the snowflake's outline glows instead.) */
   cairo_save(cr);
@@ -470,10 +479,10 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   wp_draw_peek(cr, c, pw, ph, f);
   draw_bar(cr, c, pw, f);
   if (f->over > 0)
-    wp_draw_streaks(cr, c, cx, cy, r, k, f);
+    wp_draw_streaks(cr, c, cx, cy, r * ls, k, f);
   /* The logo reacts to the music: it grows on bass hits and its lambdas
    * slide out (both 0 without music). */
-  double rp = r * (1 + c->react_pulse_scale * f->pulse) *
+  double rp = r * ls * (1 + c->react_pulse_scale * f->pulse) *
               (1 - fmin(fmax(f->logo_shrink, -0.5), 1));
   wp_draw_hex(cr, c, cx, cy, r, rp, f);
   if (rp > 0 && topo && f->logo_gpu)

@@ -195,6 +195,13 @@ struct wallpaper_config {
   double peek_slide;     /* in from the screen's sides, reference px */
   double peek_hold_width; /* the line under the clock while held, ref px */
   uint32_t peek_warn;                    /* low battery, urgent workspaces */
+  /* "side": while held, the snowflake moves right and grows and the
+   * details stack on the left; "flanks": they stay round it */
+  char peek_layout[16];
+  double peek_side_x, peek_side_y; /* the snowflake's centre, 0..1 of w, h */
+  double peek_side_scale;          /* its radius there, x logo_radius */
+  double peek_side_dim;            /* the map's brightness taken away */
+  double peek_side_width, peek_side_margin; /* the column, reference px */
   /* a restart (`swell daemon` again, e.g. on a sway reload): the old
    * daemon's lines fade out, then the new one's fade in, each this long */
   int handover_ms;
@@ -302,6 +309,9 @@ struct wp_frame {
   /* the topo lines drawn in towards the snowflake by this share of
    * topo_gather_px through the hold, -1..1 (< 0: out, springing back) */
   double peek_gather;
+  /* how far the hold has taken the snowflake to its place right of the
+   * details, 0..1 (peek_layout "side"; see wp_peek_side) */
+  double peek_side;
   bool peek_area; /* repaint wp_peek_regions() too (a buffer holds them) */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
@@ -383,11 +393,13 @@ const struct wp_topo_grid *wp_topo_heights(const struct wallpaper_config *c,
                                            int pw, int ph);
 void wp_topo_finish(void);
 /* How bright the map shows in frame f: windows and shows dim it, 0..1. */
-double wp_map_brightness(const struct wp_frame *f);
+double wp_map_brightness(const struct wallpaper_config *c,
+                         const struct wp_frame *f);
 /* render_peek.c: the buffer areas the popup's contents can cover in a pw x
  * ph buffer: the left column (clock, date, the hold line), the right one
- * (levels), the bottom (stats row, workspace strip). */
-#define WP_PEEK_REGIONS 3
+ * (levels), the bottom (stats row, workspace strip), and peek_layout
+ * "side"'s column (empty under "flanks"). */
+#define WP_PEEK_REGIONS 4
 void wp_peek_regions(const struct wallpaper_config *c, int pw, int ph,
                      struct wp_rect out[WP_PEEK_REGIONS]);
 /* Free wp_render()'s cache. */
@@ -400,6 +412,15 @@ double wp_logo_reach(const struct wallpaper_config *c, int pw);
  * from the middle, in whole px (0, 0 for f NULL). */
 void wp_logo_offset(const struct wallpaper_config *c, int pw, int ph,
                     const struct wp_frame *f, double *dx, double *dy);
+/* How far frame f has the snowflake moved aside for the popup's details,
+ * 0..1 (0 unless peek_layout is "side"). */
+double wp_peek_side(const struct wallpaper_config *c, const struct wp_frame *f);
+/* Where frame f puts the snowflake's centre in a pw x ph buffer, and its
+ * size there (x its resting radius): the wander's place, or on its way to
+ * the popup's side place. */
+void wp_logo_place(const struct wallpaper_config *c, int pw, int ph,
+                   const struct wp_frame *f, double *cx, double *cy,
+                   double *s);
 /* The topo snowflake drawn by the GPU (gl.c), from these. */
 /* The buffer area it can cover in a pw x ph buffer in frame f (NULL: in
  * the middle). */

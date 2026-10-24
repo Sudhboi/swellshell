@@ -2,7 +2,9 @@
  * empty workspace: the clock and date left of the snowflake, battery,
  * volume and brightness as gauges right of it, network and stats in a row
  * over the workspace strip at the bottom, and the expand delay traced by a
- * line growing under the clock. In the wallpaper's colours: topo's gradient
+ * line growing under the clock. With peek_layout "side" the hold moves the
+ * snowflake aside instead (wp_logo_place), these fade as it goes, and the
+ * expand stacks all of them in one column on the left. In the wallpaper's colours: topo's gradient
  * and glass, or classic's greys. Text is cached as masks (with a dark halo
  * under topo, like the title's) and coloured as it's painted, so the
  * tweens only move and fade them. */
@@ -207,11 +209,23 @@ struct layout {
    * strip's middle, cell height, widest */
   double stats, bmax, sy, sh, smax;
   struct wp_rect strip;
+  bool strip_left; /* the workspaces start at lx0 (side), else round cx */
+};
+
+/* "side": one column left of the snowflake's place. g holds it as the
+ * flanks' parts read it: the gauges between rx0 and rx1 at label/bar, the
+ * workspaces from lx0 at sy, at most smax wide. From the top: the clock's
+ * baseline, the date's, the gauges, network's and the stats' two rows'. */
+struct side {
+  struct layout g;
+  double x0, x1, clock, date, net, row[2];
+  struct wp_rect rect;
 };
 
 static void lay_out(const struct wallpaper_config *c, int pw, int ph,
                     struct layout *L) {
   double k = L->k = pw / WP_REF_WIDTH;
+  L->strip_left = false;
   L->cx = pw / 2.0;
   L->cy = ph / 2.0;
   L->reach = wp_logo_reach(c, pw);
@@ -278,6 +292,60 @@ static void lay_out(const struct wallpaper_config *c, int pw, int ph,
       L->cx + L->bmax / 2 + pad, L->sy + L->sh / 2 + L->slide + pad, pw, ph);
 }
 
+static bool sided(const struct wallpaper_config *c) {
+  return strcmp(c->peek_layout, "flanks") != 0;
+}
+
+static void lay_out_side(const struct wallpaper_config *c, int pw, int ph,
+                         struct side *S) {
+  struct layout *g = &S->g;
+  lay_out(c, pw, ph, g);
+  double k = g->k, sr = g->sr;
+  /* From the margin to short of the snowflake's place. */
+  double logo = c->peek_side_x * pw - c->logo_radius * k * c->peek_side_scale;
+  S->x0 = c->peek_side_margin * k;
+  S->x1 = fmin(S->x0 + c->peek_side_width * k, logo - 120 * k);
+  if (S->x1 < S->x0 + 1)
+    S->x1 = S->x0 + 1;
+  double gap = 1.6 * sr; /* between the groups */
+  /* Stacked from 0, then centred on the snowflake's place. */
+  double y = 0.72 * g->sc;
+  S->clock = y;
+  S->date = y += 0.2 * g->sc + 0.95 * g->sd;
+  y += 0.25 * g->sd + gap;
+  double gstep = 2.6 * sr;
+  for (int i = 0; i < 3; ++i) {
+    g->label[i] = y + 0.8 * sr + i * gstep;
+    g->bar[i] = g->label[i] + 0.5 * sr;
+  }
+  y = g->bar[2] + g->bar_e + gap;
+  S->net = y += 0.8 * sr;
+  S->row[0] = y += 1.6 * sr;
+  S->row[1] = y += 1.6 * sr;
+  y += 0.3 * sr + gap;
+  g->sy = y + g->sh / 2;
+  double total = y + g->sh;
+  double dy = round(c->peek_side_y * ph - total / 2);
+  S->clock += dy;
+  S->date += dy;
+  for (int i = 0; i < 3; ++i) {
+    g->label[i] += dy;
+    g->bar[i] += dy;
+  }
+  S->net += dy;
+  S->row[0] += dy;
+  S->row[1] += dy;
+  g->sy += dy;
+  g->rx0 = g->lx0 = S->x0;
+  g->rx1 = g->lx1 = S->x1;
+  g->smax = S->x1 - S->x0;
+  g->strip_left = true;
+  double sh = c->react_shake ? ceil(c->react_shake_px * k) : 0;
+  double pad = ceil(0.3 * g->sc) + 2 * k + sh;
+  S->rect = wp_clamp_rect(S->x0 - g->slide - pad, dy - pad, S->x1 + pad,
+                          dy + total + pad, pw, ph);
+}
+
 void wp_peek_regions(const struct wallpaper_config *c, int pw, int ph,
                      struct wp_rect out[WP_PEEK_REGIONS]) {
   struct layout L;
@@ -285,6 +353,12 @@ void wp_peek_regions(const struct wallpaper_config *c, int pw, int ph,
   out[0] = L.left;
   out[1] = L.right;
   out[2] = L.strip;
+  out[3] = (struct wp_rect){0, 0, 0, 0};
+  if (sided(c)) {
+    struct side S;
+    lay_out_side(c, pw, ph, &S);
+    out[3] = S.rect;
+  }
 }
 
 static void clip_to(cairo_t *cr, const struct wp_rect *r) {
@@ -325,29 +399,36 @@ static void pieces(cairo_t *cr, const struct wallpaper_config *c,
   }
 }
 
-/* hold: how far the expand delay has run, traced by a line growing under
- * HH:MM from its left edge; like the popup's hold line, it clears out in
- * the first half of the expand. */
-static void draw_left(cairo_t *cr, const struct wallpaper_config *c,
-                      const struct look *l, const struct layout *L,
-                      const struct info *in, double a, double e, double hold,
-                      double off) {
+/* A run of pieces starting at x. */
+static void pieces_from(cairo_t *cr, const struct wallpaper_config *c,
+                        const struct look *l, const struct layout *L,
+                        const struct piece *p, int n, double x, double y,
+                        double a) {
+  double w = 0;
+  for (int i = 0; i < n; ++i)
+    w += piece_w(tile(c, p[i].s, L->sr, false, 0), p[i].icon, L);
+  pieces(cr, c, l, L, p, n, x + w / 2, y, a);
+}
+
+/* The clock's text: HH:MM, :SS, and the date in words. */
+static void clock_text(const struct info *in, char hhmm[16], char ss[8],
+                       char date[96]) {
   struct tm tm;
-  char hhmm[16], ss[8], wday[32], rest[32], date[96];
+  char wday[32], rest[32];
   localtime_r(&in->now, &tm);
-  strftime(hhmm, sizeof hhmm, "%H:%M", &tm);
-  strftime(ss, sizeof ss, ":%S", &tm);
+  strftime(hhmm, 16, "%H:%M", &tm);
+  strftime(ss, 8, ":%S", &tm);
   strftime(wday, sizeof wday, "%A", &tm);
   strftime(rest, sizeof rest, "%B %Y", &tm);
-  snprintf(date, sizeof date, "%s, %d %s", wday, tm.tm_mday, rest);
+  snprintf(date, 96, "%s, %d %s", wday, tm.tm_mday, rest);
+}
 
-  double colw = L->lx1 - L->lx0, mid = (L->lx0 + L->lx1) / 2 - off;
-  double base = L->clock_c + (L->clock_e - L->clock_c) * e;
-  const struct tile *hm = tile(c, hhmm, L->sc, true, 0);
-  const struct tile *sec = tile(c, ss, L->ss, false, 0);
-  double gap = 0.1 * L->ss;
-  /* Clock-only HH:MM is centred alone; expanding, it makes room for :SS. */
-  double x = mid - hm->w / 2 - (gap + sec->w) / 2 * e;
+/* HH:MM with its baseline's left at x, y: in the edge gradient (topo) or
+ * the text colour. */
+static void paint_hhmm(cairo_t *cr, const struct wallpaper_config *c,
+                       const struct look *l, const struct layout *L,
+                       const struct tile *hm, double x, double base,
+                       double a) {
   if (l->topo) {
     double cap = 0.72 * L->sc;
     cairo_pattern_t *p = wp_topo_edge_pattern(
@@ -358,6 +439,26 @@ static void draw_left(cairo_t *cr, const struct wallpaper_config *c,
   } else {
     paint_col(cr, c, hm, x, base, l->text, a);
   }
+}
+
+/* hold: how far the expand delay has run, traced by a line growing under
+ * HH:MM from its left edge; like the popup's hold line, it clears out in
+ * the first half of the expand. */
+static void draw_left(cairo_t *cr, const struct wallpaper_config *c,
+                      const struct look *l, const struct layout *L,
+                      const struct info *in, double a, double e, double hold,
+                      double off) {
+  char hhmm[16], ss[8], date[96];
+  clock_text(in, hhmm, ss, date);
+
+  double colw = L->lx1 - L->lx0, mid = (L->lx0 + L->lx1) / 2 - off;
+  double base = L->clock_c + (L->clock_e - L->clock_c) * e;
+  const struct tile *hm = tile(c, hhmm, L->sc, true, 0);
+  const struct tile *sec = tile(c, ss, L->ss, false, 0);
+  double gap = 0.1 * L->ss;
+  /* Clock-only HH:MM is centred alone; expanding, it makes room for :SS. */
+  double x = mid - hm->w / 2 - (gap + sec->w) / 2 * e;
+  paint_hhmm(cr, c, l, L, hm, x, base, a);
   double lh = c->peek_hold_width * L->k, la = a * (1 - 2 * e);
   if (hold > 0 && la > 0 && lh > 0) {
     pill(cr, x, base + 0.12 * L->sc, hm->w * clamp01(hold), lh);
@@ -379,20 +480,18 @@ static void draw_left(cairo_t *cr, const struct wallpaper_config *c,
   paint_col(cr, c, dt, mid - dt->w / 2, L->date + dy, l->dim, ae);
 }
 
-/* Network and the stats in one row over the workspace strip. */
-static void draw_stats(cairo_t *cr, const struct wallpaper_config *c,
-                       const struct look *l, const struct layout *L,
-                       const struct info *in, double a, double off) {
-  char sig[16], name[64];
-  struct piece p[16];
+/* Network's icon, name and signal into p (sig and name hold the text);
+ * how many. */
+static int net_pieces(const struct info *in, struct piece *p, char sig[16],
+                      char name[64]) {
   int n = 2;
-  copy_str(name, sizeof name, in->net_name);
+  copy_str(name, 64, in->net_name);
   switch (in->net) {
   case NET_WIFI:
     p[0] = (struct piece){icon_wifi(in->net_signal), false, true};
     p[1] = (struct piece){name[0] ? name : "wifi", false, false};
     if (in->net_signal >= 0) {
-      snprintf(sig, sizeof sig, "  %d%%", in->net_signal);
+      snprintf(sig, 16, "  %d%%", in->net_signal);
       p[n++] = (struct piece){sig, true, false};
     }
     break;
@@ -409,23 +508,36 @@ static void draw_stats(cairo_t *cr, const struct wallpaper_config *c,
     p[1] = (struct piece){name[0] ? name : "unknown", true, false};
     break;
   }
+  return n;
+}
 
-  /* CPU and the battery's power, memory and uptime */
-  char cpu[16], pwr[24], mem[32], up[32];
+/* CPU and the battery's power, memory and uptime, as text. */
+static void stat_text(const struct info *in, char cpu[16], char pwr[24],
+                      char mem[32], char up[32]) {
   long m = in->uptime_s / 60, h = m / 60, d = h / 24;
   if (in->cpu < 0)
-    snprintf(cpu, sizeof cpu, "--");
+    snprintf(cpu, 16, "--");
   else
-    snprintf(cpu, sizeof cpu, "%d%%", in->cpu);
-  snprintf(pwr, sizeof pwr, "%s%.2fW", in->power_charging ? "▲" : "",
-           in->power_w);
-  snprintf(mem, sizeof mem, "%.1f/%.1fG", in->mem_used_gib, in->mem_total_gib);
+    snprintf(cpu, 16, "%d%%", in->cpu);
+  snprintf(pwr, 24, "%s%.2fW", in->power_charging ? "▲" : "", in->power_w);
+  snprintf(mem, 32, "%.1f/%.1fG", in->mem_used_gib, in->mem_total_gib);
   if (d > 0)
-    snprintf(up, sizeof up, "%ldd %ldh", d, h % 24);
+    snprintf(up, 32, "%ldd %ldh", d, h % 24);
   else if (h > 0)
-    snprintf(up, sizeof up, "%ldh %02ldm", h, m % 60);
+    snprintf(up, 32, "%ldh %02ldm", h, m % 60);
   else
-    snprintf(up, sizeof up, "%ldm", m);
+    snprintf(up, 32, "%ldm", m);
+}
+
+/* Network and the stats in one row over the workspace strip. */
+static void draw_stats(cairo_t *cr, const struct wallpaper_config *c,
+                       const struct look *l, const struct layout *L,
+                       const struct info *in, double a, double off) {
+  char sig[16], name[64];
+  struct piece p[16];
+  int n = net_pieces(in, p, sig, name);
+  char cpu[16], pwr[24], mem[32], up[32];
+  stat_text(in, cpu, pwr, mem, up);
   p[n++] = (struct piece){"     CPU ", true, false};
   p[n++] = (struct piece){cpu, false, false};
   if (in->has_power) {
@@ -542,8 +654,9 @@ static void draw_strip(cairo_t *cr, const struct wallpaper_config *c,
     first = n - m;
   if (first < 0)
     first = 0;
-  double x = L->cx - (m * cw + (m - 1) * gap) / 2;
-  double y = L->sy - L->sh / 2 + off;
+  double x = L->strip_left ? L->lx0 + off
+                           : L->cx - (m * cw + (m - 1) * gap) / 2;
+  double y = L->sy - L->sh / 2 + (L->strip_left ? 0 : off);
   for (int i = first; i < first + m; ++i, x += cw + gap) {
     const struct workspace *ws = &in->ws[i];
     if (ws->focused) /* an empty gauge: glass, or a grey pill */
@@ -553,6 +666,46 @@ static void draw_strip(cairo_t *cr, const struct wallpaper_config *c,
     paint_col(cr, c, t, x + (cw - t->w) / 2, L->sy + 0.36 * L->sw + off, col,
               a);
   }
+}
+
+/* "side": the column, moved left by off. */
+static void draw_side(cairo_t *cr, const struct wallpaper_config *c,
+                      const struct look *l, const struct side *S,
+                      const struct info *in, int low_pct, double a,
+                      double off) {
+  const struct layout *L = &S->g;
+  double x = S->x0 - off, colw = S->x1 - S->x0;
+  /* HH:MM:SS over the date */
+  char hhmm[16], ss[8], date[96];
+  clock_text(in, hhmm, ss, date);
+  const struct tile *hm = tile(c, hhmm, L->sc, true, 0);
+  const struct tile *sec = tile(c, ss, L->ss, false, 0);
+  paint_hhmm(cr, c, l, L, hm, x, S->clock, a);
+  paint_col(cr, c, sec, x + hm->w + 0.1 * L->ss, S->clock, l->dim, a);
+  const struct tile *dt = tile(c, date, L->sd, false, colw);
+  paint_col(cr, c, dt, x, S->date, l->dim, a);
+  /* the levels, as the flanks' expanded */
+  draw_right(cr, c, l, L, in, low_pct, a, 1, -off);
+  /* network, then the stats two to a row */
+  char sig[16], name[64];
+  struct piece p[16];
+  int n = net_pieces(in, p, sig, name);
+  pieces_from(cr, c, l, L, p, n, x, S->net, a);
+  char cpu[16], pwr[24], mem[32], up[32];
+  stat_text(in, cpu, pwr, mem, up);
+  struct piece st[4][2] = {{{"CPU  ", true, false}, {cpu, false, false}},
+                           {{"PWR  ", true, false}, {pwr, false, false}},
+                           {{"RAM  ", true, false}, {mem, false, false}},
+                           {{"up  ", true, false}, {up, false, false}}};
+  for (int i = 0, j = 0; i < 4; ++i) {
+    if (i == 1 && !in->has_power)
+      continue;
+    pieces_from(cr, c, l, L, st[i], 2, x + (j % 2) * colw / 2, S->row[j / 2],
+                a);
+    ++j;
+  }
+  /* the workspaces */
+  draw_strip(cr, c, l, L, in, a, -off);
 }
 
 void wp_draw_peek(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
@@ -566,22 +719,39 @@ void wp_draw_peek(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   double a = clamp01(f->peek_pop), e = clamp01(f->peek_expand);
   /* They slide in from the sides as they show. */
   double off = (1 - a) * L.slide;
+  /* "side": they fade as the snowflake moves aside, and stay out once the
+   * column has shown (so not back while it closes). */
+  bool side = sided(c);
+  double fa = side ? a * (1 - wp_peek_side(c, f)) * (1 - e) : a;
   cairo_save(cr);
-  cairo_save(cr);
-  clip_to(cr, &L.left);
-  /* Over the GPU's map the topo lines show the hold (they gather in). */
-  double hold = l.topo && f->map_under ? 0 : f->peek_hold;
-  draw_left(cr, c, &l, &L, f->peek, a, e, hold, off);
-  cairo_restore(cr);
-  cairo_save(cr);
-  clip_to(cr, &L.right);
-  draw_right(cr, c, &l, &L, f->peek, f->peek_low_pct, a, e, off);
-  cairo_restore(cr);
-  if (e > 0) {
-    /* The stats and the workspaces rise from below with the expand. */
-    clip_to(cr, &L.strip);
-    draw_stats(cr, c, &l, &L, f->peek, a * e, (1 - e) * L.slide);
-    draw_strip(cr, c, &l, &L, f->peek, a * e, (1 - e) * L.slide);
+  if (fa > 0) {
+    cairo_save(cr);
+    clip_to(cr, &L.left);
+    /* Over the GPU's map the topo lines show the hold (they gather in);
+     * the snowflake does it, moving aside. */
+    double hold = side || (l.topo && f->map_under) ? 0 : f->peek_hold;
+    draw_left(cr, c, &l, &L, f->peek, fa, e, hold, off);
+    cairo_restore(cr);
+    cairo_save(cr);
+    clip_to(cr, &L.right);
+    draw_right(cr, c, &l, &L, f->peek, f->peek_low_pct, fa, e, off);
+    cairo_restore(cr);
+    if (e > 0) {
+      /* The stats and the workspaces rise from below with the expand. */
+      cairo_save(cr);
+      clip_to(cr, &L.strip);
+      draw_stats(cr, c, &l, &L, f->peek, fa * e, (1 - e) * L.slide);
+      draw_strip(cr, c, &l, &L, f->peek, fa * e, (1 - e) * L.slide);
+      cairo_restore(cr);
+    }
+  }
+  if (side && e > 0) {
+    /* The column slides in from the left with the expand. */
+    struct side S;
+    lay_out_side(c, pw, ph, &S);
+    clip_to(cr, &S.rect);
+    draw_side(cr, c, &l, &S, f->peek, f->peek_low_pct, a * e,
+              (1 - e) * L.slide);
   }
   cairo_restore(cr);
 }
