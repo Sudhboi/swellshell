@@ -6,8 +6,9 @@
  * Which workspace a window is on is guessed: a window belongs to the active
  * workspace when it opens and whenever it gains focus (labwc switches to a
  * window's workspace to focus it). Windows already open when swell starts
- * belong nowhere until focused. A window moved with SendToDesktop stays
- * where it was until it is focused again.
+ * belong nowhere until focused. A window that stays focused across a
+ * switch went along (SendToDesktop with follow); one sent away without
+ * follow stays where it was until it is focused again.
  *
  * Dynamic workspaces on top of the pool: the list (wm_workspaces) holds the
  * occupied workspaces plus the focused one, named and numbered 1..n in

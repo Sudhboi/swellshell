@@ -139,12 +139,15 @@ int main(void) {
   labwc_model_settle(); /* opened in the background: still on 4 */
   log_buf[0] = '\0';
 
-  /* Fill 2 too, then nothing is fresh. */
+  /* Fill 2 too, then nothing is fresh. (labwc unfocuses the windows of
+   * the workspace it leaves.) */
+  labwc_model_win(3, "b", "zenity", false, false);
   activate(2, 4);
   labwc_model_win(5, "d", "zenity", true, false);
   labwc_model_settle();
   log_buf[0] = '\0';
   check_list("1 2* 3 4");
+  labwc_model_win(5, "d", "zenity", false, false);
   activate(4, 4);
   labwc_model_settle();
   log_buf[0] = '\0';
@@ -186,6 +189,23 @@ int main(void) {
   /* Re-emitting the state for a new subscriber. */
   labwc_emit_focused_state();
   expect("workspace.occupied(1) ");
+
+  /* SendToDesktop with follow: window 2 stays focused while labwc switches
+   * to 4 (empty), so it moved there; 1 empties out (window 5 went to 1 when
+   * 2 was removed, so it stays). */
+  labwc_model_win(2, "a2", "zenity", true, false);
+  labwc_model_settle();
+  log_buf[0] = '\0';
+  activate(4, 4);
+  labwc_model_settle();
+  expect("workspace.init(3) workspace.focus(3) ");
+  check_list("1 2 3*");
+  /* Switching away normally unfocuses it: it stays on 4. */
+  labwc_model_win(2, "a2", "zenity", false, false);
+  activate(1, 4);
+  labwc_model_settle();
+  expect("workspace.focus(1) ");
+  check_list("1* 2 3");
 
   labwc_model_reset();
 

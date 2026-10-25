@@ -32,6 +32,7 @@ struct win {
   /* Belongs to the active workspace at the next settle: it opened, or it
    * gained focus. */
   bool claim;
+  bool was_activated; /* as of the last settle */
   struct zwlr_foreign_toplevel_handle_v1 *handle;
 };
 
@@ -309,12 +310,17 @@ void labwc_model_settle(void) {
   if (settle_timer)
     loop_timer_disarm(settle_timer);
   const struct ws *cur = active_ws();
+  /* A window focused before and after a switch went with it (SendToDesktop
+   * with follow; labwc unfocuses the old workspace's windows otherwise). */
+  bool switched = cur && focused_key && cur->key != focused_key;
   if (cur)
-    for (int i = 0; i < nwins; ++i)
-      if (wins[i].claim) {
-        wins[i].ws = cur->key;
-        wins[i].claim = false;
-      }
+    for (int i = 0; i < nwins; ++i) {
+      struct win *w = &wins[i];
+      if (w->claim || (switched && w->activated && w->was_activated))
+        w->ws = cur->key;
+      w->claim = false;
+      w->was_activated = w->activated;
+    }
 
   uint32_t *old = shown;
   int nold = nshown;

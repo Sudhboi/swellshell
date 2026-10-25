@@ -145,7 +145,7 @@ labwc's workspaces are a fixed pool. swell makes them look dynamic: the popup st
 Start it from `~/.config/labwc/autostart` with `swell daemon &`.
 
 No protocol says which workspace a window is on, so swell guesses: a window belongs to the workspace that was active when it opened or last got focus. This is wrong in two cases:
-- A window sent away with labwc's `SendToDesktop` stays counted where it was until it is focused again.
+- A window sent away with labwc's `SendToDesktop follow="no"` stays counted where it was until it is focused again. With the default `follow`, swell sees it go.
 - Windows already open when the daemon starts count nowhere until focused, so their workspaces can look empty. `next` may then pick one of them as the "empty" workspace; landing there focuses the window, and swell corrects itself.
 
 The overview works with live thumbnails (bind `swell overview toggle`), with three differences from sway:

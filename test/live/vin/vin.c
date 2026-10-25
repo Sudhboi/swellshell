@@ -4,7 +4,7 @@
  *   g X Y N        glide from the last position to X Y in N steps (16 ms)
  *   bd | bu        left button down / up
  *   click | mclick | rclick
- *   k [ctrl+][shift+]KEYSYM   press and release
+ *   k [ctrl+][shift+][super+]KEYSYM   press and release
  *   kd KEYSYM | ku KEYSYM     press / release (for repeat)
  *   s MS           sleep */
 #define _GNU_SOURCE
@@ -93,6 +93,9 @@ static void key(const char *spec, int press, int release) {
       p += 5;
     } else if (!strncmp(p, "shift+", 6)) {
       m |= 1u << xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_SHIFT);
+      p += 6;
+    } else if (!strncmp(p, "super+", 6)) {
+      m |= 1u << xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_LOGO);
       p += 6;
     } else
       break;
