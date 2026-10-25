@@ -28,8 +28,9 @@ struct swell_module {
   const char *const *aliases; /* other CLI words, NULL-terminated, or NULL */
   const char *usage;          /* help text: one "  cmd  description" per line */
   bool needs_wayland;
-  bool needs_wm;   /* sway or niri (wm.h) */
+  bool needs_wm;   /* sway, niri or labwc (wm.h) */
   bool needs_sway; /* sway only (sway.h) */
+  bool not_niri;   /* with needs_wm: sway or labwc */
   bool off_by_default; /* runs only with `enable = true` */
 
   /* config */

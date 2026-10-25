@@ -56,6 +56,9 @@ struct swell_wl {
   /* ext_foreign_toplevel_list_v1 is bound on demand (wl_bind_toplevel_list)
    * because its listener must be attached at bind time. */
   uint32_t toplevel_list_name, toplevel_list_version;
+  /* For the labwc backend (labwc.c binds them): 0 if not offered. */
+  uint32_t workspace_manager_name;
+  uint32_t wlr_toplevel_manager_name, wlr_toplevel_manager_version;
 
   struct wl_seat *seat;
   struct wl_pointer *pointer;

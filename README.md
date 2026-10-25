@@ -1,19 +1,19 @@
 # swell
 
-A small shell for sway and niri in one daemon. It merges five earlier tools and adds a live wallpaper:
+A small shell for sway, niri and labwc in one daemon. It merges five earlier tools and adds a live wallpaper:
 
 | module | was | what it does |
 |---|---|---|
 | `osd` | nixosd | volume/brightness OSD with a rotating Nix snowflake |
 | `popup` | popup | hold-to-peek panel: clock, date, levels, network, CPU/RAM, workspaces (on an empty workspace drawn into the wallpaper instead, in its colours; `[popup] wallpaper = false` keeps the panel) |
 | `media` | (new) | what's playing (cover, title, artist, album, progress) in a panel at the top while the popup shows its details |
-| `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav (sway only; niri has its own) |
-| `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n (on niri: `next`/`prev`/`goto` map to niri's own actions) |
+| `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav (sway and labwc; niri has its own) |
+| `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n (on niri: `next`/`prev`/`goto` map to niri's own actions; on labwc: a dynamic view of a fixed pool) |
 | `wsfade` | (new) | off by default: on sway, `swell ws` switches fade the old workspace out over the new one with a small drift (`[wsfade] enable = true`) |
 | `runner` | awww-kill | runs shell commands on events (none by default) |
 | `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar, a turning Nix snowflake and a cava-like ring of audio bars around it (PipeWire, stereo); animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
 
-Every module runs in a single event loop. They share one Wayland connection and one sway or niri IPC connection (niri when `$NIRI_SOCKET` is set), and are controlled through one socket:
+Every module runs in a single event loop. They share one Wayland connection and one sway or niri IPC connection (niri when `$NIRI_SOCKET` is set; on labwc, when `$LABWC_PID` is set, Wayland protocols on the same connection instead), and are controlled through one socket:
 
 ```
 swell daemon                 # run everything (replaces a running daemon)
@@ -57,8 +57,8 @@ Hook `on` patterns are globs (`window.*`). Commands run through `sh -c` in a sin
 | event | details |
 |---|---|
 | `workspace.empty` / `workspace.occupied` | the focused workspace became empty or got windows (transitions only, and once at startup); `SWELL_WORKSPACE` |
-| `workspace.focus`, `.init`, `.removed`, `.rename`, `.move`, `.urgent`, `.reload` | workspace events; `SWELL_WORKSPACE` (on niri: the name, else the index on its output) |
-| `window.new`, `.close`, `.focus`, `.title`, `.move`, `.fullscreen`, `.floating`, `.urgent`, `.mark` | window events; `SWELL_CON_ID` (niri: the window id), `SWELL_APP_ID`, `SWELL_TITLE`; niri has no `.fullscreen` or `.mark` |
+| `workspace.focus`, `.init`, `.removed`, `.rename`, `.move`, `.urgent`, `.reload` | workspace events; `SWELL_WORKSPACE` (on niri: the name, else the index on its output; on labwc: the number in swell's list) |
+| `window.new`, `.close`, `.focus`, `.title`, `.move`, `.fullscreen`, `.floating`, `.urgent`, `.mark` | window events; `SWELL_CON_ID` (niri: the window id; labwc: an id swell picks), `SWELL_APP_ID`, `SWELL_TITLE`; niri has no `.fullscreen` or `.mark`; labwc only has `.new`, `.close`, `.focus` and `.title` |
 | `output.change` | outputs changed (sway only) |
 | `osd.show`, `osd.hide` | `SWELL_OSD_KIND`, `SWELL_OSD_LEVEL`, `SWELL_OSD_MUTED` |
 | `popup.show`, `popup.hide`, `popup.expand` | `SWELL_POPUP_IN` (`panel` or `wallpaper`) |
@@ -125,6 +125,37 @@ layer-rule {
 ```
 
 Touchpad workspace swipes are built into niri; swell's swipe binds aren't needed. `swell power off && systemctl poweroff` works the same in a `spawn-sh` bind. With the home-manager systemd service, `NIRI_SOCKET` must be in the service environment (niri-session imports it).
+
+## labwc config
+
+Needs labwc 0.8.3 or later (ext-workspace-v1). Everything except `wsfade` runs. labwc has no IPC, so swell reads workspaces and windows over Wayland (ext-workspace-v1, wlr-foreign-toplevel-management).
+
+labwc's workspaces are a fixed pool. swell makes them look dynamic: the popup strip, `wsosd` and `swell ws goto N` show only the occupied workspaces plus the focused one, numbered 1..n. `swell ws next` past the last occupied one opens an empty one, `prev` stops at 1, and `reorder` does nothing. Give it a pool big enough, and turn off labwc's own workspace popup, which would list all of them:
+
+```xml
+<desktops number="10" popupTime="0" />
+<keyboard>
+  <keybind key="W-Right"><action name="Execute" command="swell ws next" /></keybind>
+  <keybind key="W-Left"><action name="Execute" command="swell ws prev" /></keybind>
+  <keybind key="W-1"><action name="Execute" command="swell ws goto 1" /></keybind>
+  <keybind key="F10"><action name="Execute" command="swell popup toggle" /></keybind>
+</keyboard>
+```
+
+Start it from `~/.config/labwc/autostart` with `swell daemon &`.
+
+No protocol says which workspace a window is on, so swell guesses: a window belongs to the workspace that was active when it opened or last got focus. This is wrong in two cases:
+- A window sent away with labwc's `SendToDesktop` stays counted where it was until it is focused again.
+- Windows already open when the daemon starts count nowhere until focused, so their workspaces can look empty. `next` may then pick one of them as the "empty" workspace; landing there focuses the window, and swell corrects itself.
+
+The overview works with live thumbnails (bind `swell overview toggle`), with three differences from sway:
+- labwc doesn't say where windows are, so each workspace's windows are spread out in a grid, and opening or closing fades instead of zooming out of the screen.
+- Windows can't be dragged to another workspace (nothing in labwc's protocols moves one), and workspaces can't be reordered.
+- All workspaces are shown on one output.
+
+Clicking a window, a workspace or "New workspace", the keys, and middle-click to close all work.
+
+With the home-manager systemd service, `LABWC_PID` (or `XDG_CURRENT_DESKTOP=labwc`) must be in the service environment.
 
 ## Building
 

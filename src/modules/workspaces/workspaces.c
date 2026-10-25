@@ -6,7 +6,9 @@
  * past the last workspace creates a new one instead of wrapping around.
  *
  * niri already works this way, so there the commands map onto its actions
- * and nothing is renumbered. */
+ * and nothing is renumbered. labwc has a fixed pool of workspaces; labwc.c
+ * shows the occupied ones (plus the focused one) as 1..n and picks the
+ * workspace each command goes to. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +16,7 @@
 #include <time.h>
 
 #include "bus.h"
+#include "labwc.h"
 #include "module.h"
 #include "niri.h"
 #include "plan.h"
@@ -176,6 +179,20 @@ static int dispatch_niri(const char *cmd, int num, struct reply *r) {
   return 0;
 }
 
+/* labwc: a fixed pool shown as dynamic workspaces (labwc.h). */
+static int dispatch_labwc(const char *cmd, int num, struct reply *r) {
+  if (strcmp(cmd, "reorder") == 0) {
+    reply_printf(r, "labwc workspaces are numbered by swell; nothing to "
+                    "reorder\n");
+    return 0;
+  }
+  const char *what;
+  int ret = labwc_go(cmd, num, &what);
+  if (what)
+    reply_printf(r, "%s\n", what);
+  return ret ? 1 : 0;
+}
+
 static int dispatch(int argc, char **argv, struct reply *r) {
   if (argc < 1) {
     reply_printf(r, "usage: swell ws next|prev|goto N|reorder\n");
@@ -202,6 +219,8 @@ static int dispatch(int argc, char **argv, struct reply *r) {
   }
   if (ws.sw->wm == WM_NIRI)
     return dispatch_niri(cmd, num, r);
+  if (ws.sw->wm == WM_LABWC)
+    return dispatch_labwc(cmd, num, r);
   if (strcmp(cmd, "reorder") == 0)
     renumber();
   else
@@ -255,7 +274,7 @@ static int run_local(struct swell *sw, const void *cfg, bool have_daemon,
                      int argc, char **argv) {
   if (have_daemon)
     return -1;
-  sw->wm = wm_init(NULL);
+  sw->wm = wm_init(NULL, NULL);
   if (sw->wm == WM_NONE)
     return 1;
   ws.sw = sw;

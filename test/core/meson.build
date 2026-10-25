@@ -8,6 +8,9 @@ test('core-dump-roundtrip', test_dump)
 test_niri = executable('test_niri', 'test_niri.c', dependencies: core_dep)
 test('core-niri', test_niri)
 
+test_labwc = executable('test_labwc', 'test_labwc.c', dependencies: core_dep)
+test('core-labwc', test_labwc)
+
 test_peek = executable('test_peek', 'test_peek.c', dependencies: core_dep)
 test('core-peek', test_peek)
 

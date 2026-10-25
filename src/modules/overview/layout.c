@@ -167,7 +167,8 @@ bool ov_target_eq(struct target a, struct target b) {
 /* ---- reordering ------------------------------------------------------ */
 
 bool ov_layout_reorderable(const struct workspace *ws) {
-  return ws && !ws->placeholder && ws->num >= 0 && ws->output;
+  return ws && !ws->placeholder && ws->num >= 0 && ws->output &&
+         ov_model_can_move();
 }
 
 int ov_layout_reorder_list(struct workspace *ws, struct workspace ***list) {

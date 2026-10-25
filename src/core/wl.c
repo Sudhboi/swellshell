@@ -13,9 +13,11 @@
 #include "ext-idle-notify-v1-client-protocol.h"
 #include "ext-image-capture-source-v1-client-protocol.h"
 #include "ext-image-copy-capture-v1-client-protocol.h"
+#include "ext-workspace-v1-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
 #include "util.h"
 #include "viewporter-client-protocol.h"
+#include "wlr-foreign-toplevel-management-unstable-v1-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 struct route {
@@ -382,6 +384,12 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
   } else if (strcmp(iface, ext_foreign_toplevel_list_v1_interface.name) == 0) {
     wl->toplevel_list_name = name;
     wl->toplevel_list_version = version;
+  } else if (strcmp(iface, ext_workspace_manager_v1_interface.name) == 0) {
+    wl->workspace_manager_name = name;
+  } else if (strcmp(iface, zwlr_foreign_toplevel_manager_v1_interface.name) ==
+             0) {
+    wl->wlr_toplevel_manager_name = name;
+    wl->wlr_toplevel_manager_version = version;
   } else if (strcmp(iface,
                     ext_foreign_toplevel_image_capture_source_manager_v1_interface
                         .name) == 0) {

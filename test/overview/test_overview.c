@@ -222,8 +222,56 @@ static void test_layout(void) {
   free(out.workspaces);
 }
 
+/* labwc: windows spread in a grid, each at its size or shrunk to its cell,
+ * none overlapping, all inside the workspace. */
+static int sizes[][2] = {{800, 600}, {3000, 400}, {400, 900}};
+
+static bool fake_size(struct window *w, int *width, int *height) {
+  if (w->con_id > 3)
+    return false; /* no capture: 60% of the workspace */
+  *width = sizes[w->con_id - 1][0];
+  *height = sizes[w->con_id - 1][1];
+  return true;
+}
+
+static void test_spread(void) {
+  struct workspace ws = {.rect = {0, 0, 1920, 1080}};
+  struct window wins[4];
+  struct window *list[4];
+  for (int i = 0; i < 4; ++i) {
+    wins[i] = (struct window){.con_id = i + 1, .ws = &ws};
+    list[i] = &wins[i];
+  }
+  ws.windows = list;
+
+  ws.nwindows = 1;
+  ov_model_spread(&ws, 40, fake_size);
+  /* one window that fits: its own size, centred */
+  assert(wins[0].rect.w == 800 && wins[0].rect.h == 600);
+  assert(wins[0].rect.x == 560 && wins[0].rect.y == 240);
+  assert(memcmp(&wins[0].rect, &wins[0].content, sizeof(struct rect)) == 0);
+
+  ws.nwindows = 4;
+  ov_model_spread(&ws, 40, fake_size);
+  for (int i = 0; i < 4; ++i) {
+    struct rect r = wins[i].rect;
+    assert(r.x >= 40 && r.y >= 40 && r.x + r.w <= 1880 && r.y + r.h <= 1040);
+    assert(r.w > 0 && r.h > 0);
+    for (int j = 0; j < i; ++j) {
+      struct rect q = wins[j].rect;
+      assert(r.x >= q.x + q.w || q.x >= r.x + r.w || r.y >= q.y + q.h ||
+             q.y >= r.y + r.h);
+    }
+  }
+  /* the wide one keeps its shape */
+  assert(fabs((double)wins[1].rect.w / wins[1].rect.h - 7.5) < 0.2);
+  /* no size: 60% of the workspace's shape */
+  assert(fabs((double)wins[3].rect.w / wins[3].rect.h - 1920.0 / 1080) < 0.05);
+}
+
 int main(void) {
   test_renumber();
+  test_spread();
   test_reorder_plan();
   test_layout();
   printf("overview tests passed\n");

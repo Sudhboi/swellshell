@@ -3,17 +3,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "labwc.h"
 #include "niri.h"
 #include "sway.h"
 
 static enum wm_kind kind = WM_NONE;
 
-enum wm_kind wm_init(struct loop *loop) {
+enum wm_kind wm_init(struct loop *loop, struct swell_wl *wl) {
   if (kind != WM_NONE)
     return kind;
   const char *niri = getenv("NIRI_SOCKET");
   if (niri && *niri && niri_init(loop))
     kind = WM_NIRI;
+  else if (labwc_detect())
+    kind = labwc_init(loop, wl) ? WM_LABWC : WM_NONE;
   else if (sway_init(loop))
     kind = WM_SWAY;
   return kind;
@@ -24,13 +27,18 @@ void wm_finish(void) {
     sway_finish();
   else if (kind == WM_NIRI)
     niri_finish();
+  else if (kind == WM_LABWC)
+    labwc_finish();
   kind = WM_NONE;
 }
 
 enum wm_kind wm_kind(void) { return kind; }
 
 const char *wm_name(enum wm_kind k) {
-  return k == WM_SWAY ? "sway" : k == WM_NIRI ? "niri" : "no";
+  return k == WM_SWAY    ? "sway"
+         : k == WM_NIRI  ? "niri"
+         : k == WM_LABWC ? "labwc"
+                         : "no";
 }
 
 int wm_workspaces(const struct wm_workspace **out) {
@@ -39,6 +47,8 @@ int wm_workspaces(const struct wm_workspace **out) {
     return sway_workspaces(out);
   case WM_NIRI:
     return niri_workspaces(out);
+  case WM_LABWC:
+    return labwc_workspaces(out);
   default:
     *out = NULL;
     return 0;
@@ -76,6 +86,8 @@ int wm_focused_empty(void) {
     return sway_focused_empty();
   case WM_NIRI:
     return niri_focused_empty();
+  case WM_LABWC:
+    return labwc_focused_empty();
   default:
     return -1;
   }
@@ -86,4 +98,6 @@ void wm_emit_focused_state(void) {
     sway_emit_focused_state();
   else if (kind == WM_NIRI)
     niri_emit_focused_state();
+  else if (kind == WM_LABWC)
+    labwc_emit_focused_state();
 }

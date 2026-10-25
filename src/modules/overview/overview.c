@@ -26,6 +26,7 @@
 #include "capture.h"
 #include "fractional-scale-v1-client-protocol.h"
 #include "input.h"
+#include "labwc.h"
 #include "layout.h"
 #include "model.h"
 #include "module.h"
@@ -34,6 +35,7 @@
 #include "sway.h"
 #include "util.h"
 #include "viewporter-client-protocol.h"
+#include "wm.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "zoom.h"
 
@@ -214,6 +216,10 @@ double ov_anim_value(struct ov *o, int64_t now) {
 }
 
 struct workspace *ov_anim_hero(struct ov *o, struct output *out) {
+  /* labwc doesn't say where windows are, so a workspace can't zoom out of
+   * the screen: everything fades. */
+  if (o->sw && o->sw->wm == WM_LABWC)
+    return NULL;
   struct workspace *visible = NULL;
   for (int i = 0; i < out->nworkspaces; ++i) {
     struct workspace *ws = out->workspaces[i];
@@ -640,6 +646,26 @@ static struct target resolve(struct ov *o, struct target_ref *r) {
   return t;
 }
 
+static bool window_size(struct window *w, int *width, int *height) {
+  return ov_capture_window_size(w->cap, width, height);
+}
+
+/* labwc: everything on the first output, at its size once configured. */
+static bool load_labwc(struct ov *o, struct model *m) {
+  struct output *out, *host = NULL;
+  wl_list_for_each(out, &o->outputs, link) {
+    if (out->name && !host)
+      host = out;
+  }
+  if (!host)
+    return false;
+  bool sized = host->width > 0 && host->height > 0;
+  o->labwc_serial = labwc_serial();
+  return ov_model_load_labwc(m, host->name, sized ? host->width : 1600,
+                             sized ? host->height : 1000,
+                             o->cfg.new_workspace_slot);
+}
+
 static bool reload(struct ov *o, bool first) {
   struct target_ref sel = ref_of(o->selected);
   struct target_ref press = ref_of(o->drag.press);
@@ -647,7 +673,10 @@ static bool reload(struct ov *o, bool first) {
   long zoom_con = o->zoom.win ? o->zoom.win->con_id : -1;
 
   struct model fresh;
-  if (!ov_model_load(&fresh, o->cfg.new_workspace_slot, o->cfg.spread_gap)) {
+  bool labwc = o->sw && o->sw->wm == WM_LABWC;
+  if (!(labwc ? load_labwc(o, &fresh)
+              : ov_model_load(&fresh, o->cfg.new_workspace_slot,
+                              o->cfg.spread_gap))) {
     ref_free(&sel);
     ref_free(&press);
     o->model_dirty = false; /* the next sway event retries */
@@ -674,6 +703,11 @@ static bool reload(struct ov *o, bool first) {
   }
 
   ov_capture_bind_model(o);
+  for (int i = 0; labwc && i < o->model.nworkspaces; ++i) {
+    struct workspace *ws = o->model.workspaces[i];
+    ov_model_spread(ws, fmax(o->cfg.spread_gap, ws->rect.w * 0.04),
+                    window_size);
+  }
   ov_layout_all(o);
 
   if (first) {
@@ -740,6 +774,8 @@ static int prepare(void *data) {
     ov_close();
     return -1;
   }
+  if (o->sw->wm == WM_LABWC && labwc_serial() != o->labwc_serial)
+    o->model_dirty = true;
   if (o->model_dirty)
     reload(o, false);
   int64_t now = now_ms();
@@ -821,7 +857,8 @@ static int ov_open(struct reply *r) {
   if (!begin(&ov)) {
     teardown(&ov);
     if (r)
-      reply_printf(r, "cannot read the sway tree\n");
+      reply_printf(r, "cannot read the %s\n",
+                   ov.sw->wm == WM_LABWC ? "labwc state" : "sway tree");
     return 1;
   }
   ov.open = true;
@@ -829,7 +866,8 @@ static int ov_open(struct reply *r) {
   ov.anim.dir = ov.cfg.open_anim_ms > 0 ? 1 : 0;
   ov.anim.from = ov.anim.dir ? 0 : 1;
   wl_add_output_listener(ov.wl, on_output, &ov);
-  sway_subscribe(on_sway_event, &ov);
+  if (ov.sw->wm == WM_SWAY)
+    sway_subscribe(on_sway_event, &ov);
   loop_add_prepare(sw_->loop, 50, prepare, &ov);
   ov.repeat = loop_add_timer(sw_->loop, CLOCK_MONOTONIC, ov_input_repeat, &ov);
   struct output *out;
@@ -843,7 +881,8 @@ static void ov_close(void) {
     return;
   bool emitted = ov.anim.close_emitted;
   wl_remove_output_listener(ov.wl, on_output, &ov);
-  sway_unsubscribe(on_sway_event, &ov);
+  if (ov.sw->wm == WM_SWAY)
+    sway_unsubscribe(on_sway_event, &ov);
   loop_remove_prepare(sw_->loop, prepare, &ov);
   loop_remove_timer(ov.repeat);
   ov.repeat = NULL;
@@ -912,7 +951,7 @@ static int run_local(struct swell *sw, const void *cfg, bool have_daemon,
   if (!sw->wl)
     return 1;
   if (sw->wm == WM_NONE)
-    sw->wm = wm_init(NULL);
+    sw->wm = wm_init(NULL, NULL);
   if (sw->wm != WM_SWAY) {
     if (sw->wm != WM_NONE)
       fprintf(stderr, "swell: the overview needs sway\n");
@@ -1000,13 +1039,15 @@ const struct swell_module overview_module = {
         "  Mouse: click a window to focus it, a workspace to switch; drag a\n"
         "  window onto another workspace (or New workspace) to move it; drag\n"
         "  a workspace by its name to reorder; middle-click kills a window;\n"
-        "  right-click or a background click closes.\n"
+        "  right-click or a background click closes. On labwc windows can't\n"
+        "  be moved or workspaces reordered, and windows are spread out.\n"
         "  Keys: arrows/hjkl select, Tab/Shift+Tab cycle, Enter/Space focus,\n"
         "  Shift+arrows (H/L) move the window to the previous/next workspace,\n"
         "  Ctrl+arrows (Ctrl+h/l) move the workspace, 1-9/0 jump, Esc/q "
         "close.\n",
     .needs_wayland = true,
-    .needs_sway = true,
+    .needs_wm = true,
+    .not_niri = true, /* niri has its own overview */
     .config_size = sizeof(CFG),
     .defaults = &defaults,
     .fields = fields,

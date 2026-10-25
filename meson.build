@@ -13,7 +13,7 @@ add_project_arguments(
   language: 'c')
 
 wayland_client = dependency('wayland-client')
-wayland_protos = dependency('wayland-protocols', version: '>=1.37')
+wayland_protos = dependency('wayland-protocols', version: '>=1.40')
 wayland_scanner_dep = dependency('wayland-scanner', native: true)
 cairo = dependency('cairo')
 pango = dependency('pangocairo')
@@ -30,6 +30,7 @@ wl_scanner = find_program(wayland_scanner_dep.get_variable('wayland_scanner'), n
 wlp_dir = wayland_protos.get_variable('pkgdatadir')
 protocol_xml = [
   'protocols/wlr-layer-shell-unstable-v1.xml',
+  'protocols/wlr-foreign-toplevel-management-unstable-v1.xml',
   wlp_dir / 'stable/xdg-shell/xdg-shell.xml',
   wlp_dir / 'stable/viewporter/viewporter.xml',
   wlp_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
@@ -40,6 +41,7 @@ protocol_xml = [
   wlp_dir / 'staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml',
   wlp_dir / 'staging/ext-image-capture-source/ext-image-capture-source-v1.xml',
   wlp_dir / 'staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml',
+  wlp_dir / 'staging/ext-workspace/ext-workspace-v1.xml',
 ]
 protocol_src = []
 protocol_hdr = []
@@ -80,6 +82,7 @@ core_src = files(
   'src/core/handover.c',
   'src/core/info.c',
   'src/core/ipc.c',
+  'src/core/labwc.c',
   'src/core/loop.c',
   'src/core/mpris.c',
   'src/core/niri.c',

@@ -157,6 +157,7 @@ struct ov {
 
   struct model model;
   bool model_dirty;
+  uint64_t labwc_serial; /* labwc's model as of the last load */
 
   struct loop_timer *repeat;
   xkb_keysym_t repeat_sym;

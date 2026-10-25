@@ -6,8 +6,10 @@
 #include <string.h>
 
 #include "i3ipc.h"
+#include "labwc.h"
 #include "sway.h"
 #include "util.h"
+#include "wm.h"
 
 /* ---- model ---------------------------------------------------------- */
 
@@ -254,6 +256,135 @@ bool ov_model_load(struct model *m, bool new_slot, double spread_gap) {
   return true;
 }
 
+/* ---- labwc ---------------------------------------------------------- */
+
+static bool on_labwc(void) { return wm_kind() == WM_LABWC; }
+
+/* Oldest first: the spread keeps every window in its cell as focus moves
+ * (spread windows don't overlap, so drawing order doesn't matter). */
+static int labwc_order(const void *a, const void *b) {
+  const struct window *x = *(struct window *const *)a;
+  const struct window *y = *(struct window *const *)b;
+  return (x->con_id > y->con_id) - (x->con_id < y->con_id);
+}
+
+bool ov_model_load_labwc(struct model *m, const char *output, int width,
+                         int height, bool new_slot) {
+  memset(m, 0, sizeof(*m));
+  m->focused_con = -1;
+  /* labwc's workspaces span every output; they're all shown on one. */
+  m->outputs = xcalloc(1, sizeof(*m->outputs));
+  m->noutputs = 1;
+  m->outputs[0].name = xstrdup(output);
+  m->outputs[0].rect = (struct rect){0, 0, width, height};
+
+  const struct wm_workspace *list;
+  int n = wm_workspaces(&list);
+  for (int i = 0; i < n; ++i) {
+    struct workspace *ws = add_workspace(m);
+    ws->id = labwc_workspace_key(i);
+    ws->name = xstrdup(list[i].name);
+    ws->num = list[i].num;
+    ws->focused = list[i].focused;
+    ws->visible = list[i].visible;
+    ws->urgent = list[i].urgent;
+    ws->output_name = xstrdup(output);
+    ws->rect = m->outputs[0].rect;
+  }
+  int nw = labwc_window_count();
+  for (int i = 0; i < nw; ++i) {
+    struct labwc_window lw;
+    labwc_window_get(i, &lw);
+    struct workspace *ws = ov_model_find_workspace(m, lw.ws);
+    if (!ws) /* not known yet */
+      continue;
+    struct window *w = xcalloc(1, sizeof(*w));
+    w->con_id = lw.key;
+    w->title = lw.title ? xstrdup(lw.title) : NULL;
+    w->app_id = lw.app_id ? xstrdup(lw.app_id) : NULL;
+    w->ident = lw.ident ? xstrdup(lw.ident) : NULL;
+    w->visible = true;
+    w->focused = lw.activated;
+    w->ws = ws;
+    ws->windows =
+        xrealloc(ws->windows, (ws->nwindows + 1) * sizeof(*ws->windows));
+    ws->windows[ws->nwindows++] = w;
+    m->windows = xrealloc(m->windows, (m->nwindows + 1) * sizeof(*m->windows));
+    m->windows[m->nwindows++] = w;
+    if (w->focused)
+      m->focused_con = w->con_id;
+  }
+  for (int i = 0; i < m->nworkspaces; ++i)
+    qsort(m->workspaces[i]->windows, m->workspaces[i]->nwindows,
+          sizeof(struct window *), labwc_order);
+
+  if (new_slot) {
+    struct workspace *ws = add_workspace(m);
+    ws->placeholder = true;
+    ws->num = n + 1;
+    ws->name = xasprintf("%d", n + 1);
+    ws->output_name = xstrdup(output);
+    ws->rect = m->outputs[0].rect;
+  }
+  return true;
+}
+
+void ov_model_spread(struct workspace *ws, double gap,
+                     bool (*size)(struct window *w, int *width, int *height)) {
+  int n = ws->nwindows;
+  double W = ws->rect.w, H = ws->rect.h;
+  if (n == 0 || W <= 0 || H <= 0)
+    return;
+  double *sw = xcalloc(n, sizeof(*sw)), *sh = xcalloc(n, sizeof(*sh));
+  for (int i = 0; i < n; ++i) {
+    int w = 0, h = 0;
+    if (!size || !size(ws->windows[i], &w, &h) || w <= 0 || h <= 0) {
+      w = (int)(W * 0.6);
+      h = (int)(H * 0.6);
+    }
+    sw[i] = w;
+    sh[i] = h;
+  }
+  /* The column count that shows the most window area. */
+  int cols = 1;
+  double best = -1;
+  for (int k = 1; k <= n; ++k) {
+    int rows = (n + k - 1) / k;
+    double cw = (W - (k + 1) * gap) / k, ch = (H - (rows + 1) * gap) / rows;
+    if (cw <= 0 || ch <= 0)
+      continue;
+    double area = 0;
+    for (int i = 0; i < n; ++i) {
+      double s = fmin(fmin(cw / sw[i], ch / sh[i]), 1);
+      area += s * s * sw[i] * sh[i];
+    }
+    if (area > best) {
+      best = area;
+      cols = k;
+    }
+  }
+  int rows = (n + cols - 1) / cols;
+  double cw = fmax((W - (cols + 1) * gap) / cols, 1);
+  double ch = fmax((H - (rows + 1) * gap) / rows, 1);
+  for (int i = 0; i < n; ++i) {
+    int row = i / cols, col = i % cols;
+    int in_row = row == rows - 1 ? n - row * cols : cols;
+    double row_x = (W - in_row * cw - (in_row - 1) * gap) / 2;
+    double s = fmin(fmin(cw / sw[i], ch / sh[i]), 1);
+    double w = sw[i] * s, h = sh[i] * s;
+    double x = row_x + col * (cw + gap) + (cw - w) / 2;
+    double y = gap + row * (ch + gap) + (ch - h) / 2;
+    struct window *win = ws->windows[i];
+    win->rect = (struct rect){(int)lround(x), (int)lround(y), (int)lround(w),
+                              (int)lround(h)};
+    win->content = win->rect;
+  }
+  free(sw);
+  free(sh);
+}
+
+bool ov_model_can_move(void) { return !on_labwc(); }
+
 void ov_model_free(struct model *m) {
   for (int i = 0; i < m->nwindows; ++i) {
     struct window *w = m->windows[i];
@@ -317,10 +448,18 @@ static void workspace_ref(char *dst, size_t size, struct workspace *ws) {
 }
 
 void ov_model_focus_window(struct window *win) {
+  if (on_labwc()) {
+    labwc_focus_window((uint32_t)win->con_id);
+    return;
+  }
   sway_command("[con_id=%ld] focus", win->con_id);
 }
 
 void ov_model_focus_workspace(struct workspace *ws) {
+  if (on_labwc()) {
+    labwc_focus_workspace(ws->placeholder ? 0 : (uint32_t)ws->id);
+    return;
+  }
   char ref[512], out[512];
   workspace_ref(ref, sizeof(ref), ws);
   if (ws->placeholder) {
@@ -333,6 +472,8 @@ void ov_model_focus_workspace(struct workspace *ws) {
 }
 
 void ov_model_move_window(struct window *win, struct workspace *ws) {
+  if (on_labwc())
+    return; /* nothing in labwc's protocols moves a window */
   char ref[512];
   workspace_ref(ref, sizeof(ref), ws);
   if (ws->placeholder) {
@@ -348,6 +489,10 @@ void ov_model_move_window(struct window *win, struct workspace *ws) {
 }
 
 void ov_model_kill_window(struct window *win) {
+  if (on_labwc()) {
+    labwc_close_window((uint32_t)win->con_id);
+    return;
+  }
   sway_command("[con_id=%ld] kill", win->con_id);
 }
 
@@ -414,6 +559,8 @@ bool ov_reorder_plan(void **list, const int *nums, int n, int from, int slot,
 
 void ov_model_renumber_workspaces(struct workspace **order, const int *nums,
                                   int n) {
+  if (on_labwc())
+    return;
   const char **names = xcalloc(n, sizeof(*names));
   char **new_names = xcalloc(n, sizeof(*new_names));
   for (int i = 0; i < n; ++i)

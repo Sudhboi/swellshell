@@ -24,6 +24,9 @@ cairo_surface_t *ov_capture_thumbnail(struct capture *cap, int w, int h);
 
 /* Size of the latest frame. Returns false if there is none. */
 bool ov_capture_size(struct capture *cap, int *w, int *h);
+/* The window's size as the capture session last gave it (before any frame
+ * arrived), else the latest frame's. */
+bool ov_capture_window_size(struct capture *cap, int *w, int *h);
 
 /* Request new frames that are due. */
 void ov_capture_tick(struct ov *ov, int64_t now);

@@ -1,4 +1,5 @@
-/* overview: the model of sway's tree, and sway commands. */
+/* overview: the model of sway's tree (or labwc's state), and the commands
+ * acting on it. */
 #ifndef SWELL_OVERVIEW_MODEL_H
 #define SWELL_OVERVIEW_MODEL_H
 
@@ -8,6 +9,18 @@
  * workspace per output for "move to new workspace"; spread_gap is the gap
  * between spread-out tabs (tree pixels). */
 bool ov_model_load(struct model *m, bool new_slot, double spread_gap);
+/* labwc: the workspace list from labwc.h, all shown on one output of
+ * width x height (logical), windows whose workspace is known. Window rects
+ * are left for ov_model_spread (labwc doesn't say where windows are). */
+bool ov_model_load_labwc(struct model *m, const char *output, int width,
+                         int height, bool new_slot);
+/* Lay the workspace's windows out in a grid inside its rect, gap apart,
+ * each at its size (from size(), else 60% of the workspace) or shrunk to
+ * fit its cell. */
+void ov_model_spread(struct workspace *ws, double gap,
+                     bool (*size)(struct window *w, int *width, int *height));
+/* False where windows can't be moved between workspaces (labwc). */
+bool ov_model_can_move(void);
 void ov_model_free(struct model *m);
 struct window *ov_model_find_window(struct model *m, long con_id);
 struct workspace *ov_model_find_workspace(struct model *m, long id);

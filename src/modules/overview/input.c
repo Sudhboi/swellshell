@@ -82,7 +82,8 @@ static void pointer_motion(void *data, double x, double y) {
     return; /* closing: nothing more lights up */
 
   if (ov->drag.pressed && !ov->drag.active &&
-      (ov->drag.press.win || ov_layout_reorderable(ov->drag.press.ws)) &&
+      ((ov->drag.press.win && ov_model_can_move()) ||
+       ov_layout_reorderable(ov->drag.press.ws)) &&
       hypot(ov->px - ov->drag.start_x, ov->py - ov->drag.start_y) >
           ov->cfg.drag_threshold) {
     ov->drag.active = true;

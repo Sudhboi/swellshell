@@ -8,6 +8,7 @@
 #include "ext-image-capture-source-v1-client-protocol.h"
 #include "ext-image-copy-capture-v1-client-protocol.h"
 #include "util.h"
+#include "wm.h"
 
 struct toplevel {
   struct wl_list link;
@@ -37,6 +38,7 @@ struct capture {
 
   /* constraints, collected until "done" */
   uint32_t width, height;
+  uint32_t done_width, done_height; /* as of the last "done" */
   uint32_t format; /* best offered shm format, 0 if none usable */
   int format_rank;
   bool fresh_constraints; /* "done" arrived since the last frame request */
@@ -263,6 +265,12 @@ static void session_done(void *data,
     return;
   }
   cap->format = format;
+  if (cap->width != cap->done_width || cap->height != cap->done_height) {
+    cap->done_width = cap->width;
+    cap->done_height = cap->height;
+    if (cap->ov->sw && cap->ov->sw->wm == WM_LABWC)
+      cap->ov->model_dirty = true; /* the spread uses window sizes */
+  }
   for (int i = 0; i < 2; ++i) {
     struct buffer *b = cap->bufs[i];
     if (b && (b->width != (int)cap->width || b->height != (int)cap->height ||
@@ -474,6 +482,14 @@ cairo_surface_t *ov_capture_thumbnail(struct capture *cap, int w, int h) {
 
   cap->thumbs[slot].stale = false;
   return thumb;
+}
+
+bool ov_capture_window_size(struct capture *cap, int *w, int *h) {
+  if (!cap || !cap->done_width || !cap->done_height)
+    return ov_capture_size(cap, w, h);
+  *w = cap->done_width;
+  *h = cap->done_height;
+  return true;
 }
 
 bool ov_capture_size(struct capture *cap, int *w, int *h) {

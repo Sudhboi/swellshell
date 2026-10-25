@@ -111,6 +111,8 @@ static bool can_run(const struct swell_module *m) {
     return false;
   if (m->needs_sway && d.sw.wm != WM_SWAY)
     return false;
+  if (m->not_niri && d.sw.wm == WM_NIRI)
+    return false;
   return true;
 }
 
@@ -123,7 +125,8 @@ static void start_module(size_t i) {
     warn("%s: disabled (needs %s)", m->name,
          m->needs_wayland && !d.sw.wl ? "Wayland"
          : m->needs_sway              ? "sway"
-                                      : "sway or niri");
+         : m->not_niri                ? "sway or labwc"
+                                      : "sway, niri or labwc");
     return;
   }
   ms->running = !m->init || m->init(&d.sw, ms->cfg);
@@ -341,7 +344,7 @@ static int run_daemon(int argc, char **argv) {
   d.config_mtime = file_mtime(d.doc.path);
 
   d.sw.wl = wl_create(d.sw.loop);
-  d.sw.wm = wm_init(d.sw.loop);
+  d.sw.wm = wm_init(d.sw.loop, d.sw.wl);
 
   d.mods = xcalloc(swell_nmodules, sizeof(*d.mods));
   for (size_t i = 0; i < swell_nmodules; ++i)
