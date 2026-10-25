@@ -10,6 +10,7 @@ A small shell for sway, niri and labwc in one daemon. It merges five earlier too
 | `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav (sway and labwc; niri has its own) |
 | `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n (on niri: `next`/`prev`/`goto` map to niri's own actions; on labwc: a dynamic view of a fixed pool) |
 | `wsfade` | (new) | off by default: on sway, `swell ws` switches fade the old workspace out over the new one with a small drift (`[wsfade] enable = true`) |
+| `gestures` | (new) | touchpad swipes where the compositor can't bind them (labwc): reads the touchpad itself and runs a command per direction (idle on sway and niri) |
 | `runner` | awww-kill | runs shell commands on events (none by default) |
 | `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar, a turning Nix snowflake and a cava-like ring of audio bars around it (PipeWire, stereo); animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
 
@@ -154,6 +155,15 @@ The overview works with live thumbnails (bind `swell overview toggle`), with thr
 - All workspaces are shown on one output.
 
 Clicking a window, a workspace or "New workspace", the keys, and middle-click to close all work.
+
+Touchpad swipes: labwc can't bind gestures, so the `gestures` module reads the touchpad itself. By default 3-finger swipes do what the sway binds above do: left `ws next`, right `ws prev`, up `overview open`, down `overview close` (`[gestures]` in the config; `exec CMD` runs a shell command instead). It needs read access to the touchpad's `/dev/input` node, which a udev rule gives the logged-in user (touchpads only, not keyboards):
+
+```
+sudo install -m 644 config/70-swell-touchpad.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
+```
+
+On NixOS: `services.udev.extraRules` with the rule's last line. `swell gestures status` lists the touchpads it reads. labwc still passes the swipe to the focused window, which almost never uses 3-finger swipes. On sway and niri the module stays idle (they bind swipes themselves) unless `always = true`.
 
 With the home-manager systemd service, `LABWC_PID` (or `XDG_CURRENT_DESKTOP=labwc`) must be in the service environment.
 

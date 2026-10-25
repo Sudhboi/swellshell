@@ -815,3 +815,21 @@ fade_ms = 160
 drift_px = 60
 # switch without a fade if the snapshot takes longer than this
 snapshot_timeout_ms = 50
+
+[gestures]
+# false turns the module off
+enable = true
+# fingers a swipe takes (0: any number)
+fingers = 3
+# how far a swipe must move, in 1/1000 inch on the touchpad
+threshold = 300.0
+# also run under sway and niri (they bind swipes themselves)
+always = false
+# a swell command ("ws next"), "exec CMD" for a shell command, or empty
+swipe_left = "ws next"
+# as swipe_left
+swipe_right = "ws prev"
+# as swipe_left
+swipe_up = "overview open"
+# as swipe_left
+swipe_down = "overview close"

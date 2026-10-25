@@ -1,0 +1,6 @@
+# Let the logged-in user read touchpads (only touchpads, not keyboards) so
+# swell's gestures module can see swipes on compositors without gesture
+# binds (labwc). Must sort before 73-seat-late.rules, which applies uaccess.
+#   sudo install -m 644 config/70-swell-touchpad.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"

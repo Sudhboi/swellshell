@@ -14,6 +14,8 @@
   libxkbcommon,
   pipewire,
   libGL,
+  libinput,
+  udev,
   wireplumber,
   networkmanager,
   playerctl,
@@ -54,6 +56,8 @@ stdenv.mkDerivation {
     libxkbcommon
     pipewire
     libGL
+    libinput
+    udev
   ];
 
   doCheck = true;

@@ -301,6 +301,10 @@ static int handle(int argc, char **argv, struct reply *r, void *data) {
   return m->command(argc - 1, argv + 1, r);
 }
 
+static int run_command(int argc, char **argv, struct reply *r) {
+  return handle(argc, argv, r, NULL);
+}
+
 /* ---- daemon ---- */
 
 static int run_daemon(int argc, char **argv) {
@@ -330,6 +334,7 @@ static int run_daemon(int argc, char **argv) {
 
   d.sw.loop = loop_create();
   d.sw.daemon = true;
+  d.sw.command = run_command;
   struct reply answer = {0};
   if (!ipc_server_start(d.sw.loop, ipc_socket_path(), replace, &answer, handle,
                         NULL)) {
