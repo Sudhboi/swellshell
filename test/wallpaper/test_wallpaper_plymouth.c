@@ -77,6 +77,12 @@ int main(void) {
   assert(strstr(sc, want));
   /* (still: nothing turned) */
   assert(!strstr(sc, "Rotate"));
+  /* Nothing shows but through refresh, which a shutdown or reboot never
+   * gets: black after swell's outro. */
+  assert(strstr(sc, "if (mode != \"shutdown\" && mode != \"reboot\")\n"
+                    "  Plymouth.SetRefreshFunction(refresh);\n"));
+  const char *rf = strstr(sc, "SetRefreshFunction");
+  assert(rf && !strstr(rf + 1, "SetRefreshFunction"));
 
   /* The glows, one a lambda, under the glass, clockwise (y down) from the
    * top a sixth of a turn apart, round the centre. */

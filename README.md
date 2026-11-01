@@ -169,7 +169,7 @@ With the home-manager systemd service, `LABWC_PID` (or `XDG_CURRENT_DESKTOP=labw
 
 ## Boot splash
 
-`swell wallpaper plymouth DIR [WxH]` writes a plymouth theme in the topo look: the glass snowflake (your config's colours) fading in on black and staying still, its lambdas' glow going round while it loads, at boot and shutdown. It sits where swell's snowflake starts, and the topo intros start on the snowflake, so the hand-over to swell doesn't jump. Give your screen's size (default 2880x1800; the width sizes the snowflake, which is scaled on other screens). Install (Arch, `plymouth` hook in mkinitcpio):
+`swell wallpaper plymouth DIR [WxH]` writes a plymouth theme in the topo look: the glass snowflake (your config's colours) fading in on black and staying still, its lambdas' glow going round while it loads. Powering off or rebooting it stays black after swell's outro (messages and prompts still show). It sits where swell's snowflake starts, and the topo intros start on the snowflake, so the hand-over to swell doesn't jump. Give your screen's size (default 2880x1800; the width sizes the snowflake, which is scaled on other screens). Install (Arch, `plymouth` hook in mkinitcpio):
 
 ```
 swell wallpaper plymouth /tmp/swell-topo 2880x1800
