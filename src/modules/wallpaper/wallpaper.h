@@ -663,7 +663,6 @@ enum wp_show {
   /* topo's, the contour lines carrying them */
   WP_SHOW_SHOCK,  /* intro: the snowflake blooms and a wave reveals the map */
   WP_SHOW_RISE,   /* intro: the contours draw in, lowest level first */
-  WP_SHOW_UNFURL, /* intro: the lines spring out from the centre */
   WP_SHOW_DRAIN,  /* power-off: the lines drain into the snowflake */
   WP_SHOW_SINK,   /* power-off: the contours sink, a wave takes the rest */
   WP_SHOW_BLAST,  /* power-off: a ring blows the lines off the screen */

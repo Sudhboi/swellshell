@@ -33,13 +33,12 @@ static const char *const names[WP_SHOW_COUNT] = {
     [WP_SHOW_NONE] = "none",       [WP_SHOW_INTRO] = "intro",
     [WP_SHOW_SCATTER] = "scatter", [WP_SHOW_CRT] = "crt",
     [WP_SHOW_SHOCK] = "shock",     [WP_SHOW_RISE] = "rise",
-    [WP_SHOW_UNFURL] = "unfurl",   [WP_SHOW_DRAIN] = "drain",
-    [WP_SHOW_SINK] = "sink",       [WP_SHOW_BLAST] = "blast",
+    [WP_SHOW_DRAIN] = "drain",     [WP_SHOW_SINK] = "sink",
+    [WP_SHOW_BLAST] = "blast",
 };
 
 /* topo's, each as likely as the others */
-static const enum wp_show topo_intros[] = {WP_SHOW_SHOCK, WP_SHOW_RISE,
-                                           WP_SHOW_UNFURL};
+static const enum wp_show topo_intros[] = {WP_SHOW_SHOCK, WP_SHOW_RISE};
 static const enum wp_show topo_outros[] = {WP_SHOW_DRAIN, WP_SHOW_SINK,
                                            WP_SHOW_BLAST};
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
@@ -56,8 +55,7 @@ enum wp_show wp_show_named(const char *name) {
 }
 
 bool wp_show_is_intro(enum wp_show s) {
-  return s == WP_SHOW_INTRO || s == WP_SHOW_SHOCK || s == WP_SHOW_RISE ||
-         s == WP_SHOW_UNFURL;
+  return s == WP_SHOW_INTRO || s == WP_SHOW_SHOCK || s == WP_SHOW_RISE;
 }
 
 enum wp_show wp_show_pick(const struct wallpaper_config *c, bool intro,
@@ -262,26 +260,6 @@ static void rise(const struct wallpaper_config *c, double t,
   details_in(t, 1800, f);
 }
 
-/* The lines start drawn in tight round the snowflake (there from the
- * start) and unfurl, overshoot and spring back into place, lit while they
- * move; the snowflake glows as they go. */
-static void unfurl(const struct wallpaper_config *c, double t,
-                   struct wp_frame *f) {
-  struct wp_show_map *m = map_on(f);
-  double tau = (t - 250) / 1000;
-  double g = t < 250 ? 1
-                     : exp(-tau / 0.38) * cos(2 * M_PI * tau / 1.1) *
-                           (1 - smoothstep((t - 1900) / 450));
-  m->gather = 1500 * g;
-  m->gather_reach = 1100;
-  m->lit_all = 1.3 * pow(fmin(fabs(g) * 1.5, 1), 0.7);
-  m->cpu_dim = 0.5 * fabs(g);
-  f->bg_fade = fmax(f->bg_fade, 1 - smoothstep(t / 450));
-  f->flash = fmax(f->flash,
-                 smoothstep(t / 250) * (1 - clamp01((t - 250) / 1150)));
-  details_in(t, 1500, f);
-}
-
 /* A power-off's common part at p (0..1 of its length): the details go,
  * the bar drains and fades, and it's black by the end whatever the rest
  * does. */
@@ -400,9 +378,6 @@ void wp_show_apply(const struct wallpaper_config *c, enum wp_show s,
       return;
     case WP_SHOW_RISE:
       rise(c, u, f);
-      return;
-    case WP_SHOW_UNFURL:
-      unfurl(c, u, f);
       return;
     default:
       intro(c, t, f);

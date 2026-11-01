@@ -299,9 +299,9 @@ static void test_shows(const struct wallpaper_config *c, const char *dir,
 /* topo's shows (the map's part drawn by cairo, where there's no GPU):
  * wallpaper_topo_show_<name>_*. Each as likely; intros end on the plain
  * frame, power-offs in black by their length. */
-static const enum wp_show topo_shows[] = {WP_SHOW_SHOCK,  WP_SHOW_RISE,
-                                          WP_SHOW_UNFURL, WP_SHOW_DRAIN,
-                                          WP_SHOW_SINK,   WP_SHOW_BLAST};
+static const enum wp_show topo_shows[] = {WP_SHOW_SHOCK, WP_SHOW_RISE,
+                                          WP_SHOW_DRAIN, WP_SHOW_SINK,
+                                          WP_SHOW_BLAST};
 #define NTOPO ((int)(sizeof(topo_shows) / sizeof(topo_shows[0])))
 
 static void test_topo_shows(const struct wallpaper_config *c, const char *dir) {

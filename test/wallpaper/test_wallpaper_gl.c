@@ -838,22 +838,6 @@ static void check_shows(const char *dir) {
   assert(labs(lit_in(m[6], 0, 1e9) - all) * 10 < all);
   free_maps(m);
 
-  /* Unfurl: the lines drawn in round the centre (unlike the map at rest),
-   * then back in place. */
-  show_maps(c, WP_SHOW_UNFURL, base, dir, f, m);
-  assert(f[1].smap.gather > 300);
-  long differ = 0, n = 0;
-  for (int y = 0; y < H; y += 3)
-    for (int x = 0; x < W; x += 3)
-      if (hypot(x - W / 2.0, y - H / 2.0) < 700) {
-        n++;
-        differ += abs(lum(m[1], x, y) - lum(rest, x, y)) > 60;
-      }
-  fprintf(stderr, "unfurl: %ld of %ld differ\n", differ, n);
-  assert(differ * 50 > n);
-  assert(labs(lit_in(m[6], 0, 1e9) - all) * 10 < all);
-  free_maps(m);
-
   /* Drain: the dark closes in, no lines left past it, fewer each step
    * (once lit, wider, they count more at first). */
   show_maps(c, WP_SHOW_DRAIN, base, dir, f, m);

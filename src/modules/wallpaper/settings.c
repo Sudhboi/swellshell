@@ -583,7 +583,7 @@ static const struct cfg_field fields[] = {
     CFG_BOOL(S, intro,
              "launch animation when the daemon starts on an empty workspace "
              "(once per login): classic, the lambdas fly in and lock "
-             "together; topo, one of shock, rise and unfurl, each as likely "
+             "together; topo, shock or rise, each as likely "
              "(as long as classic's)"),
     CFG_INT(S, intro_ms, 0, 10000, "each lambda's flight"),
     CFG_INT(S, intro_stagger_ms, 0, 2000,
@@ -618,7 +618,7 @@ const struct swell_module wallpaper_module = {
              "  percent N|auto         show N% instead of the battery\n"
              "  intro [NAME]           play the launch animation (NAME: "
              "intro, shock,\n"
-             "                         rise, unfurl; default: the style's, "
+             "                         rise; default: the style's, "
              "at random)\n"
              "  outro [NAME]           play the power-off animation (see "
              "`swell power`;\n"

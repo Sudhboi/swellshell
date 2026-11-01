@@ -777,7 +777,7 @@ peek_side_width = 1100.0
 peek_side_margin = 240.0
 # when the daemon is restarted (run again, e.g. by `exec_always` on a sway reload) the old map's lines fade out and the new one's fade in, each this long; the snowflake stays
 handover_ms = 500
-# launch animation when the daemon starts on an empty workspace (once per login): classic, the lambdas fly in and lock together; topo, one of shock, rise and unfurl, each as likely (as long as classic's)
+# launch animation when the daemon starts on an empty workspace (once per login): classic, the lambdas fly in and lock together; topo, shock or rise, each as likely (as long as classic's)
 intro = true
 # each lambda's flight
 intro_ms = 1100
