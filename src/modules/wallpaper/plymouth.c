@@ -1,5 +1,6 @@
 /* A plymouth boot splash in the topo look: swell's own glass snowflake
- * baked to PNGs, and a script that turns it on black. */
+ * baked to PNGs, still (as swell's intro starts it, so the hand-over
+ * lines up), with its lambdas' glow going round while it loads. */
 #include <errno.h>
 #include <math.h>
 #include <stdarg.h>
@@ -24,19 +25,72 @@ static int save(cairo_surface_t *s, const char *dir, const char *name) {
   return 0;
 }
 
-/* The snowflake turned by j steps of WP_PLY_LOGO_STEP degrees, centred in a
- * box x box ARGB image. The outline's gradient stays put, so the frames
- * repeat every 60 degrees like the snowflake. */
+/* The snowflake at rest and unturned (as the daemon starts it), centred
+ * in a box x box ARGB image; with glow >= 0, lambda glow's neon glow
+ * alone instead (what the overspeed and the shows light). */
 static cairo_surface_t *logo_frame(const struct wallpaper_config *c, int pw,
-                                   int box, int j) {
+                                   int box, int glow) {
   cairo_surface_t *s =
       cairo_image_surface_create(CAIRO_FORMAT_ARGB32, box, box);
   cairo_t *cr = cairo_create(s);
   double k = pw / WP_REF_WIDTH, r = c->logo_radius * k;
-  struct wp_frame f = {.angle = j * WP_PLY_LOGO_STEP * M_PI / 180};
-  wp_draw_glass_logo(cr, c, box / 2.0, box / 2.0, r, r, k, &f);
+  struct wp_frame f = {0};
+  struct wallpaper_config g = *c;
+  if (glow >= 0) {
+    g.topo_logo_fill &= 0xffffff00u;
+    g.topo_edge_width = 0;
+    g.topo_shadow_alpha = 0;
+    f.flash = 1;
+    for (int i = 0; i < 6; ++i)
+      f.lambda_fade[i] = i != glow;
+  }
+  wp_draw_glass_logo(cr, &g, box / 2.0, box / 2.0, r, r, k, &f);
   cairo_destroy(cr);
   return s;
+}
+
+/* What an image draws: its bounding box and the centre of its alpha. */
+struct drawn {
+  int x0, y0, x1, y1;
+  double cx, cy;
+};
+
+static struct drawn drawn(cairo_surface_t *s) {
+  cairo_surface_flush(s);
+  int w = cairo_image_surface_get_width(s),
+      h = cairo_image_surface_get_height(s),
+      st = cairo_image_surface_get_stride(s);
+  const unsigned char *d = cairo_image_surface_get_data(s);
+  struct drawn b = {w, h, 0, 0, 0, 0};
+  double sum = 0;
+  for (int y = 0; y < h; ++y) {
+    const uint32_t *row = (const uint32_t *)(d + y * st);
+    for (int x = 0; x < w; ++x) {
+      double a = row[x] >> 24;
+      if (a == 0)
+        continue;
+      b.x0 = x < b.x0 ? x : b.x0;
+      b.y0 = y < b.y0 ? y : b.y0;
+      b.x1 = x + 1 > b.x1 ? x + 1 : b.x1;
+      b.y1 = y + 1 > b.y1 ? y + 1 : b.y1;
+      b.cx += a * (x + 0.5);
+      b.cy += a * (y + 0.5);
+      sum += a;
+    }
+  }
+  if (sum > 0)
+    b.cx /= sum, b.cy /= sum;
+  return b;
+}
+
+/* The w x h part of s at x, y. */
+static cairo_surface_t *crop(cairo_surface_t *s, int x, int y, int w, int h) {
+  cairo_surface_t *o = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+  cairo_t *cr = cairo_create(o);
+  cairo_set_source_surface(cr, s, -x, -y);
+  cairo_paint(cr);
+  cairo_destroy(cr);
+  return o;
 }
 
 /* How far from the centre a frame draws anything, px. */
@@ -56,11 +110,12 @@ static double logo_reach(cairo_surface_t *s) {
   return far;
 }
 
-/* The script. Plymouth calls refresh 50 times a second. */
+/* The script. Plymouth calls refresh 50 times a second; only opacities
+ * change, so it costs next to nothing. */
 static const char *script =
     "# swell topo: written by `swell plymouth`, don't edit.\n"
-    "pw = %d; nlogo = %d; step = %g;\n"
-    "spin = %g; fade_in = %g;\n"
+    "pw = %d; nglow = %d; lap = %g; peak = %g;\n"
+    "fade_in = %g;\n"
     "text_r = %g; text_g = %g; text_b = %g; text_a = %g;\n"
     "\n"
     "Window.SetBackgroundTopColor(0, 0, 0);\n"
@@ -78,37 +133,41 @@ static const char *script =
     "  return img.Scale(w, h);\n"
     "}\n"
     "\n"
-    "for (i = 0; i < nlogo; i++) {\n"
-    "  img = Image(\"logo-\" + i + \".png\");\n"
-    "  logo.img[i] = fit(img, Math.Int(img.GetWidth() * k + 0.5),\n"
-    "                    Math.Int(img.GetHeight() * k + 0.5));\n"
+    "# (w, h) scaled by k, placed with its top left (x, y) px from the\n"
+    "# screen's centre at the baked size\n"
+    "fun place(name, x, y, z) {\n"
+    "  img = Image(name);\n"
+    "  img = fit(img, Math.Int(img.GetWidth() * k + 0.5),\n"
+    "            Math.Int(img.GetHeight() * k + 0.5));\n"
+    "  sp = Sprite(img);\n"
+    "  sp.SetX(Math.Int(sw / 2 + x * k));\n"
+    "  sp.SetY(Math.Int(sh / 2 + y * k));\n"
+    "  sp.SetZ(z);\n"
+    "  sp.SetOpacity(0);\n"
+    "  return sp;\n"
     "}\n"
-    "logo.sprite = Sprite();\n"
-    "logo.sprite.SetZ(1);\n"
-    "logo.sprite.SetOpacity(0);\n"
+    "\n"
+    "# The snowflake over its lambdas' glows (the glass in front, as the\n"
+    "# wallpaper draws it), the glows clockwise from glow-0.\n"
+    "%s"
     "t = 0;\n"
-    "tick = 0;\n"
     "\n"
     "fun refresh() {\n"
     "  global.t += 1 / 50;\n"
-    "  global.tick++;\n"
-    "  logo.sprite.SetOpacity(Math.Min(t / fade_in, 1));\n"
-    "  # The nearest baked frame, turned the rest of the way; every other\n"
-    "  # refresh (25 Hz), as turning an image costs a few ms.\n"
-    "  if (tick %% 2)\n"
-    "    return;\n"
-    "  a = t * spin;\n"
-    "  a -= Math.Int(a / 60) * 60;\n"
-    "  j = Math.Int(a / step + 0.5);\n"
-    "  rest = a - j * step;\n"
-    "  if (j >= nlogo)\n"
-    "    j = 0;\n"
-    "  img = logo.img[j];\n"
-    "  if (rest != 0)\n"
-    "    img = img.Rotate(rest * Math.Pi / 180);\n"
-    "  logo.sprite.SetImage(img);\n"
-    "  logo.sprite.SetX(Math.Int((sw - img.GetWidth()) / 2));\n"
-    "  logo.sprite.SetY(Math.Int((sh - img.GetHeight()) / 2));\n"
+    "  logo.SetOpacity(Math.Min(t / fade_in, 1));\n"
+    "  # The glow goes round, lighting about two lambdas at a time.\n"
+    "  on = Math.Clamp((t - fade_in) / fade_in, 0, 1);\n"
+    "  p = Math.Max(t - fade_in, 0) / lap * nglow;\n"
+    "  for (i = 0; i < nglow; i++) {\n"
+    "    d = p - i + nglow;\n"
+    "    d -= Math.Int((d + nglow / 2) / nglow) * nglow;\n"
+    "    o = 0;\n"
+    "    if (Math.Abs(d) < 1.6) {\n"
+    "      c = Math.Cos(Math.Pi * d / 3.2);\n"
+    "      o = peak * on * c * c;\n"
+    "    }\n"
+    "    glow[i].SetOpacity(o);\n"
+    "  }\n"
     "}\n"
     "Plymouth.SetRefreshFunction(refresh);\n"
     "\n"
@@ -180,47 +239,69 @@ int wp_plymouth_theme(const struct wallpaper_config *c, const char *dir,
     fprintf(stderr, "swell: %s: %s\n", dir, strerror(errno));
     return -1;
   }
-  /* The frames cropped to the smallest square round the centre that holds
-   * what any of them draws at any turn (Image.Rotate keeps the size, and
-   * its cost goes with the area). */
+  /* The snowflake cropped to the smallest square round the centre that
+   * holds it, the glows to what they draw. */
   double k = pw / WP_REF_WIDTH;
   int box = 2 * (int)ceil(c->logo_radius * k * 1.25 +
                           (c->topo_shadow_px + c->topo_neon_px) * k + 4);
-  cairo_surface_t *frames[WP_PLY_LOGO];
-  double reach = 0;
-  for (int j = 0; j < WP_PLY_LOGO; ++j) {
-    frames[j] = logo_frame(c, pw, box, j);
-    reach = fmax(reach, logo_reach(frames[j]));
+  cairo_surface_t *logo = logo_frame(c, pw, box, -1);
+  int half = (int)ceil(logo_reach(logo)) + 2;
+  cairo_surface_t *s = crop(logo, box / 2 - half, box / 2 - half, 2 * half,
+                            2 * half);
+  int ret = save(s, dir, "logo.png");
+  cairo_surface_destroy(s);
+  cairo_surface_destroy(logo);
+  char sprites[2048];
+  int n = snprintf(sprites, sizeof sprites,
+                   "logo = place(\"logo.png\", %d, %d, 1);\n", -half, -half);
+
+  /* Clockwise (y down) from the top. */
+  cairo_surface_t *glows[6];
+  struct drawn at[6];
+  int order[6];
+  for (int i = 0; i < 6; ++i) {
+    glows[i] = logo_frame(c, pw, box, i);
+    at[i] = drawn(glows[i]);
+    order[i] = i;
   }
-  int half = (int)ceil(reach) + 2, side = 2 * half;
-  int ret = 0;
-  for (int j = 0; j < WP_PLY_LOGO; ++j) {
-    cairo_surface_t *s =
-        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, side, side);
-    cairo_t *cr = cairo_create(s);
-    cairo_set_source_surface(cr, frames[j], half - box / 2, half - box / 2);
-    cairo_paint(cr);
-    cairo_destroy(cr);
+  double ang[6];
+  for (int i = 0; i < 6; ++i)
+    ang[i] = fmod(atan2(at[i].cx - box / 2.0, -(at[i].cy - box / 2.0)) +
+                      2 * M_PI,
+                  2 * M_PI);
+  for (int i = 1; i < 6; ++i)
+    for (int j = i; j > 0 && ang[order[j]] < ang[order[j - 1]]; --j) {
+      int o = order[j];
+      order[j] = order[j - 1];
+      order[j - 1] = o;
+    }
+  for (int i = 0; i < 6; ++i) {
+    const struct drawn *b = &at[order[i]];
     char name[32];
-    snprintf(name, sizeof name, "logo-%d.png", j);
+    snprintf(name, sizeof name, "glow-%d.png", i);
+    cairo_surface_t *g =
+        crop(glows[order[i]], b->x0, b->y0, b->x1 - b->x0, b->y1 - b->y0);
     if (ret == 0)
-      ret = save(s, dir, name);
-    cairo_surface_destroy(s);
-    cairo_surface_destroy(frames[j]);
+      ret = save(g, dir, name);
+    cairo_surface_destroy(g);
+    n += snprintf(sprites + n, sizeof sprites - n,
+                  "glow[%d] = place(\"glow-%d.png\", %d, %d, 0);\n", i, i,
+                  b->x0 - box / 2, b->y0 - box / 2);
   }
+  for (int i = 0; i < 6; ++i)
+    cairo_surface_destroy(glows[i]);
   if (ret != 0)
     return -1;
 
   uint32_t t = c->topo_text;
-  if (write_text(dir, "swell-topo.script", script, pw, WP_PLY_LOGO,
-                 WP_PLY_LOGO_STEP, c->spin_speed,
-                 WP_PLY_FADE_IN, col_r(t), col_g(t), col_b(t),
-                 col_a(t)) != 0)
+  if (write_text(dir, "swell-topo.script", script, pw, 6, WP_PLY_LAP,
+                 WP_PLY_PEAK, WP_PLY_FADE_IN, col_r(t), col_g(t), col_b(t),
+                 col_a(t), sprites) != 0)
     return -1;
   return write_text(dir, "swell-topo.plymouth",
                     "[Plymouth Theme]\n"
                     "Name=swell topo\n"
-                    "Description=swell's glass snowflake\n"
+                    "Description=swell's glass snowflake, its lambdas lit in turn\n"
                     "ModuleName=script\n"
                     "\n"
                     "[script]\n"

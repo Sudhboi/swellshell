@@ -169,7 +169,7 @@ With the home-manager systemd service, `LABWC_PID` (or `XDG_CURRENT_DESKTOP=labw
 
 ## Boot splash
 
-`swell wallpaper plymouth DIR [WxH]` writes a plymouth theme in the topo look: the glass snowflake (your config's colours) fading in and turning on black, at boot and shutdown. Give your screen's size (default 2880x1800; the width sizes the snowflake, which is scaled on other screens). Install (Arch, `plymouth` hook in mkinitcpio):
+`swell wallpaper plymouth DIR [WxH]` writes a plymouth theme in the topo look: the glass snowflake (your config's colours) fading in on black and staying still, its lambdas' glow going round while it loads, at boot and shutdown. It sits where swell's snowflake starts, and the topo intros start on the snowflake, so the hand-over to swell doesn't jump. Give your screen's size (default 2880x1800; the width sizes the snowflake, which is scaled on other screens). Install (Arch, `plymouth` hook in mkinitcpio):
 
 ```
 swell wallpaper plymouth /tmp/swell-topo 2880x1800
@@ -178,7 +178,7 @@ sudo cp /tmp/swell-topo/* /usr/share/plymouth/themes/swell-topo/
 sudo plymouth-set-default-theme -R swell-topo
 ```
 
-On a HiDPI panel plymouth guesses a device scale of 2 and upscales everything (soft snowflake); for the panel's own pixels add `DeviceScale=1` under `[Daemon]` in `/etc/plymouth/plymouthd.conf` (or `plymouth.force-scale=1` on the kernel command line) before the `-R` above. The text is sized the same either way. `--install DIR` sets where it is installed, if not there. The theme adds ~1.5 MB to the initramfs.
+On a HiDPI panel plymouth guesses a device scale of 2 and upscales everything (soft snowflake); for the panel's own pixels add `DeviceScale=1` under `[Daemon]` in `/etc/plymouth/plymouthd.conf` (or `plymouth.force-scale=1` on the kernel command line) before the `-R` above. The text is sized the same either way. `--install DIR` sets where it is installed, if not there. The theme adds ~0.4 MB to the initramfs.
 
 ## Building
 

@@ -392,12 +392,12 @@ struct wp_topo_grid {
 const struct wp_topo_grid *wp_topo_heights(const struct wallpaper_config *c,
                                            int pw, int ph);
 void wp_topo_finish(void);
-/* plymouth.c: a plymouth theme in the topo look (the snowflake on black)
- * for a screen pw px wide, written to dir for installing at install (its
- * ImageDir). 0, or -1 having said why. The snowflake is baked every
- * WP_PLY_LOGO_STEP degrees over the 60 it repeats in. */
-#define WP_PLY_LOGO 12
-#define WP_PLY_LOGO_STEP 5.0
+/* plymouth.c: a plymouth theme in the topo look (the snowflake still on
+ * black, its lambdas' glow going round once a WP_PLY_LAP, at most
+ * WP_PLY_PEAK) for a screen pw px wide, written to dir for installing at
+ * install (its ImageDir). 0, or -1 having said why. */
+#define WP_PLY_LAP 1.2 /* s */
+#define WP_PLY_PEAK 1.0
 #define WP_PLY_FADE_IN 0.6 /* s */
 #define WP_PLY_INSTALL "/usr/share/plymouth/themes/swell-topo"
 int wp_plymouth_theme(const struct wallpaper_config *c, const char *dir,

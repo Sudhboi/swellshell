@@ -1,5 +1,5 @@
-/* The plymouth theme `swell wallpaper plymouth` writes: its files and the
- * snowflake frames (nothing else: no map). */
+/* The plymouth theme `swell wallpaper plymouth` writes: its files, the
+ * still snowflake and its lambdas' glows (nothing else: no map). */
 #include <assert.h>
 #include <dirent.h>
 #include <math.h>
@@ -49,55 +49,83 @@ int main(void) {
   assert(mkdtemp(dir));
   assert(wp_plymouth_theme(c, dir, "/x/swell-topo", W) == 0);
 
-  /* Snowflake frames: square, the same size, clear in the corners, drawn
-   * near the centre (its middle is a hole), within the box at any turn. */
+  /* The snowflake: square, clear in the corners, drawn well inside the
+   * box (its middle is a hole), centred by the script. */
   double k = W / WP_REF_WIDTH, r = c->logo_radius * k;
-  int side = 0;
-  for (int j = 0; j < WP_PLY_LOGO; ++j) {
+  cairo_surface_t *logo = load("logo.png");
+  int w = cairo_image_surface_get_width(logo);
+  assert(w == cairo_image_surface_get_height(logo));
+  assert(w > 2 * r && w < 4 * r);
+  assert(at(logo, 0, 0) >> 24 == 0 && at(logo, w - 1, w - 1) >> 24 == 0);
+  int drawn = 0, far = 0;
+  for (int y = 0; y < w; ++y)
+    for (int x = 0; x < w; ++x)
+      if (at(logo, x, y) >> 24) {
+        ++drawn;
+        far += hypot(x + 0.5 - w / 2.0, y + 0.5 - w / 2.0) > w / 2.0 - 2;
+      }
+  assert(drawn > r * r && far == 0);
+  cairo_surface_destroy(logo);
+
+  const char *sc = slurp("swell-topo.script");
+  char want[160];
+  snprintf(want, sizeof want, "logo = place(\"logo.png\", %d, %d, 1);",
+           -w / 2, -w / 2);
+  assert(strstr(sc, want));
+  snprintf(want, sizeof want, "nglow = 6; lap = %g; peak = %g;", WP_PLY_LAP,
+           WP_PLY_PEAK);
+  assert(strstr(sc, want));
+  /* (still: nothing turned) */
+  assert(!strstr(sc, "Rotate"));
+
+  /* The glows, one a lambda, under the glass, clockwise (y down) from the
+   * top a sixth of a turn apart, round the centre. */
+  double prev = -1;
+  for (int i = 0; i < 6; ++i) {
     char name[32];
-    snprintf(name, sizeof name, "logo-%d.png", j);
-    cairo_surface_t *s = load(name);
-    int w = cairo_image_surface_get_width(s);
-    assert(w == cairo_image_surface_get_height(s));
-    assert(j == 0 || w == side);
-    side = w;
-    assert(w > 2 * r && w < 4 * r);
-    assert(at(s, 0, 0) >> 24 == 0 && at(s, w - 1, w - 1) >> 24 == 0);
-    int drawn = 0, far = 0;
-    for (int y = 0; y < w; ++y)
-      for (int x = 0; x < w; ++x)
-        if (at(s, x, y) >> 24) {
-          ++drawn;
-          far += hypot(x + 0.5 - w / 2.0, y + 0.5 - w / 2.0) > w / 2.0 - 2;
-        }
-    assert(drawn > r * r && far == 0);
-    cairo_surface_destroy(s);
+    snprintf(name, sizeof name, "glow-%d.png", i);
+    cairo_surface_t *g = load(name);
+    snprintf(want, sizeof want, "glow[%d] = place(\"glow-%d.png\", ", i, i);
+    const char *line = strstr(sc, want);
+    assert(line);
+    int gx, gy;
+    assert(sscanf(line + strlen(want), "%d, %d, 0);", &gx, &gy) == 2);
+    double sx = 0, sy = 0, sum = 0;
+    int gw = cairo_image_surface_get_width(g),
+        gh = cairo_image_surface_get_height(g);
+    for (int y = 0; y < gh; ++y)
+      for (int x = 0; x < gw; ++x) {
+        double a = at(g, x, y) >> 24;
+        sx += a * (gx + x + 0.5);
+        sy += a * (gy + y + 0.5);
+        sum += a;
+      }
+    assert(sum > 0);
+    sx /= sum;
+    sy /= sum;
+    assert(hypot(sx, sy) > 0.3 * r && hypot(sx, sy) < 1.2 * r);
+    double ang = fmod(atan2(sx, -sy) * 180 / M_PI + 360, 360);
+    if (i > 0)
+      assert(fabs(ang - prev - 60) < 10);
+    prev = ang;
+    cairo_surface_destroy(g);
   }
 
-  /* Only the frames, the script and the theme file. */
+  /* Only those, the script and the theme file. */
   DIR *dp = opendir(dir);
   assert(dp);
   int files = 0;
   for (struct dirent *e; (e = readdir(dp));)
     if (e->d_name[0] != '.') {
       ++files;
-      assert(strncmp(e->d_name, "logo-", 5) == 0 ||
+      assert(strcmp(e->d_name, "logo.png") == 0 ||
+             strncmp(e->d_name, "glow-", 5) == 0 ||
              strncmp(e->d_name, "swell-topo.", 11) == 0);
     }
   closedir(dp);
-  assert(files == WP_PLY_LOGO + 2);
+  assert(files == 1 + 6 + 2);
 
-  /* The script loads the frames and no other image; the theme file points
-   * at the install. */
-  const char *sc = slurp("swell-topo.script");
-  assert(strstr(sc, "Image(\"logo-\" + i + \".png\")"));
-  const char *im = strstr(sc, " Image(\"");
-  assert(im && !strstr(im + 1, " Image(\""));
-  char want[64];
-  snprintf(want, sizeof want, "nlogo = %d; step = %g;", WP_PLY_LOGO,
-           WP_PLY_LOGO_STEP);
-  assert(strstr(sc, want));
-  assert(WP_PLY_LOGO * WP_PLY_LOGO_STEP == 60);
+  /* The theme file points at the install. */
   const char *th = slurp("swell-topo.plymouth");
   assert(strstr(th, "ModuleName=script\n"));
   assert(strstr(th, "ImageDir=/x/swell-topo\n"));

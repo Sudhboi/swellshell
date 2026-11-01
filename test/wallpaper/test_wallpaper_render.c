@@ -347,6 +347,31 @@ static void test_topo_shows(const struct wallpaper_config *c, const char *dir) {
       assert(all_black(e));
     }
     cairo_surface_destroy(e);
+    /* An intro starts on the snowflake as the boot splash leaves it: whole,
+     * at rest, turned as the daemon has it, not lit; the map not yet in. */
+    if (wp_show_is_intro(s)) {
+      struct wp_frame f0 = show_at(c, s, 0, base);
+      assert(wp_logo_whole(&f0));
+      assert(f0.angle == base.angle && f0.flash == 0 && f0.glow == 0);
+      assert(f0.crt_alpha == 0);
+      cairo_surface_t *z = render(c, f0, dir, NULL);
+      struct wp_frame bare = base;
+      bare.bar_fade = 1;
+      bare.percent = 0;
+      bare.bg_fade = 1;
+      cairo_surface_t *want = render(c, bare, dir, NULL);
+      int bad = 0, bx = 0, by = 0;
+      for (int y = 0; y < H; y += 3)
+        for (int x = 0; x < W; x += 3)
+          if (px(z, x, y) != px(want, x, y) && !bad++)
+            bx = x, by = y;
+      if (bad)
+        fprintf(stderr, "%s at 0: %d px differ, first %d,%d: %06x vs %06x\n",
+                wp_show_name(s), bad, bx, by, px(z, bx, by), px(want, bx, by));
+      assert(bad == 0);
+      cairo_surface_destroy(z);
+      cairo_surface_destroy(want);
+    }
   }
   cairo_surface_destroy(plain);
 }

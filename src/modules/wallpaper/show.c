@@ -18,12 +18,6 @@ static double smoothstep(double t) {
   return t * t * (3 - 2 * t);
 }
 
-/* Overshoots to about 1.08 on the way to 1. */
-static double ease_out_back(double t) {
-  t = clamp01(t) - 1;
-  return 1 + 2.9 * t * t * t + 1.9 * t * t;
-}
-
 /* The intro: when the last lambda locks in, then the flash and the bar. */
 static double intro_lock_ms(const struct wallpaper_config *c) {
   return fmax(c->intro_ms, 0) + 5.0 * fmax(c->intro_stagger_ms, 0);
@@ -212,20 +206,15 @@ static void dot(struct wp_frame *f, double r, double a) {
   f->crt_alpha = a;
 }
 
-/* A neon dot blooms into the snowflake, which fires one wave: the lines
- * appear behind its lit front, pushed outwards as it passes. */
+/* The snowflake (there from the start, as the boot splash left it)
+ * charges and fires one wave: the lines appear behind its lit front,
+ * pushed outwards as it passes. */
 static void shock(const struct wallpaper_config *c, double t,
                   struct wp_frame *f) {
   struct wp_show_map *m = map_on(f);
   double r0 = c->logo_radius;
-  dot(f, 12 * ease_out_cubic(t / 300),
-      clamp01(t / 150) * (1 - smoothstep((t - 500) / 250)));
-  double u = clamp01((t - 250) / 650);
-  f->logo_shrink = 1 - ease_out_back(u);
-  for (int k = 0; k < 6; ++k)
-    f->lambda_fade[k] = 1 - clamp01(u * 3);
-  f->angle -= f->dir * 70 * M_PI / 180 * (1 - ease_out_cubic(u));
-  double neon = t < 250 ? 0 : 1 - clamp01((t - 250) / 1500);
+  double neon =
+      t < 650 ? smoothstep(t / 650) : 1 - clamp01((t - 650) / 1100);
   double flash = t < 700 ? 0 : 0.6 * pow(1 - clamp01((t - 700) / 600), 2);
   f->flash = fmax(f->flash, fmax(neon, flash));
   f->glow = fmax(f->glow, flash);
@@ -246,9 +235,9 @@ static void shock(const struct wallpaper_config *c, double t,
   details_in(t, 1700, f);
 }
 
-/* The contours draw in a level at a time, lowest first, the newest lit;
- * the snowflake's outline traces itself, fills, flashes and sends out a
- * soft ring. */
+/* The contours draw in a level at a time, lowest first, the newest lit,
+ * round the snowflake (there from the start), which flashes and sends out
+ * a soft ring. */
 static void rise(const struct wallpaper_config *c, double t,
                  struct wp_frame *f) {
   struct wp_show_map *m = map_on(f);
@@ -256,17 +245,11 @@ static void rise(const struct wallpaper_config *c, double t,
   /* Eased in: the high levels have fewer lines, so they come faster. */
   m->levels = 0.2 + (n + 0.8) * pow(clamp01((t - 80) / 1450), 1.6);
   m->level_lit = 2 * (1 - clamp01((t - 1500) / 500));
-  m->cpu_dim = 1 - clamp01(m->levels / n);
-  double traced = smoothstep((t - 1000) / 800);
-  double filled = clamp01((t - 1600) / 450);
-  f->logo_untraced = 1 - traced;
-  f->logo_unfilled = 1 - filled;
-  if (traced <= 0)
-    for (int k = 0; k < 6; ++k)
-      f->lambda_fade[k] = 1;
-  f->angle -= f->dir * 40 * M_PI / 180 * (1 - ease_out_cubic((t - 1000) / 900));
-  double lock = t > 1800 ? 1 - clamp01((t - 1800) / 700) : 0;
-  f->flash = fmax(f->flash, fmax(0.4 * traced * (1 - filled), lock));
+  m->cpu_dim = 1 - clamp01((m->levels - 0.2) / n); /* black at the start */
+  /* (rising to the flash, not jumping) */
+  double lock = t > 1800 ? 1 - clamp01((t - 1800) / 700)
+                         : smoothstep((t - 1500) / 300);
+  f->flash = fmax(f->flash, lock);
   f->glow = fmax(f->glow, 0.5 * lock * lock);
   double a = (t - 1800) / 1000;
   if (a > 0 && a < 0.55) {
@@ -279,9 +262,9 @@ static void rise(const struct wallpaper_config *c, double t,
   details_in(t, 1800, f);
 }
 
-/* The lines start drawn in tight round the centre and unfurl, overshoot
- * and spring back into place, lit while they move; the snowflake spins
- * down into view. */
+/* The lines start drawn in tight round the snowflake (there from the
+ * start) and unfurl, overshoot and spring back into place, lit while they
+ * move; the snowflake glows as they go. */
 static void unfurl(const struct wallpaper_config *c, double t,
                    struct wp_frame *f) {
   struct wp_show_map *m = map_on(f);
@@ -294,11 +277,8 @@ static void unfurl(const struct wallpaper_config *c, double t,
   m->lit_all = 1.3 * pow(fmin(fabs(g) * 1.5, 1), 0.7);
   m->cpu_dim = 0.5 * fabs(g);
   f->bg_fade = fmax(f->bg_fade, 1 - smoothstep(t / 450));
-  for (int k = 0; k < 6; ++k)
-    f->lambda_fade[k] = 1 - ease_out_cubic(t / 700);
-  f->logo_shrink = 0.45 * (1 - ease_out_back((t - 100) / 800));
-  f->angle -= f->dir * 120 * M_PI / 180 * (1 - ease_out_cubic(t / 1300));
-  f->flash = fmax(f->flash, 1 - clamp01(t / 1400));
+  f->flash = fmax(f->flash,
+                 smoothstep(t / 250) * (1 - clamp01((t - 250) / 1150)));
   details_in(t, 1500, f);
 }
 
