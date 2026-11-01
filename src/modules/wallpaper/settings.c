@@ -623,7 +623,13 @@ const struct swell_module wallpaper_module = {
              "  outro [NAME]           play the power-off animation (see "
              "`swell power`;\n"
              "                         NAME: scatter, crt, drain, sink, "
-             "blast)\n",
+             "blast)\n"
+             "  plymouth DIR [WxH]     write a boot splash (the snowflake on "
+             "black) to DIR\n"
+             "                         (WxH: the screen, default 2880x1800; "
+             "--install DIR:\n"
+             "                         where it goes, default "
+             WP_PLY_INSTALL ")\n",
     .needs_wayland = true,
     .config_size = sizeof(struct wallpaper_config),
     .defaults = &defaults,
@@ -634,4 +640,5 @@ const struct swell_module wallpaper_module = {
     .finish = wp_finish,
     .command = wp_command,
     .handover = wp_handover,
+    .run_local = wp_run_local,
 };

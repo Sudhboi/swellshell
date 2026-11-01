@@ -3,6 +3,7 @@ wallpaper_src = files(
   'gl.c',
   'logo.c',
   'media.c',
+  'plymouth.c',
   'render.c',
   'render_hex.c',
   'render_logo.c',
