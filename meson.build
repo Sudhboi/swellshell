@@ -110,7 +110,7 @@ core_dep = declare_dependency(link_with: core, include_directories: core_inc,
 # Keep this list in sync with src/modules/modules.c and test/meson.build.
 module_src = files('src/modules/modules.c')
 foreach m : ['osd', 'popup', 'media', 'overview', 'workspaces', 'runner',
-    'wallpaper', 'power', 'wsosd', 'wsfade', 'gestures']
+    'wallpaper', 'power', 'wsosd', 'wsfade', 'gestures', 'lowbat']
   subdir('src/modules' / m)
   module_src += get_variable(m + '_src')
 endforeach

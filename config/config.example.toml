@@ -833,3 +833,57 @@ swipe_right = "ws prev"
 swipe_up = "overview open"
 # as swipe_left
 swipe_down = "overview close"
+
+[lowbat]
+# false turns the module off
+enable = true
+# layer-shell namespace of the surface
+namespace = "swell-lowbat"
+# discharging at or below this: a short warning
+low_pct = 15
+# discharging at or below this: a warning that stays until AC
+critical_pct = 5
+# how often the battery is read
+interval_s = 30
+# panel width, logical px
+width = 300
+# panel height, logical px
+height = 52
+# gap between the top edge (or bar) and the panel
+top_gap = 12
+# panel corner radius (0 = square)
+corner = 0
+# space left of the battery and before the text
+pad = 18
+# battery outline width
+body_width = 44
+# battery outline height
+body_height = 22
+# battery terminal width
+nub_width = 4
+# battery terminal height
+nub_height = 10
+# font family of the text
+font = "IosevkaTerm Nerd Font"
+# text size
+font_size = 20
+# panel background
+background = "#000000f0"
+# 1px panel border
+border = "#6a6a6a"
+# empty part of the battery
+track = "#333333"
+# text and battery outline between pulses
+text = "#f2f2f2"
+# level fill, and text/outline at a pulse peak
+pulse_light = "#ff3b3b"
+# level fill's left end between pulses
+pulse_dark = "#b81414"
+# time the low warning stays before retracting
+low_timeout_ms = 6000
+# drop-down / retract animation
+slide_ms = 220
+# one red pulse
+pulse_ms = 900
+# pulses after dropping down; then the panel holds still
+pulse_count = 3
