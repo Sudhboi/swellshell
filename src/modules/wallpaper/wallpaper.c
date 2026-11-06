@@ -42,6 +42,7 @@ static struct {
   struct swell *sw;
   struct wallpaper_config cfg;
   bool ws_empty, idle, animating;
+  bool inhibited; /* idle.inhibit: no idle (so no saver) while set */
   bool dozing; /* idle on an empty workspace: only the bar pulses */
   bool saving; /* idle on an empty workspace: the snowflake wanders */
   double saver_mix; /* 0 (centred, all shown) .. 1 (wandering) */
@@ -743,7 +744,7 @@ static bool intro_first(void) {
 /* ---- the animate/freeze state machine ---- */
 
 static void arm_idle_fallback(void) {
-  if (!w.idle_note && w.cfg.idle_timeout_s > 0 && w.animating)
+  if (!w.idle_note && w.cfg.idle_timeout_s > 0 && w.animating && !w.inhibited)
     loop_timer_arm(w.idle_timer, w.cfg.idle_timeout_s * 1000LL, 0);
 }
 
@@ -837,7 +838,21 @@ static void update_animating(void) {
   bus_emit("wallpaper.freeze", NULL);
 }
 
+static void setup_idle(void);
+
 static void on_bus(const struct bus_event *ev, void *data) {
+  if (strcmp(ev->name, "idle.inhibit") == 0) {
+    bool on = false;
+    for (int i = 0; ev->env && ev->env[i]; ++i)
+      if (strcmp(ev->env[i], "SWELL_INHIBITED=1") == 0)
+        on = true;
+    if (on == w.inhibited)
+      return;
+    w.inhibited = on;
+    setup_idle();
+    update_animating();
+    return;
+  }
   if (strcmp(ev->name, "workspace.empty") == 0)
     w.ws_empty = true;
   else if (strcmp(ev->name, "workspace.occupied") == 0)
@@ -931,6 +946,9 @@ static void setup_idle(void) {
   loop_timer_disarm(w.idle_timer);
   w.idle = false;
   struct swell_wl *wl = w.sw->wl;
+  /* Inhibited: no idle at all; the timeout starts again once it ends. */
+  if (w.inhibited)
+    return;
   if (w.cfg.idle_timeout_s > 0 && wl->idle_notifier && wl->seat) {
     w.idle_note = ext_idle_notifier_v1_get_idle_notification(
         wl->idle_notifier, w.cfg.idle_timeout_s * 1000u, wl->seat);
@@ -1215,7 +1233,8 @@ int wp_command(int argc, char **argv, struct reply *r) {
                              : "frozen");
     reply_printf(r, "workspace: %s\n", w.ws_empty ? "empty" : "occupied");
     reply_printf(r, "idle: %s%s\n", w.idle ? "yes" : "no",
-                 w.idle_note || w.cfg.idle_timeout_s == 0
+                 w.inhibited ? " (inhibited: swell inhibit status)"
+                 : w.idle_note || w.cfg.idle_timeout_s == 0
                      ? ""
                      : " (no ext-idle-notify: pointer only)");
     if (w.battery >= 0)

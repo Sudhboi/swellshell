@@ -891,3 +891,9 @@ slide_ms = 220
 pulse_ms = 900
 # pulses after dropping down; then the panel holds still
 pulse_count = 3
+
+[inhibit]
+# false turns the module off
+enable = true
+# serve org.freedesktop.ScreenSaver on the session bus, so browsers and video players playing a video keep the screensaver away
+dbus = true

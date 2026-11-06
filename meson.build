@@ -21,6 +21,7 @@ libjpeg = dependency('libjpeg')
 xkbcommon = dependency('xkbcommon')
 libinput = dependency('libinput')
 libudev = dependency('libudev')
+libsystemd = dependency('libsystemd')
 math = cc.find_library('m', required: false)
 pipewire = dependency('libpipewire-0.3')
 egl = dependency('egl')
@@ -98,6 +99,7 @@ core_src = files(
   'src/core/wsswitch.c',
 )
 deps = [wayland_client, cairo, pango, libjpeg, xkbcommon, libinput, libudev,
+  libsystemd,
   math, pipewire, egl, glesv2,
   wayland_egl, protocols_dep,
   i3ipc_dep, tomlc17_dep, cjson_dep]
@@ -110,7 +112,7 @@ core_dep = declare_dependency(link_with: core, include_directories: core_inc,
 # Keep this list in sync with src/modules/modules.c and test/meson.build.
 module_src = files('src/modules/modules.c')
 foreach m : ['osd', 'popup', 'media', 'overview', 'workspaces', 'runner',
-    'wallpaper', 'power', 'wsosd', 'wsfade', 'gestures', 'lowbat']
+    'wallpaper', 'power', 'wsosd', 'wsfade', 'gestures', 'lowbat', 'inhibit']
   subdir('src/modules' / m)
   module_src += get_variable(m + '_src')
 endforeach

@@ -11,6 +11,7 @@ A small shell for sway, niri and labwc in one daemon. It merges five earlier too
 | `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n (on niri: `next`/`prev`/`goto` map to niri's own actions; on labwc: a dynamic view of a fixed pool) |
 | `wsfade` | (new) | off by default: on sway, `swell ws` switches fade the old workspace out over the new one with a small drift (`[wsfade] enable = true`) |
 | `gestures` | (new) | touchpad swipes where the compositor can't bind them (labwc): reads the touchpad itself and runs a command per direction (idle on sway and niri) |
+| `inhibit` | (new) | keeps the wallpaper's idle screensaver away while a video plays: serves `org.freedesktop.ScreenSaver` on the session bus (what Firefox/Zen, Chromium, mpv and VLC call), or by hand with `swell inhibit on` (Wayland idle inhibitors already work through the compositor) |
 | `runner` | awww-kill | runs shell commands on events (none by default) |
 | `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar, a turning Nix snowflake and a cava-like ring of audio bars around it (PipeWire, stereo); animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
 
@@ -25,6 +26,7 @@ swell overview [open|close|toggle]
 swell ws next|prev|goto N|reorder
 swell runner fire EVENT [KEY=VALUE...] | list
 swell wallpaper status | percent N|auto
+swell inhibit on|off|toggle|status
 swell reload | status | quit | help
 swell config [--defaults]    # print the effective configuration as TOML
 ```
@@ -67,6 +69,7 @@ Hook `on` patterns are globs (`window.*`). Commands run through `sh -c` in a sin
 | `overview.open`, `overview.close` | swell's overview on sway, niri's own on niri |
 | `workspaces.renumber` | the workspaces were renamed to 1..n (sway only) |
 | `wallpaper.animate`, `wallpaper.freeze` | the wallpaper started or stopped animating |
+| `idle.inhibit` | the screensaver became inhibited or not; `SWELL_INHIBITED` (`1` or `0`) |
 
 ## Sway config
 

@@ -16,6 +16,7 @@
   libGL,
   libinput,
   udev,
+  systemdLibs,
   wireplumber,
   networkmanager,
   playerctl,
@@ -58,6 +59,7 @@ stdenv.mkDerivation {
     libGL
     libinput
     udev
+    systemdLibs # sd-bus: the screensaver inhibit service
   ];
 
   doCheck = true;
