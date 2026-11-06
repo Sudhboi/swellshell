@@ -46,6 +46,10 @@ static struct {
   bool saving; /* idle on an empty workspace: the snowflake wanders */
   double saver_mix; /* 0 (centred, all shown) .. 1 (wandering) */
   double saver_t;   /* s along the wander */
+  /* The saver over windows (saver_windows): the overlay cover's fade, 0..1
+   * (linear), and whether it is wanted (as update_animating last saw). */
+  double cover;
+  bool covered;
   double drift_t;   /* s along the map's drift */
 
   /* battery: percent is the target, -1 when no battery was found */
@@ -168,7 +172,7 @@ bool wp_ticking(void) {
   if (show_holding())
     return false;
   return w.animating || w.dozing || w.saving || w.saver_mix > 0 ||
-         wp_showing() || map_fading() || w.peek || handing();
+         w.cover > 0 || wp_showing() || map_fading() || w.peek || handing();
 }
 
 static bool viz_showing(void) {
@@ -199,6 +203,9 @@ int wp_fps_cap(void) {
     return 0;
   /* Smooth while it pops, expands, the hold runs or the lines spring. */
   if (w.peek && wp_peek_moving(w.peek, now_ms()))
+    return 0;
+  /* The saver fading in or out (over windows too): smooth. */
+  if ((w.cover > 0 && w.cover < 1) || (w.saver_mix > 0 && w.saver_mix < 1))
     return 0;
   if (w.saving)
     return w.cfg.saver_fps;
@@ -371,6 +378,41 @@ static void advance_drift(double dt) {
 }
 
 static double smooth(double t) { return t * t * (3 - 2 * t); }
+
+/* ---- the saver over windows: a cover on the overlay layer ---- */
+
+static bool cover_wanted(void) {
+  return saver_on() && !w.ws_empty && w.cfg.saver_windows;
+}
+
+double wp_cover_alpha(void) {
+  if (w.cover <= 0 && !cover_wanted())
+    return -1;
+  return smooth(fmin(fmax(w.cover, 0), 1));
+}
+
+bool wp_bg_frozen(void) {
+  return !w.ws_empty && (w.cover > 0 || cover_wanted());
+}
+
+double wp_cover_step(double cur, double target, double dt, int in_ms,
+                     int out_ms) {
+  int ms = target > cur ? in_ms : out_ms;
+  double step = ms > 0 ? dt * 1000 / ms : 1;
+  return target > cur ? fmin(cur + step, target) : fmax(cur - step, target);
+}
+
+/* Fade the cover in or out (at once where the compositor can't fade it).
+ * Faded off the windows, the snowflake is back in the middle. */
+static void advance_cover(double dt) {
+  double target = cover_wanted() ? 1 : 0;
+  w.cover = wp_surfaces_can_fade()
+                ? wp_cover_step(w.cover, target, dt, w.cfg.saver_fade_ms,
+                                w.cfg.saver_wake_ms)
+                : target;
+  if (w.cover <= 0 && !w.saving && !w.ws_empty)
+    w.saver_mix = w.saver_t = 0;
+}
 
 /* Black over the map for a restart: 0 .. 1 as the old lines go, 1 .. 0 as
  * the new ones come. */
@@ -545,8 +587,10 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
     advance_media(now, dt);
     advance_saver(dt);
     advance_drift(dt);
-  } else if (w.saving) {
-    advance_saver(advance(now, false));
+  } else if (w.saving || w.cover > 0) {
+    double dt = advance(now, false);
+    advance_saver(dt);
+    advance_cover(dt);
   } else if (w.dozing)
     advance(now, true);
   f->percent = shown_percent();
@@ -705,20 +749,35 @@ static void arm_idle_fallback(void) {
 
 static void update_animating(void) {
   bool want = w.ws_empty && !w.idle;
-  bool save = w.ws_empty && w.idle && w.cfg.idle_saver;
+  bool save = w.idle && w.cfg.idle_saver &&
+              (w.ws_empty || w.cfg.saver_windows);
   bool doze = w.ws_empty && w.idle && !save && w.cfg.battery_bar &&
               w.cfg.idle_bar_pulse;
-  if (want == w.animating && doze == w.dozing && save == w.saving)
+  bool cover = save && !w.peek && !w.ws_empty && w.cfg.saver_windows;
+  if (want == w.animating && doze == w.dozing && save == w.saving &&
+      cover == w.covered)
     return;
   bool was_animating = w.animating, was_ticking = wp_ticking();
   bool was_saving = w.saving;
   w.animating = want;
   w.dozing = doze;
   w.saving = save;
+  w.covered = cover;
   if (save && !was_saving)
     bus_emit("wallpaper.saver", NULL);
-  /* A window over the wandering snowflake: the plain wallpaper, centred. */
-  bool recentre = !w.ws_empty && w.saver_mix > 0;
+  /* Idle over windows: the cover fades in over them (and the snowflake,
+   * wandering on, with it). The windows gone, nothing is between it and
+   * the background, which takes over at once. */
+  bool uncovered = false;
+  if (cover)
+    wp_surfaces_cover();
+  else if (w.ws_empty && w.cover > 0) {
+    w.cover = 0;
+    uncovered = true;
+  }
+  /* A window over the wandering snowflake (no saver over windows): the
+   * plain wallpaper, centred. Covered, it fades back first. */
+  bool recentre = !w.ws_empty && w.saver_mix > 0 && !w.saving && w.cover <= 0;
   if (recentre)
     w.saver_mix = w.saver_t = 0;
   /* The bar (fill and pulse) moves in both states, so the battery is read
@@ -753,7 +812,7 @@ static void update_animating(void) {
     return;
   }
   if (!was_animating) {
-    if (doze || save || cleared || recentre)
+    if (doze || save || cleared || recentre || uncovered)
       wp_surfaces_draw(false); /* start the bar's (or saver's) frames */
     return;
   }
@@ -1088,7 +1147,8 @@ void wp_reconfigure(const void *cfg) {
     update_animating();
   } else if (old.idle_bar_pulse != w.cfg.idle_bar_pulse ||
              old.battery_bar != w.cfg.battery_bar ||
-             old.idle_saver != w.cfg.idle_saver) {
+             old.idle_saver != w.cfg.idle_saver ||
+             old.saver_windows != w.cfg.saver_windows) {
     update_animating();
   }
   if (old.battery_interval_s != w.cfg.battery_interval_s && w.animating) {
@@ -1139,6 +1199,8 @@ void wp_finish(void) {
   w.dozing = false;
   w.saving = false;
   w.saver_mix = w.saver_t = 0;
+  w.cover = 0;
+  w.covered = false;
 }
 
 int wp_command(int argc, char **argv, struct reply *r) {
@@ -1146,7 +1208,9 @@ int wp_command(int argc, char **argv, struct reply *r) {
     reply_printf(r, "state: %s\n",
                  w.animating ? (w.saver_mix > 0 ? "animating (back from the saver)"
                                                 : "animating")
-                 : w.saving  ? "saver (the snowflake wanders)"
+                 : w.saving  ? (w.ws_empty ? "saver (the snowflake wanders)"
+                                           : "saver (over the windows)")
+                 : w.cover > 0 ? "frozen (the saver fading off the windows)"
                  : w.dozing  ? "dozing (only the bar pulses)"
                              : "frozen");
     reply_printf(r, "workspace: %s\n", w.ws_empty ? "empty" : "occupied");

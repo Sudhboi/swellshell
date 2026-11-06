@@ -441,6 +441,10 @@ saver_speed = 60.0
 saver_fps = 20
 # the snowflake easing off the centre when idle, and back
 saver_fade_ms = 1200
+# the idle saver covers workspaces with windows open too: it fades in over them (saver_fade_ms) and out on wake
+saver_windows = true
+# the saver fading off the windows on wake
+saver_wake_ms = 300
 # battery re-read period while animating
 battery_interval_s = 30
 # background

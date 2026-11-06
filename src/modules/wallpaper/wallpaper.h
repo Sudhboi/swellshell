@@ -35,6 +35,10 @@ struct wallpaper_config {
   double saver_speed; /* reference px/s */
   int saver_fps;      /* cap while it wanders, 0: the display rate */
   int saver_fade_ms;  /* the fade into it and back */
+  /* idle over windows too: a cover on the overlay layer fades in over them
+   * (saver_fade_ms) and out on wake (saver_wake_ms) */
+  bool saver_windows;
+  int saver_wake_ms;
   int battery_interval_s;
   /* colours */
   uint32_t background, bar, logo, logo_alt;
@@ -653,6 +657,12 @@ const char *wp_surfaces_viz_renderer(void);
  * module is animating, each draw also asks for the next frame. */
 void wp_surfaces_draw(bool full);
 int wp_surfaces_count(void);
+/* Make sure every output has the saver's cover (an overlay layer surface
+ * drawing the saver frame over the windows, faded by wp_cover_alpha). It
+ * goes by itself once wp_cover_alpha() < 0. */
+void wp_surfaces_cover(void);
+/* The compositor can fade the cover (wp_alpha_modifier_v1). */
+bool wp_surfaces_can_fade(void);
 
 /* show.c: the launch and power-off timelines */
 enum wp_show {
@@ -694,6 +704,15 @@ bool wp_dozing(void);
 bool wp_saving(void);
 /* Animating or dozing or playing a show: frames are wanted. */
 bool wp_ticking(void);
+/* The saver's cover over the windows: its alpha 0..1, -1: none wanted. */
+double wp_cover_alpha(void);
+/* The background surfaces keep their frame (the cover is over the
+ * windows); surface.c redraws them plain once it's opaque or gone. */
+bool wp_bg_frozen(void);
+/* The cover's fade from cur towards target (0 or 1) after dt s: in over
+ * in_ms, out over out_ms (0: at once). */
+double wp_cover_step(double cur, double target, double dt, int in_ms,
+                     int out_ms);
 /* A show (or its black after power-off) is on screen: frames are drawn
  * whole. */
 bool wp_showing(void);

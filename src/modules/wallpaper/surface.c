@@ -7,12 +7,19 @@
  * edge visualiser shows, the GPU draws it (gl.c) into two transparent
  * subsurfaces over the strips; they exist only while bars show. Under the
  * topo style the GPU also draws the map on a subsurface below and the
- * snowflake on one above, so a frame often leaves the buffer alone. */
+ * snowflake on one above, so a frame often leaves the buffer alone.
+ *
+ * Idle over windows (saver_windows), each output also gets a cover: the
+ * same pipeline on the overlay layer, drawing the saver frame over the
+ * windows, faded by wp_alpha_modifier_v1 on each of its surfaces. The
+ * background keeps its frame meanwhile (it shows through translucent
+ * windows), redrawn plain only once the cover hides it or is gone. */
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+#include "alpha-modifier-v1-client-protocol.h"
 #include "buffer.h"
 #include "fractional-scale-v1-client-protocol.h"
 #include "loop.h"
@@ -27,6 +34,8 @@ struct strip {
   struct wl_subsurface *sub;
   struct wp_viewport *viewport;
   struct wp_gl_win *win;
+  struct wp_alpha_modifier_surface_v1 *alpha; /* a cover's, else NULL */
+  uint32_t mult;                              /* as last set */
   int lx, ly, lw, lh; /* logical, in the parent */
   int bw, bh;         /* buffer px */
 };
@@ -88,6 +97,16 @@ struct output {
   bool held;          /* a draw waits for a replaced daemon (wp_join_wait) */
   bool presented;     /* a frame of ours has been shown (for the handover) */
   int64_t last_draw;  /* ms */
+  /* The saver over windows. A background output's cover (NULL until first
+   * wanted; its surface only while it shows); a cover's background. */
+  bool is_cover;
+  struct output *cover, *bg;
+  struct wp_alpha_modifier_surface_v1 *alpha; /* a cover's, else NULL */
+  uint32_t mult;                              /* as last set */
+  /* A background's: its frame isn't the plain one (wandering, the bar
+   * faded) or is stale, to redraw once the cover hides it or is gone. */
+  bool unplain;
+  bool skipped; /* a background's: a full draw was skipped under a cover */
 };
 
 static struct swell_wl *wl;
@@ -113,12 +132,13 @@ static void frame_done(void *data, struct wl_callback *cb, uint32_t time) {
   struct output *out = data;
   wl_callback_destroy(cb);
   out->frame_cb = NULL;
-  if (!out->presented) {
+  if (!out->presented && !out->is_cover) {
     out->presented = true;
     if (wp_joining())
       check_presented();
   }
-  if (!wp_ticking() && !out->retry)
+  /* (A cover draws once more after its fade, to go.) */
+  if (!wp_ticking() && !out->retry && !out->is_cover)
     return; /* frozen: stop here, the last frame stays */
   int fps = wp_fps_cap();
   int64_t wait = fps > 0 ? out->last_draw + 1000 / fps - now_ms() : 0;
@@ -144,7 +164,7 @@ static void on_fps_timer(struct loop_timer *t, void *data) {
   if (out->held) {
     out->held = false;
     draw(out, true);
-  } else if (wp_ticking()) {
+  } else if (wp_ticking() || out->is_cover) {
     draw(out, false);
   }
 }
@@ -186,6 +206,8 @@ static bool gpu_edges(void) {
 }
 
 static void strip_destroy(struct strip *st) {
+  if (st->alpha)
+    wp_alpha_modifier_surface_v1_destroy(st->alpha);
   wp_gl_win_destroy(st->win);
   if (st->viewport)
     wp_viewport_destroy(st->viewport);
@@ -200,6 +222,50 @@ static void strips_destroy(struct output *out) {
   for (int s = 0; s < 2; ++s)
     strip_destroy(&out->strips[s]);
 }
+
+/* ---- the cover's fade ---- */
+
+static uint32_t cover_mult(void) {
+  double a = wp_cover_alpha();
+  return a <= 0 ? 0 : a >= 1 ? UINT32_MAX : (uint32_t)(a * UINT32_MAX);
+}
+
+/* A new subsurface of a cover fades with it. */
+static void strip_fade(struct output *out, struct strip *st) {
+  if (!out->is_cover || !wl->alpha_modifier || st->alpha)
+    return;
+  st->alpha = wp_alpha_modifier_v1_get_surface(wl->alpha_modifier,
+                                               st->surface);
+  st->mult = cover_mult();
+  wp_alpha_modifier_surface_v1_set_multiplier(st->alpha, st->mult);
+}
+
+/* Set a cover's alpha on a subsurface; it's committed (cached till the
+ * parent's commit, the subsurfaces being synchronised). */
+static void strip_mult(struct strip *st, uint32_t m) {
+  if (!st->surface || !st->alpha || st->mult == m)
+    return;
+  wp_alpha_modifier_surface_v1_set_multiplier(st->alpha, m);
+  wl_surface_commit(st->surface);
+  st->mult = m;
+}
+
+/* Before a cover's commit: every surface of it at the cover's alpha. */
+static void cover_fade(struct output *out) {
+  if (!out->is_cover)
+    return;
+  uint32_t m = cover_mult();
+  strip_mult(&out->map, m);
+  strip_mult(&out->logo, m);
+  for (int s = 0; s < 2; ++s)
+    strip_mult(&out->strips[s], m);
+  if (out->alpha && out->mult != m) {
+    wp_alpha_modifier_surface_v1_set_multiplier(out->alpha, m);
+    out->mult = m;
+  }
+}
+
+bool wp_surfaces_can_fade(void) { return wl && wl->alpha_modifier; }
 
 static long gcd(long a, long b) { return b ? gcd(b, a % b) : a; }
 
@@ -232,6 +298,7 @@ static int strip_place(struct output *out, struct strip *st, struct wp_rect r,
     struct wl_region *none = wl_compositor_create_region(wl->compositor);
     wl_surface_set_input_region(st->surface, none);
     wl_region_destroy(none);
+    strip_fade(out, st);
     if (fractional)
       st->viewport = wp_viewporter_get_viewport(wl->viewporter, st->surface);
     st->win = wp_gl_win_create(st->surface, bw, bh);
@@ -306,6 +373,7 @@ static bool map_draw(struct output *out, int pw, int ph,
     struct wl_region *none = wl_compositor_create_region(wl->compositor);
     wl_surface_set_input_region(st->surface, none);
     wl_region_destroy(none);
+    strip_fade(out, st);
     if (fractional)
       st->viewport = wp_viewporter_get_viewport(wl->viewporter, st->surface);
     st->win = wp_gl_win_create(st->surface, pw, ph);
@@ -371,9 +439,46 @@ const char *wp_surfaces_viz_renderer(void) {
   return "gpu";
 }
 
+static void destroy_surface(struct output *out);
+static void draw_one(struct output *out, bool full, bool plain);
+
+/* The cover faded off (or the windows went): it goes, and the background,
+ * if the frame it kept isn't the plain one, gets it. */
+static void cover_drop(struct output *cover) {
+  destroy_surface(cover);
+  struct output *bg = cover->bg;
+  if (!wp_ticking() && (bg->unplain || bg->skipped))
+    draw_one(bg, true, false);
+}
+
+/* Draw out's next frame (full: all of it). Under a cover, a background
+ * keeps the frame it has; once the cover hides it, it's redrawn plain
+ * (centred, the bar shown: the frozen look under windows) if it isn't. */
 static void draw(struct output *out, bool full) {
+  if (out->is_cover) {
+    if (wp_cover_alpha() < 0) {
+      cover_drop(out);
+      return;
+    }
+    draw_one(out, full, false);
+    struct output *bg = out->bg;
+    if (out->surface && wp_bg_frozen() && wp_cover_alpha() >= 1 &&
+        (bg->unplain || bg->skipped))
+      draw_one(bg, true, true);
+    return;
+  }
+  if (out->cover && out->cover->surface && wp_bg_frozen()) {
+    if (full)
+      out->skipped = true;
+    return;
+  }
+  draw_one(out, full, false);
+}
+
+static void draw_one(struct output *out, bool full, bool plain) {
   if (!out->surface || !out->configured || out->width <= 0)
     return;
+  cover_fade(out);
   /* Taking over from a replaced daemon: its wallpaper stays on screen
    * until its lines are gone. */
   int64_t wait = wp_join_wait();
@@ -429,6 +534,14 @@ static void draw(struct output *out, bool full) {
   int64_t now = now_ms();
   struct wp_frame f;
   wp_frame_at(now, &f);
+  if (plain) {
+    f.wander_x = f.wander_y = 0;
+    f.bar_fade = 0;
+  }
+  if (!out->is_cover) {
+    out->unplain = f.wander_x != 0 || f.wander_y != 0 || f.bar_fade > 0;
+    out->skipped = false;
+  }
   /* A show moves things far outside the regions, so it is drawn whole, and
    * so is the first frame after it in each buffer. */
   bool showing = wp_showing();
@@ -571,7 +684,7 @@ static void draw(struct output *out, bool full) {
                       fabs(f.percent - out->bar_percent) < 0.01 &&
                       f.bar_fade == out->bar_fade)) &&
         bsx == out->bar_sx && bsy == out->bar_sy) {
-      if (wp_ticking() || wp_joining())
+      if (wp_ticking() || wp_joining() || out->is_cover)
         request_frame(out);
       wl_surface_commit(out->surface);
       out->last_draw = now;
@@ -638,7 +751,7 @@ static void draw(struct output *out, bool full) {
                                    pr[k].h);
     }
   }
-  if (wp_ticking() || wp_joining())
+  if (wp_ticking() || wp_joining() || out->is_cover)
     request_frame(out);
   wl_surface_commit(out->surface);
   b->busy = true;
@@ -697,9 +810,14 @@ static void create_surface(struct output *out) {
     wp_fractional_scale_v1_add_listener(out->fractional, &fractional_listener,
                                         out);
   }
+  char ns[sizeof(wp_config()->namespace) + 8];
+  snprintf(ns, sizeof ns, "%s%s", wp_config()->namespace,
+           out->is_cover ? "-saver" : "");
   out->layer = zwlr_layer_shell_v1_get_layer_surface(
       wl->layer_shell, out->surface, out->so->wl_output,
-      ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, wp_config()->namespace);
+      out->is_cover ? ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY
+                    : ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND,
+      ns);
   zwlr_layer_surface_v1_add_listener(out->layer, &layer_listener, out);
   zwlr_layer_surface_v1_set_anchor(out->layer,
                                    ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
@@ -710,7 +828,20 @@ static void create_surface(struct output *out) {
   zwlr_layer_surface_v1_set_exclusive_zone(out->layer, -1);
   zwlr_layer_surface_v1_set_keyboard_interactivity(
       out->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
-  wl_set_input(wl, out->surface, &wp_input, out);
+  if (out->is_cover) {
+    /* Clicks go through to the windows (they come back as it fades). */
+    struct wl_region *none = wl_compositor_create_region(wl->compositor);
+    wl_surface_set_input_region(out->surface, none);
+    wl_region_destroy(none);
+    if (wl->alpha_modifier) {
+      out->alpha =
+          wp_alpha_modifier_v1_get_surface(wl->alpha_modifier, out->surface);
+      out->mult = cover_mult();
+      wp_alpha_modifier_surface_v1_set_multiplier(out->alpha, out->mult);
+    }
+  } else {
+    wl_set_input(wl, out->surface, &wp_input, out);
+  }
   wl_surface_commit(out->surface);
 }
 
@@ -721,8 +852,11 @@ static void destroy_surface(struct output *out) {
   out->under = false;
   strip_destroy(&out->logo);
   out->lgpu = out->logo_on = false;
-  if (out->surface)
+  if (out->surface && !out->is_cover)
     wl_clear_input(wl, out->surface);
+  if (out->alpha)
+    wp_alpha_modifier_surface_v1_destroy(out->alpha);
+  out->alpha = NULL;
   if (out->frame_cb)
     wl_callback_destroy(out->frame_cb);
   if (out->fractional)
@@ -764,6 +898,11 @@ static void on_output(void *data, struct swell_output *so, bool added) {
   wl_list_for_each_safe(out, tmp, &outputs, link) {
     if (out->so != so)
       continue;
+    if (out->cover) {
+      destroy_surface(out->cover);
+      loop_remove_timer(out->cover->fps_timer);
+      free(out->cover);
+    }
     destroy_surface(out);
     loop_remove_timer(out->fps_timer);
     wl_list_remove(&out->link);
@@ -790,6 +929,24 @@ void wp_surfaces_recreate(void) {
   wl_list_for_each(out, &outputs, link) {
     destroy_surface(out);
     create_surface(out);
+    if (out->cover && out->cover->surface) {
+      destroy_surface(out->cover);
+      create_surface(out->cover);
+    }
+  }
+}
+
+void wp_surfaces_cover(void) {
+  struct output *out;
+  wl_list_for_each(out, &outputs, link) {
+    if (!out->cover) {
+      struct output *c = out->cover = xcalloc(1, sizeof(*c));
+      c->so = out->so;
+      c->is_cover = true;
+      c->bg = out;
+      c->fps_timer = loop_add_timer(wl->loop, CLOCK_MONOTONIC, on_fps_timer, c);
+    }
+    create_surface(out->cover); /* (if it hasn't one) */
   }
 }
 
@@ -798,6 +955,10 @@ void wp_surfaces_draw(bool full) {
   wl_list_for_each(out, &outputs, link) {
     loop_timer_disarm(out->fps_timer);
     draw(out, full);
+    if (out->cover && out->cover->surface) {
+      loop_timer_disarm(out->cover->fps_timer);
+      draw(out->cover, full);
+    }
   }
 }
 

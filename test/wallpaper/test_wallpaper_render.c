@@ -380,6 +380,26 @@ static void test_topo_shows(const struct wallpaper_config *c, const char *dir) {
  * wallpaper_topo_*. */
 /* The GPU snowflake's distance field: negative inside the lambdas, the
  * distance to their edges, agreeing with cairo's fill. */
+/* The saver's cover over windows: in over in_ms, out over out_ms, turning
+ * round wherever it is, clamped, at once with 0 ms. */
+static void test_cover_step(void) {
+  double c = 0;
+  for (int i = 0; i < 6; ++i)
+    c = wp_cover_step(c, 1, 0.2, 1200, 300);
+  assert(fabs(c - 1) < 1e-9);
+  c = wp_cover_step(c, 1, 0.2, 1200, 300);
+  assert(c == 1);
+  c = wp_cover_step(0.5, 0, 0.15, 1200, 300);
+  assert(fabs(c) < 1e-9);
+  c = wp_cover_step(0.5, 1, 0.3, 1200, 300); /* a quarter on */
+  assert(fabs(c - 0.75) < 1e-9);
+  c = wp_cover_step(c, 0, 0.15, 1200, 300); /* woke mid fade-in: back */
+  assert(fabs(c - 0.25) < 1e-9);
+  assert(wp_cover_step(0.3, 0, 0.01, 1200, 0) == 0);
+  assert(wp_cover_step(0.3, 1, 0.01, 0, 300) == 1);
+  assert(wp_cover_step(0, 0, 1, 1200, 300) == 0);
+}
+
 static void test_logo_sdf(void) {
   const struct wallpaper_config *c = wallpaper_module.defaults;
   const struct wp_logo_sdf *s = wp_logo_sdf(c, W, 1);
@@ -1266,6 +1286,7 @@ int main(int argc, char **argv) {
 
   test_shows(c, dir, "wallpaper");
   test_logo_sdf();
+  test_cover_step();
   test_topo(dir);
   wp_render_finish();
   return 0;
