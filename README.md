@@ -9,6 +9,20 @@ swell gives you the parts a tiling compositor leaves out: a volume/brightness OS
 
 The look is built around the Nix snowflake.
 
+![The wallpaper: a contour map with a glass Nix snowflake, the battery bar at the top and the playing track below](docs/img/wallpaper.png)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Holding the popup key on an empty workspace: clock, levels, network, stats and workspaces drawn into the wallpaper](docs/img/popup-wallpaper.png) | ![The overview: three workspaces with live window thumbnails and a "New workspace" slot](docs/img/overview.png) |
+| The popup on an empty workspace | The overview |
+
+| | | |
+|:---:|:---:|:---:|
+| <img src="docs/img/osd.png" width="160" alt="Volume OSD at 40%"> | <img src="docs/img/popup-panel.png" width="320" alt="The popup as a panel over windows"> | <img src="docs/img/lowbat.png" width="260" alt="Low battery warning at 14%"> |
+| Volume OSD | The popup over windows | Low battery warning |
+
 ## Features
 
 - **OSD**: volume and brightness levels with a turning snowflake. You call it with the level (`swell osd vol 40`), so it works with whatever controls your audio.
