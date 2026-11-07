@@ -1,5 +1,5 @@
 {
-  description = "swell: a small sway shell (OSD, popup, overview, dynamic workspaces, event hooks)";
+  description = "swell: a small Wayland shell for sway, niri and labwc (OSD, popup, overview, dynamic workspaces, live wallpaper, event hooks)";
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
 

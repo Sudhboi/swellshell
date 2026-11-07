@@ -197,7 +197,8 @@ The runtime tools used by the popup and media panel (`wpctl`, `nmcli`, `playerct
 
 ```nix
 {
-  inputs.swell.url = "path:/home/you/Projects/swell/swellshell";
+  inputs.swell.url = "github:Sudhboi/swellshell";
+  inputs.swell.inputs.nixpkgs.follows = "nixpkgs";
   # in your home configuration:
   imports = [ inputs.swell.homeManagerModules.default ];
   services.swell = {
@@ -207,14 +208,18 @@ The runtime tools used by the popup and media panel (`wpctl`, `nmcli`, `playerct
 }
 ```
 
-This installs swell and writes `settings` to `~/.config/swell/config.toml`, which runs `swell reload` when the file changes. It also adds a systemd user service bound to `graphical-session.target` (set `systemdTarget` to change that). Without `SWAYSOCK` in the service environment, swell asks `sway --get-socketpath`.
+This installs swell and writes `settings` to `~/.config/swell/config.toml`, which runs `swell reload` when the file changes. It also adds a systemd user service bound to `graphical-session.target` (set `systemdTarget` to change that). sway does not start that target by itself: either start it from your sway config (e.g. `exec systemctl --user start graphical-session.target` after `systemctl --user import-environment WAYLAND_DISPLAY SWAYSOCK`) or skip the service and put `exec swell daemon` in the config. Without `SWAYSOCK` in the service environment, swell asks `sway --get-socketpath`.
 
 ## Development
 
-See `HANDOFF.md` for the architecture, the core interfaces and how to add a module. Live tests run in a nested headless sway, so they never touch the real session:
+Live tests run in a nested headless sway, so they never touch the real session:
 
 ```
 eval "$(test/live/nested-sway.sh start)"
 build/swell daemon & build/swell osd vol 40; grim shot.png
 test/live/nested-sway.sh stop
 ```
+
+## License
+
+GPL-3.0-or-later (see `LICENSE`). Bundled libraries keep their own licenses: cJSON and tomlc17 (MIT, `lib/*/LICENSE`), i3ipc-simple (CC0).

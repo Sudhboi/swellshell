@@ -79,8 +79,8 @@ stdenv.mkDerivation {
   '';
 
   meta = {
-    description = "A small sway shell: OSD, hold-to-peek popup, workspace overview, dynamic workspaces and event hooks";
-    license = lib.licenses.mit;
+    description = "A small Wayland shell for sway, niri and labwc: OSD, hold-to-peek popup, workspace overview, dynamic workspaces and event hooks";
+    license = lib.licenses.gpl3Plus;
     platforms = lib.platforms.linux;
     mainProgram = "swell";
   };
