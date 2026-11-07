@@ -5,7 +5,7 @@
 
 A small desktop shell for Wayland compositors (sway, niri and labwc), running as a single daemon.
 
-swell gives you the parts a tiling compositor leaves out: a volume/brightness OSD, a hold-to-peek info panel, a workspace overview, dynamic workspaces, an animated wallpaper with an idle screensaver, and shell hooks for compositor events. Every part is a module that you can turn off. All of them share one event loop, one Wayland connection and one control socket, so they stay cheap: the wallpaper only animates while you can see it, and sits at 0% CPU otherwise.
+swell gives you: a volume/brightness OSD, a hold-to-peek info panel, a workspace overview, dynamic workspaces, an animated wallpaper with an idle screensaver, and shell hooks for compositor events. Every part is a module that you can turn off. All of them share one event loop, one Wayland connection and one control socket, so they stay cheap: the wallpaper only animates while you can see it, and sits at 0% CPU otherwise.
 
 The look is built around the Nix snowflake.
 
