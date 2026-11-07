@@ -1,79 +1,91 @@
 # swell
 
-A small shell for sway, niri and labwc in one daemon. It merges five earlier tools and adds a live wallpaper:
+A small desktop shell for Wayland compositors (sway, niri and labwc), running as a single daemon.
 
-| module | was | what it does |
-|---|---|---|
-| `osd` | nixosd | volume/brightness OSD with a rotating Nix snowflake |
-| `popup` | popup | hold-to-peek panel: clock, date, levels, network, CPU/RAM, workspaces (on an empty workspace drawn into the wallpaper instead, in its colours; `[popup] wallpaper = false` keeps the panel) |
-| `media` | (new) | what's playing (cover, title, artist, album, progress) in a panel at the top while the popup shows its details |
-| `overview` | swayverview | workspace overview with live window thumbnails, drag and drop, keyboard nav (sway and labwc; niri has its own) |
-| `workspaces` (`ws`) | dynwork | GNOME/niri-style dynamic workspaces, always numbered 1..n (on niri: `next`/`prev`/`goto` map to niri's own actions; on labwc: a dynamic view of a fixed pool) |
-| `wsfade` | (new) | off by default: on sway, `swell ws` switches fade the old workspace out over the new one with a small drift (`[wsfade] enable = true`) |
-| `gestures` | (new) | touchpad swipes where the compositor can't bind them (labwc): reads the touchpad itself and runs a command per direction (idle on sway and niri) |
-| `inhibit` | (new) | keeps the wallpaper's idle screensaver away while a video plays: serves `org.freedesktop.ScreenSaver` on the session bus (what Firefox/Zen, Chromium, mpv and VLC call), or by hand with `swell inhibit on` (Wayland idle inhibitors already work through the compositor) |
-| `runner` | awww-kill | runs shell commands on events (none by default) |
-| `wallpaper` (`wp`) | battery GIFs + awww | black wallpaper with a pulsing battery bar, a turning Nix snowflake and a cava-like ring of audio bars around it (PipeWire, stereo); animates only on an empty workspace while you're active, otherwise frozen at 0% CPU |
+swell gives you the parts a tiling compositor leaves out: a volume/brightness OSD, a hold-to-peek info panel, a workspace overview, dynamic workspaces, an animated wallpaper with an idle screensaver, and shell hooks for compositor events. Every part is a module that you can turn off. All of them share one event loop, one Wayland connection and one control socket, so they stay cheap: the wallpaper only animates while you can see it, and sits at 0% CPU otherwise.
 
-Every module runs in a single event loop. They share one Wayland connection and one sway or niri IPC connection (niri when `$NIRI_SOCKET` is set; on labwc, when `$LABWC_PID` is set, Wayland protocols on the same connection instead), and are controlled through one socket:
+The look is built around the Nix snowflake.
 
-```
-swell daemon                 # run everything (replaces a running daemon)
-swell osd vol 40 [mute]      # swell osd bri 80, swell osd 40
-swell popup show|hide|toggle
-swell media show|hide|toggle|play-pause|status
-swell overview [open|close|toggle]
-swell ws next|prev|goto N|reorder
-swell runner fire EVENT [KEY=VALUE...] | list
-swell wallpaper status | percent N|auto
-swell inhibit on|off|toggle|status
-swell reload | status | quit | help
-swell config [--defaults]    # print the effective configuration as TOML
+## Features
+
+- **OSD**: volume and brightness levels with a turning snowflake. You call it with the level (`swell osd vol 40`), so it works with whatever controls your audio.
+- **Popup**: hold a key to peek at the clock, date, volume/brightness/battery, network, CPU/RAM and your workspaces. On an empty workspace it is drawn into the wallpaper instead of a panel.
+- **Media**: the current track (cover, title, artist, progress) from any MPRIS player.
+- **Overview**: every workspace with live window thumbnails. Drag windows between workspaces, reorder workspaces, keyboard navigation.
+- **Dynamic workspaces**: GNOME/niri-style. There is always one empty workspace after the last, and they stay numbered 1..n.
+- **Workspace indicator** (`wsosd`): a small row of dots when you switch workspaces.
+- **Wallpaper**: a contour map with a glass snowflake, a ring of audio bars around it while music plays (PipeWire), and the battery level. It also has launch and power-off animations, plus an idle screensaver that keeps away while a video plays.
+- **Low battery warning**: a panel at 15%, and one at 5% that stays until you plug in.
+- **Hooks**: run shell commands on workspace, window, OSD, popup and wallpaper events.
+- **Extras**: touchpad gestures for compositors that can't bind them (labwc), a fade between workspaces (sway), and a matching plymouth boot splash.
+
+## Installation
+
+### Nix
+
+The repository is a flake. To try it without installing anything:
+
+```sh
+nix run github:Sudhboi/swellshell -- daemon
 ```
 
-## Configuration
+To install it with [home-manager](https://github.com/nix-community/home-manager), add the flake to your inputs and enable the module:
 
-The config file is `~/.config/swell/config.toml` (or `$SWELL_CONFIG`). Every key is optional, and the defaults are the old tools' settings. `swell config --defaults` prints every key with its documentation; `config/config.example.toml` is a copy of that output.
-
-```toml
-[osd]
-hide_timeout_ms = 1500
-
-[overview]
-font = "IosevkaTerm Nerd Font 12"
-
-[popup]
-enable = false            # any module can be turned off
-
-[[runner.hook]]               # hooks: none unless you add some
-on = "workspace.occupied"
-run = ["notify-send \"$SWELL_WORKSPACE has windows\""]
-detach = true
+```nix
+{
+  inputs.swell.url = "github:Sudhboi/swellshell";
+  inputs.swell.inputs.nixpkgs.follows = "nixpkgs";
+}
 ```
 
-After editing the file, apply it with `swell reload`, or rerun `swell daemon`, which replaces the running one. Nothing needs recompiling. A bad value is reported with its file and line, and that key keeps its default.
+```nix
+# in your home configuration
+{ inputs, ... }:
+{
+  imports = [ inputs.swell.homeManagerModules.default ];
 
-### Runner events
+  services.swell = {
+    enable = true;
+    settings = {
+      osd.hide_timeout_ms = 1500;
+    };
+  };
+}
+```
 
-Hook `on` patterns are globs (`window.*`). Commands run through `sh -c` in a single queue, so their order is kept. They get `$SWELL_EVENT` plus the event's details:
+This installs swell, writes `settings` to `~/.config/swell/config.toml` (and reloads the running daemon when it changes), and adds a systemd user service bound to `graphical-session.target`. You can change the target with `systemdTarget`.
 
-| event | details |
-|---|---|
-| `workspace.empty` / `workspace.occupied` | the focused workspace became empty or got windows (transitions only, and once at startup); `SWELL_WORKSPACE` |
-| `workspace.focus`, `.init`, `.removed`, `.rename`, `.move`, `.urgent`, `.reload` | workspace events; `SWELL_WORKSPACE` (on niri: the name, else the index on its output; on labwc: the number in swell's list) |
-| `window.new`, `.close`, `.focus`, `.title`, `.move`, `.fullscreen`, `.floating`, `.urgent`, `.mark` | window events; `SWELL_CON_ID` (niri: the window id; labwc: an id swell picks), `SWELL_APP_ID`, `SWELL_TITLE`; niri has no `.fullscreen` or `.mark`; labwc only has `.new`, `.close`, `.focus` and `.title` |
-| `output.change` | outputs changed (sway only) |
-| `osd.show`, `osd.hide` | `SWELL_OSD_KIND`, `SWELL_OSD_LEVEL`, `SWELL_OSD_MUTED` |
-| `popup.show`, `popup.hide`, `popup.expand` | `SWELL_POPUP_IN` (`panel` or `wallpaper`) |
-| `media.show`, `media.hide` | `SWELL_MEDIA_TITLE`, `SWELL_MEDIA_ARTIST`, `SWELL_MEDIA_PLAYER` |
-| `overview.open`, `overview.close` | swell's overview on sway, niri's own on niri |
-| `workspaces.renumber` | the workspaces were renamed to 1..n (sway only) |
-| `wallpaper.animate`, `wallpaper.freeze` | the wallpaper started or stopped animating |
-| `idle.inhibit` | the screensaver became inhibited or not; `SWELL_INHIBITED` (`1` or `0`) |
+sway doesn't start `graphical-session.target` by itself. Either start it from your sway config:
 
-## Sway config
+```
+exec systemctl --user import-environment WAYLAND_DISPLAY SWAYSOCK
+exec systemctl --user start graphical-session.target
+```
 
-Replace the old tools' lines with:
+or leave out `enable` and start swell from the compositor instead (see [Setup](#setup)). The flake also provides `packages.<system>.default` and `overlays.default`, if you'd rather install the package yourself.
+
+### From source
+
+You need meson, ninja, pkg-config, a C compiler and these libraries: wayland-client, wayland-egl, wayland-protocols (≥ 1.40), wayland-scanner, cairo, pango, xkbcommon, libpipewire-0.3, EGL/GLESv2, libjpeg, libinput, libudev and libsystemd.
+
+```sh
+meson setup build
+ninja -C build
+meson test -C build
+sudo ninja -C build install
+```
+
+Some features call these tools at runtime: `wpctl` (WirePlumber, volume in the popup), `nmcli` (NetworkManager, network), `playerctl` (media) and `curl` (cover art from URLs). The Nix package includes them.
+
+### Fonts
+
+Fonts aren't bundled. The default is **IosevkaTerm Nerd Font** (`nerd-fonts.iosevka-term` in nixpkgs). To use another font, set the `font` keys in the config.
+
+## Setup
+
+Start the daemon from your compositor, then bind keys to its commands. swell doesn't change volume or brightness itself: your binds do that, then pass the new level to `swell osd`.
+
+### sway
 
 ```
 exec_always swell daemon
@@ -85,8 +97,9 @@ bindsym XF86AudioMute        exec pactl set-sink-mute @DEFAULT_SINK@ toggle && $
 bindsym --locked XF86MonBrightnessDown exec swell osd $(brightnessctl set 5%- | sed -En 's/.*\(([0-9]+)%\).*/bri \1/p')
 bindsym --locked XF86MonBrightnessUp   exec swell osd $(brightnessctl set +5% | sed -En 's/.*\(([0-9]+)%\).*/bri \1/p')
 
-bindsym f10 exec swell popup show
-bindsym --release f10 exec swell popup hide
+# hold F10 to peek
+bindsym F10 exec swell popup show
+bindsym --release F10 exec swell popup hide
 
 bindsym $mod+Tab exec swell overview
 bindgesture swipe:up   exec swell overview open
@@ -95,16 +108,16 @@ bindgesture swipe:down exec swell overview close
 bindgesture swipe:left  exec swell ws next
 bindgesture swipe:right exec swell ws prev
 bindsym $mod+1 exec swell ws goto 1
-# ... through $mod+0 -> swell ws goto 10
+# ... and so on up to $mod+0 -> swell ws goto 10
 ```
 
-Workspace switches made through `swell ws` (keys or swipes) can fade: with `[wsfade] enable = true`, swell snapshots the output, switches behind the snapshot and fades it out over `fade_ms` (160) while it drifts `drift_px` (60) away from the new workspace. It adds about one frame before the switch (`swell wsfade status` shows the last delay). Switches made any other way (`swaymsg workspace`, a bar) aren't faded. On niri, use niri's own workspace animation.
+Because of `exec_always`, `swaymsg reload` restarts swell too. A new daemon replaces the running one without a flicker. If you use the home-manager service, drop the `exec_always` line.
 
-Remove the old `dynwork daemon`, `awww-kill`, `nixosd` and `popup` exec lines, `awww-daemon` and any wallpaper script (the `wallpaper` module draws the wallpaper), the FIFO variables, and the `socat` bindings. `exec_always` means a `swaymsg reload` restarts the daemon with the current config. If you use the home-manager module's systemd service instead, drop the `exec_always` line.
+To fade between workspaces, set `[wsfade] enable = true`. This only covers switches made through `swell ws`, and it adds about one frame of delay.
 
-## niri config
+### niri
 
-Everything except `overview` runs on niri (use niri's own overview; `wsosd` retracts while it's open). niri numbers workspaces and keeps one empty workspace after the last by itself, so `swell ws` only forwards `next`/`prev`/`goto` and `reorder` does nothing. niri's trailing empty workspace isn't shown in the popup strip or `wsosd` unless it's focused, and with several outputs both show the focused output's workspaces.
+Everything except the overview works on niri (use niri's own overview). niri already manages dynamic workspaces, so `swell ws next|prev|goto` just forwards to it.
 
 ```kdl
 spawn-at-startup "swell" "daemon"
@@ -117,24 +130,20 @@ binds {
 
     // niri has no key-release binds yet, so F10 toggles instead of hold-to-peek.
     F10 repeat=false { spawn "swell" "popup" "toggle"; }
-
-    Mod+1 { spawn "swell" "ws" "goto" "1"; }   // or niri's own focus-workspace 1
 }
 
-// Show the wallpaper behind niri's overview too, not only inside workspaces.
+// Show the wallpaper behind niri's overview too.
 layer-rule {
     match namespace="^swell-wallpaper$"
     place-within-backdrop true
 }
 ```
 
-Touchpad workspace swipes are built into niri; swell's swipe binds aren't needed. `swell power off && systemctl poweroff` works the same in a `spawn-sh` bind. With the home-manager systemd service, `NIRI_SOCKET` must be in the service environment (niri-session imports it).
+With the home-manager service, `NIRI_SOCKET` must be in the service environment (`niri-session` takes care of this).
 
-## labwc config
+### labwc
 
-Needs labwc 0.8.3 or later (ext-workspace-v1). Everything except `wsfade` runs. labwc has no IPC, so swell reads workspaces and windows over Wayland (ext-workspace-v1, wlr-foreign-toplevel-management).
-
-labwc's workspaces are a fixed pool. swell makes them look dynamic: the popup strip, `wsosd` and `swell ws goto N` show only the occupied workspaces plus the focused one, numbered 1..n. `swell ws next` past the last occupied one opens an empty one, `prev` stops at 1, and `reorder` does nothing. Give it a pool big enough, and turn off labwc's own workspace popup, which would list all of them:
+You need labwc 0.8.3 or later. Everything except `wsfade` works. labwc's workspaces are a fixed pool, so swell shows them as dynamic: only the occupied workspaces plus the focused one, numbered 1..n. Give it a pool that's big enough, and turn off labwc's own workspace popup:
 
 ```xml
 <desktops number="10" popupTime="0" />
@@ -146,80 +155,139 @@ labwc's workspaces are a fixed pool. swell makes them look dynamic: the popup st
 </keyboard>
 ```
 
-Start it from `~/.config/labwc/autostart` with `swell daemon &`.
+Start swell from `~/.config/labwc/autostart` with `swell daemon &`. With the home-manager service, `LABWC_PID` (or `XDG_CURRENT_DESKTOP=labwc`) must be in the service environment.
 
-No protocol says which workspace a window is on, so swell guesses: a window belongs to the workspace that was active when it opened or last got focus. This is wrong in two cases:
-- A window sent away with labwc's `SendToDesktop follow="no"` stays counted where it was until it is focused again. With the default `follow`, swell sees it go.
-- Windows already open when the daemon starts count nowhere until focused, so their workspaces can look empty. `next` may then pick one of them as the "empty" workspace; landing there focuses the window, and swell corrects itself.
+labwc can't bind touchpad gestures, so the `gestures` module reads the touchpad itself. By default, a 3-finger swipe left or right switches workspaces, and up or down opens or closes the overview. It needs read access to the touchpad, which this udev rule grants to the logged-in user (touchpads only):
 
-The overview works with live thumbnails (bind `swell overview toggle`), with three differences from sway:
-- labwc doesn't say where windows are, so each workspace's windows are spread out in a grid, and opening or closing fades instead of zooming out of the screen.
-- Windows can't be dragged to another workspace (nothing in labwc's protocols moves one), and workspaces can't be reordered.
-- All workspaces are shown on one output.
-
-Clicking a window, a workspace or "New workspace", the keys, and middle-click to close all work.
-
-Touchpad swipes: labwc can't bind gestures, so the `gestures` module reads the touchpad itself. By default 3-finger swipes do what the sway binds above do: left `ws next`, right `ws prev`, up `overview open`, down `overview close` (`[gestures]` in the config; `exec CMD` runs a shell command instead). It needs read access to the touchpad's `/dev/input` node, which a udev rule gives the logged-in user (touchpads only, not keyboards):
-
-```
+```sh
 sudo install -m 644 config/70-swell-touchpad.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
 ```
 
-On NixOS: `services.udev.extraRules` with the rule's last line. `swell gestures status` lists the touchpads it reads. labwc still passes the swipe to the focused window, which almost never uses 3-finger swipes. On sway and niri the module stays idle (they bind swipes themselves) unless `always = true`.
+On NixOS, put the rule's last line in `services.udev.extraRules` instead.
 
-With the home-manager systemd service, `LABWC_PID` (or `XDG_CURRENT_DESKTOP=labwc`) must be in the service environment.
+<details>
+<summary>labwc limitations</summary>
+
+labwc has no IPC, so swell has to work everything out from Wayland protocols:
+
+- No protocol says which workspace a window is on. swell assumes it's the workspace that was active when the window opened or was last focused. A window sent away with `SendToDesktop follow="no"` stays counted where it was until you focus it. Windows that were already open when swell started don't count anywhere until you focus them.
+- In the overview, windows are laid out in a grid rather than where they really are. You can't drag them to another workspace or reorder workspaces, and every workspace is shown on one output.
+
+</details>
+
+## Usage
+
+Everything goes through the `swell` command, which talks to the running daemon:
+
+```
+swell daemon                        run swell (replaces a running daemon)
+swell reload | status | quit
+swell config [--defaults]           print the configuration as TOML
+
+swell osd vol N [mute] | bri N      show a level
+swell popup show | hide | toggle
+swell media show | hide | toggle | play-pause | status
+swell overview [toggle | open | close]
+swell ws next | prev | goto N | reorder
+swell wallpaper status | percent N|auto | intro | outro
+swell inhibit on | off | toggle | status
+swell lowbat show | hide | status
+swell power off                     play the power-off animation
+swell runner fire EVENT | list
+```
+
+`swell help` lists every command. `swell power off` only plays the animation and then exits; it never shuts down the machine itself. Bind it like this:
+
+```
+bindsym $mod+Shift+e exec swell power off && systemctl poweroff
+```
+
+## Configuration
+
+swell reads `~/.config/swell/config.toml` (or `$SWELL_CONFIG`). Every key is optional. `swell config --defaults` prints all of them with a short description, and [`config/config.example.toml`](config/config.example.toml) contains the same output.
+
+```toml
+[osd]
+hide_timeout_ms = 1500
+
+[overview]
+font = "IosevkaTerm Nerd Font 12"
+
+[popup]
+enable = false            # any module can be turned off
+
+[wallpaper]
+style = "classic"         # "topo" (default) or "classic"
+```
+
+Apply changes with `swell reload`. If a value is invalid, swell reports it with the file and line and uses the default for that key.
+
+### Hooks
+
+The `runner` module runs shell commands on events. There are none by default.
+
+```toml
+[[runner.hook]]
+on = "workspace.occupied"     # a glob, e.g. "window.*"
+run = ["notify-send \"$SWELL_WORKSPACE has windows\""]
+detach = true
+```
+
+Commands run through `sh -c`, one at a time and in order. Each gets `$SWELL_EVENT` plus the details listed below.
+
+| event | details |
+|---|---|
+| `workspace.empty`, `workspace.occupied` | the focused workspace became empty or got windows; `SWELL_WORKSPACE` |
+| `workspace.focus`, `.init`, `.removed`, `.rename`, `.move`, `.urgent`, `.reload` | `SWELL_WORKSPACE` |
+| `window.new`, `.close`, `.focus`, `.title`, `.move`, `.fullscreen`, `.floating`, `.urgent`, `.mark` | `SWELL_CON_ID`, `SWELL_APP_ID`, `SWELL_TITLE` |
+| `output.change` | outputs changed (sway only) |
+| `osd.show`, `osd.hide` | `SWELL_OSD_KIND`, `SWELL_OSD_LEVEL`, `SWELL_OSD_MUTED` |
+| `popup.show`, `popup.hide`, `popup.expand` | `SWELL_POPUP_IN` (`panel` or `wallpaper`) |
+| `media.show`, `media.hide` | `SWELL_MEDIA_TITLE`, `SWELL_MEDIA_ARTIST`, `SWELL_MEDIA_PLAYER` |
+| `overview.open`, `overview.close` | |
+| `workspaces.renumber` | workspaces were renumbered 1..n (sway only) |
+| `wallpaper.animate`, `wallpaper.freeze` | the wallpaper started or stopped animating |
+| `idle.inhibit` | `SWELL_INHIBITED` (`1` or `0`) |
+
+Some events don't exist on every compositor. niri has no `window.fullscreen` or `.mark`, and labwc only has `window.new`, `.close`, `.focus` and `.title`. On niri and labwc, `SWELL_WORKSPACE` and `SWELL_CON_ID` are niri's names and ids, or numbers that swell assigns.
+
+### Screensaver and video
+
+After a while idle on an empty workspace, the wallpaper turns into a screensaver. It also covers windows, unless `saver_windows = false`. To keep it away during videos, swell provides `org.freedesktop.ScreenSaver` on the session bus, which browsers, mpv and VLC already call. You can also keep it away by hand with `swell inhibit on`.
 
 ## Boot splash
 
-`swell wallpaper plymouth DIR [WxH]` writes a plymouth theme in the topo look: the glass snowflake (your config's colours) fading in on black and staying still, its lambdas' glow going round while it loads. Powering off or rebooting it stays black after swell's outro (messages and prompts still show). It sits where swell's snowflake starts, and the topo intros start on the snowflake, so the hand-over to swell doesn't jump. Give your screen's size (default 2880x1800; the width sizes the snowflake, which is scaled on other screens). Install (Arch, `plymouth` hook in mkinitcpio):
+swell can write a [plymouth](https://www.freedesktop.org/wiki/Software/Plymouth/) theme that matches the wallpaper: the glass snowflake on black, with its glow going round while the system loads. Pass your screen size:
 
-```
+```sh
 swell wallpaper plymouth /tmp/swell-topo 2880x1800
 sudo mkdir -p /usr/share/plymouth/themes/swell-topo
 sudo cp /tmp/swell-topo/* /usr/share/plymouth/themes/swell-topo/
 sudo plymouth-set-default-theme -R swell-topo
 ```
 
-On a HiDPI panel plymouth guesses a device scale of 2 and upscales everything (soft snowflake); for the panel's own pixels add `DeviceScale=1` under `[Daemon]` in `/etc/plymouth/plymouthd.conf` (or `plymouth.force-scale=1` on the kernel command line) before the `-R` above. The text is sized the same either way. `--install DIR` sets where it is installed, if not there. The theme adds ~0.4 MB to the initramfs.
-
-## Building
-
-```
-nix build                 # or: nix run . -- daemon
-nix develop               # meson, ninja, wayland, cairo, pango, xkbcommon, sway, grim
-meson setup build && ninja -C build && meson test -C build
-```
-
-The runtime tools used by the popup and media panel (`wpctl`, `nmcli`, `playerctl`) are added to `PATH` by the nix package. Fonts are not bundled. The default font is IosevkaTerm Nerd Font (`nerd-fonts.iosevka-term`).
-
-### home-manager
-
-```nix
-{
-  inputs.swell.url = "github:Sudhboi/swellshell";
-  inputs.swell.inputs.nixpkgs.follows = "nixpkgs";
-  # in your home configuration:
-  imports = [ inputs.swell.homeManagerModules.default ];
-  services.swell = {
-    enable = true;
-    settings.osd.hide_timeout_ms = 1500;
-  };
-}
-```
-
-This installs swell and writes `settings` to `~/.config/swell/config.toml`, which runs `swell reload` when the file changes. It also adds a systemd user service bound to `graphical-session.target` (set `systemdTarget` to change that). sway does not start that target by itself: either start it from your sway config (e.g. `exec systemctl --user start graphical-session.target` after `systemctl --user import-environment WAYLAND_DISPLAY SWAYSOCK`) or skip the service and put `exec swell daemon` in the config. Without `SWAYSOCK` in the service environment, swell asks `sway --get-socketpath`.
+On a HiDPI screen, plymouth may upscale the theme and make it blurry. Set `DeviceScale=1` under `[Daemon]` in `/etc/plymouth/plymouthd.conf` before running the last command.
 
 ## Development
 
-Live tests run in a nested headless sway, so they never touch the real session:
-
+```sh
+nix develop               # compiler, meson, libraries, plus sway and grim for live tests
+meson setup build && ninja -C build && meson test -C build
 ```
+
+Live tests run in a nested headless sway, so they never touch your session:
+
+```sh
 eval "$(test/live/nested-sway.sh start)"
 build/swell daemon & build/swell osd vol 40; grim shot.png
 test/live/nested-sway.sh stop
 ```
 
+The code is formatted with clang-format (`.clang-format`).
+
 ## License
 
-GPL-3.0-or-later (see `LICENSE`). Bundled libraries keep their own licenses: cJSON and tomlc17 (MIT, `lib/*/LICENSE`), i3ipc-simple (CC0).
+GPL-3.0-or-later. See [LICENSE](LICENSE).
+
+Bundled libraries keep their own licenses: [cJSON](https://github.com/DaveGamble/cJSON) and [tomlc17](https://github.com/cktan/tomlc17) are MIT (see `lib/*/LICENSE`), and i3ipc-simple is CC0.
