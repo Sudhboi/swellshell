@@ -1,7 +1,7 @@
 # swell
 
 > [!NOTE]
-> **AI disclaimer:** most of the code and documentation in this repository was written by Claude Code.
+> **AI disclaimer:** All of the code and documentation in this repository was written by Claude Code.
 
 A small desktop shell for Wayland compositors (sway, niri and labwc), running as a single daemon.
 
