@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include <GLES3/gl3.h>
 
@@ -987,6 +988,216 @@ static void check_shows(const char *dir) {
   cairo_surface_destroy(rest);
 }
 
+
+/* ---- peek_layout "terrain" ---- */
+
+static struct info terrain_info(void) {
+  struct info in;
+  memset(&in, 0, sizeof in);
+  in.now = 1791295200 + 9 * 3600 + 41 * 60 + 7; /* 09:41:07 */
+  in.has_battery = true;
+  in.battery = 82;
+  in.has_power = true;
+  in.power_w = 9.12;
+  in.has_volume = true;
+  in.volume = 40;
+  in.has_brightness = true;
+  in.brightness = 60;
+  in.net = NET_WIFI;
+  strcpy(in.net_name, "home");
+  in.net_signal = 78;
+  in.cpu = 37;
+  in.mem_used_gib = 18.7;
+  in.mem_total_gib = 31.2;
+  in.uptime_s = 3 * 3600 + 25 * 60;
+  in.ws_count = 5;
+  for (int i = 0; i < 5; ++i) {
+    snprintf(in.ws[i].name, sizeof in.ws[i].name, "%d", i + 1);
+    in.ws[i].num = i + 1;
+  }
+  in.ws[1].focused = true;
+  return in;
+}
+
+/* The popup expanded over the terrain t of the way (expand e): the frame
+ * surface.c would make, the GPU drawing the map and the snowflake. */
+static struct wp_frame terrain_frame(const struct info *in, double t,
+                                     double e) {
+  struct wp_frame f = {.percent = 82, .level = 1, .angle = 0.3};
+  f.peek = in;
+  f.peek_low_pct = 15;
+  f.peek_pop = 1;
+  f.peek_hold = t;
+  f.peek_expand = e;
+  f.peek_side = t;
+  f.terrain = true;
+  f.terrain_vals[0] = in->cpu / 100.0;
+  f.terrain_vals[1] = in->mem_used_gib / in->mem_total_gib;
+  f.terrain_vals[2] = in->battery / 100.0;
+  return f;
+}
+
+/* As the compositor stacks them: the GPU's map, the buffer (labels,
+ * stats, bar) over it, the GPU's snowflake over that. */
+static cairo_surface_t *terrain_shot(const struct wallpaper_config *c,
+                                     const struct wp_frame *f, const char *dir,
+                                     const char *name) {
+  cairo_surface_t *out = gpu_map(c, f, dir, NULL);
+  cairo_surface_t *buf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, W, H);
+  cairo_t *cr = cairo_create(buf);
+  struct wp_frame cf = *f;
+  cf.map_under = true;
+  cf.logo_gpu = true;
+  cf.peek_area = true;
+  wp_render(cr, c, W, H, &cf, true, false, true);
+  cairo_destroy(cr);
+  cr = cairo_create(out);
+  cairo_set_source_surface(cr, buf, 0, 0);
+  cairo_paint(cr);
+  cairo_destroy(cr);
+  cairo_surface_destroy(buf);
+  struct wp_rect r = wp_logo_box(c, W, H, f);
+  if (r.w > 0 && r.h > 0) {
+    GLuint fbo, rb;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glGenRenderbuffers(1, &rb);
+    glBindRenderbuffer(GL_RENDERBUFFER, rb);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, r.w, r.h);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                              GL_RENDERBUFFER, rb);
+    wp_gl_logo_draw(c, W, H, f, r.x, r.y, 1, 1, r.w, r.h);
+    unsigned char *px = malloc((size_t)r.w * r.h * 4);
+    glReadPixels(0, 0, r.w, r.h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    assert(glGetError() == GL_NO_ERROR);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteRenderbuffers(1, &rb);
+    cairo_surface_flush(out);
+    unsigned char *od = cairo_image_surface_get_data(out);
+    int os = cairo_image_surface_get_stride(out);
+    for (int y = 0; y < r.h; ++y)
+      for (int x = 0; x < r.w; ++x) {
+        const unsigned char *g = px + ((size_t)(r.h - 1 - y) * r.w + x) * 4;
+        uint32_t *o = (uint32_t *)(od + (r.y + y) * os + (r.x + x) * 4);
+        int v[3] = {(*o >> 16) & 0xff, (*o >> 8) & 0xff, *o & 0xff};
+        for (int k = 0; k < 3; ++k) {
+          v[k] = g[k] + v[k] * (255 - g[3]) / 255;
+          v[k] = v[k] > 255 ? 255 : v[k];
+        }
+        *o = (uint32_t)(v[0] << 16 | v[1] << 8 | v[2]);
+      }
+    cairo_surface_mark_dirty(out);
+    free(px);
+  }
+  if (name) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.png", dir, name);
+    assert(cairo_surface_write_to_png(out, path) == CAIRO_STATUS_SUCCESS);
+  }
+  return out;
+}
+
+/* ms per map frame f, drawn n times (no readback). */
+static double map_ms(const struct wallpaper_config *c,
+                     const struct wp_frame *f, int n) {
+  GLuint fbo, rb;
+  glGenFramebuffers(1, &fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  glGenRenderbuffers(1, &rb);
+  glBindRenderbuffer(GL_RENDERBUFFER, rb);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, W, H);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                            GL_RENDERBUFFER, rb);
+  wp_gl_map_draw(c, W, H, f, 0, 0, 1, 1, W, H);
+  glFinish();
+  struct timespec s0, s1;
+  clock_gettime(CLOCK_MONOTONIC, &s0);
+  for (int i = 0; i < n; ++i)
+    wp_gl_map_draw(c, W, H, f, 0, 0, 1, 1, W, H);
+  glFinish();
+  clock_gettime(CLOCK_MONOTONIC, &s1);
+  glDeleteFramebuffers(1, &fbo);
+  glDeleteRenderbuffers(1, &rb);
+  return ((s1.tv_sec - s0.tv_sec) * 1e3 + (s1.tv_nsec - s0.tv_nsec) / 1e6) / n;
+}
+
+/* Tipped 0: the flat map exactly; a little: hardly moved; all the way:
+ * a landscape, the snowflake up the screen and smaller than it hovers
+ * (still inside its box), the cover gone. */
+static void check_terrain(const char *dir) {
+  struct wallpaper_config c =
+      *(const struct wallpaper_config *)wallpaper_module.defaults;
+  assert(!strcmp(c.peek_layout, "terrain"));
+  struct info in = terrain_info();
+  struct wp_frame flat = terrain_frame(&in, 0, 0);
+  flat.terrain = false;
+  flat.peek = NULL;
+  cairo_surface_t *m0 = gpu_map(&c, &flat, dir, NULL);
+  struct wp_frame f0 = terrain_frame(&in, 0, 0);
+  cairo_surface_t *t0 = gpu_map(&c, &f0, dir, NULL);
+  struct diff d = {0};
+  cairo_surface_flush(m0);
+  cairo_surface_flush(t0);
+  assert(!memcmp(cairo_image_surface_get_data(m0),
+                 cairo_image_surface_get_data(t0),
+                 (size_t)cairo_image_surface_get_stride(m0) * H));
+  /* a hair tipped: the same lines, moved a little (none come or go) */
+  struct wp_frame f1 = terrain_frame(&in, 0.01, 0);
+  cairo_surface_t *t1 = gpu_map(&c, &f1, dir, NULL);
+  long l0 = 0, l1 = 0;
+  for (int y = 0; y < H; y += 2)
+    for (int x = 0; x < W; x += 2) {
+      l0 += lum(m0, x, y) > 60;
+      l1 += lum(t1, x, y) > 60;
+    }
+  printf("terrain at 0.01: lit %ld, flat %ld\n", l1, l0);
+  assert(labs(l1 - l0) * 50 < l0);
+  (void)d;
+  cairo_surface_destroy(t1);
+  cairo_surface_destroy(t0);
+  cairo_surface_destroy(m0);
+
+  const double ts[3] = {0.35, 0.7, 1};
+  for (int i = 0; i < 3; ++i) {
+    struct wp_frame f = terrain_frame(&in, ts[i], i == 2 ? 1 : 0);
+    char name[64];
+    snprintf(name, sizeof name, "wallpaper_gl_terrain_%d",
+             (int)lround(ts[i] * 100));
+    printf("terrain %s: map %.2f ms (flat %.2f)\n", name, map_ms(&c, &f, 10),
+           map_ms(&c, &flat, 10));
+    cairo_surface_destroy(terrain_shot(&c, &f, dir, name));
+  }
+  /* The clock stands upright: its outline lights the screen above its
+   * foot (looked for at its middle, a third of its size up). */
+  struct wp_frame fc = terrain_frame(&in, 1, 1);
+  struct wp_terrain T;
+  wp_terrain_at(&c, W, H, &fc, &T);
+  assert(fabs(T.clk_u[2] - 1) < 1e-9);
+  double fx, fy, top[3];
+  wp_terrain_clock_point(&T, 0, 0.36 * T.clk_size * T.clk_stretch, top);
+  assert(wp_cam_project(&T.cam, top[0], top[1], top[2], &fx, &fy, NULL));
+  cairo_surface_t *shot = gpu_map(&c, &fc, dir, NULL);
+  long bright = 0;
+  for (int y = (int)fy - 150; y < (int)fy + 150; ++y)
+    for (int x = (int)fx - 600; x < (int)fx + 600; ++x)
+      if (x >= 0 && y >= 0 && x < W && y < H)
+        bright += lum(shot, x, y) > 300;
+  printf("terrain clock: %ld bright px\n", bright);
+  assert(bright > 2000);
+  cairo_surface_destroy(shot);
+  /* The snowflake hovers up the screen, its box round it. */
+  struct wp_frame f = terrain_frame(&in, 1, 1);
+  double cx, cy, s;
+  wp_logo_place(&c, W, H, &f, &cx, &cy, &s);
+  assert(cy < H / 2.0);
+  struct wp_rect r = wp_logo_box(&c, W, H, &f);
+  assert(r.w > 0 && r.h > 0 && r.x <= cx && cx <= r.x + r.w && r.y <= cy &&
+         cy <= r.y + r.h);
+  /* Without the GPU it's "side". */
+  f.terrain = false;
+  assert(wp_peek_terrain(&c, &f) == 0 && wp_peek_side(&c, &f) == 1);
+}
+
 int main(int argc, char **argv) {
   const char *dir = argc > 1 ? argv[1] : ".";
   if (!wp_gl_init(NULL) || !wp_gl_current()) {
@@ -1036,6 +1247,7 @@ int main(int argc, char **argv) {
   check_shows(dir);
   check_logo(dir);
   check_tilt(dir);
+  check_terrain(dir);
   wp_gl_finish();
   wp_render_finish();
   return 0;

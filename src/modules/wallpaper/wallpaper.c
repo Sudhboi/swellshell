@@ -73,6 +73,10 @@ static struct {
    * spring: radians and rad/s; motion: ms of the last pointer motion;
    * closing: ms since it has to go flat for a window, 0: it needn't */
   double tilt[2], tilt_v[2];
+  /* the terrain's mesas (CPU, memory, battery), eased towards the
+   * popup's levels since tvals_at (0: not showing) */
+  double tvals[3];
+  int64_t tvals_at;
   int64_t tilt_motion, tilt_last, tilt_closing;
   /* the pointer's wake through the topo lines, on poke_out: points
    * dropped every topo_poke_spacing (logical px), oldest first, the last
@@ -651,6 +655,29 @@ bool wp_peek_moving(const struct peek *pk, int64_t now) {
          (pk->expand_at && now - pk->expand_at < GATHER_SPRING_MS && v.pop > 0);
 }
 
+/* The mesas follow the popup's levels over TVALS_S; they start where the
+ * levels are (the terrain raises them as it comes). */
+#define TVALS_S 0.25
+static void ease_terrain(int64_t now, struct wp_frame *f) {
+  const struct info *in = f->peek;
+  if (!in) {
+    w.tvals_at = 0;
+    memset(f->terrain_vals, 0, sizeof(f->terrain_vals));
+    return;
+  }
+  double to[3] = {
+      in->cpu < 0 ? 0 : in->cpu / 100.0,
+      in->mem_total_gib > 0 ? in->mem_used_gib / in->mem_total_gib : 0,
+      in->has_battery ? in->battery / 100.0 : 0,
+  };
+  double a = w.tvals_at ? 1 - exp(-(now - w.tvals_at) / 1000.0 / TVALS_S) : 1;
+  for (int i = 0; i < 3; ++i) {
+    w.tvals[i] += (fmin(fmax(to[i], 0), 1) - w.tvals[i]) * a;
+    f->terrain_vals[i] = w.tvals[i];
+  }
+  w.tvals_at = now;
+}
+
 void wp_frame_at(int64_t now, struct wp_frame *f) {
   if (w.join_turn) {
     w.join_turn = false;
@@ -748,6 +775,7 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   }
   f->bg_fade = handover_fade(now);
   wp_peek_frame(w.peek, w.ws_empty, now, f);
+  ease_terrain(now, f);
   f->peek_area = false;
   show_frame(now, f);
 }
@@ -1088,8 +1116,10 @@ static void check_style(void) {
   if (strcmp(w.cfg.style, "topo") && strcmp(w.cfg.style, "classic"))
     warn("wallpaper: unknown style '%s' (topo or classic); using topo",
          w.cfg.style);
-  if (strcmp(w.cfg.peek_layout, "side") && strcmp(w.cfg.peek_layout, "flanks"))
-    warn("wallpaper: unknown peek_layout '%s' (side or flanks); using side",
+  if (strcmp(w.cfg.peek_layout, "side") && strcmp(w.cfg.peek_layout, "flanks") &&
+      strcmp(w.cfg.peek_layout, "terrain"))
+    warn("wallpaper: unknown peek_layout '%s' (terrain, side or flanks); "
+         "using side",
          w.cfg.peek_layout);
 }
 

@@ -135,9 +135,82 @@ static const struct tile *tile(const struct wallpaper_config *c, const char *s,
   return lru;
 }
 
+/* The clock's sign over the terrain (wp_peek_clock_mask). */
+static struct {
+  char text[16], font[128];
+  double size;
+  cairo_surface_t *s;
+  double ink_w, ink_h, base;
+  unsigned id;
+} clk;
+
 void wp_render_peek_finish(void) {
   for (int i = 0; i < TILES; ++i)
     tile_free(&tiles[i]);
+  if (clk.s)
+    cairo_surface_destroy(clk.s);
+  unsigned id = clk.id;
+  memset(&clk, 0, sizeof clk);
+  clk.id = id;
+}
+
+bool wp_peek_clock_mask(const struct wallpaper_config *c,
+                        const struct info *in, double size,
+                        struct wp_clock_mask *m) {
+  char hhmm[16];
+  struct tm tm;
+  localtime_r(&in->now, &tm);
+  strftime(hhmm, sizeof hhmm, "%H:%M", &tm);
+  if (!clk.s || clk.size != size || strcmp(clk.text, hhmm) ||
+      strcmp(clk.font, c->peek_font)) {
+    if (clk.s)
+      cairo_surface_destroy(clk.s);
+    copy_str(clk.text, sizeof clk.text, hhmm);
+    copy_str(clk.font, sizeof clk.font, c->peek_font);
+    clk.size = size;
+    cairo_surface_t *one = cairo_image_surface_create(CAIRO_FORMAT_A8, 1, 1);
+    cairo_t *mc = cairo_create(one);
+    PangoLayout *l = pango_cairo_create_layout(mc);
+    PangoFontDescription *fd = pango_font_description_from_string(c->peek_font);
+    pango_font_description_set_absolute_size(fd, size * PANGO_SCALE);
+    pango_font_description_set_weight(fd, PANGO_WEIGHT_BOLD);
+    pango_layout_set_font_description(l, fd);
+    pango_font_description_free(fd);
+    pango_layout_set_text(l, hhmm, -1);
+    PangoRectangle ink;
+    pango_layout_get_pixel_extents(l, &ink, NULL);
+    /* Blurred a little: its edge is where it's half, smooth at any
+     * distance; clear round it. */
+    int b = (int)ceil(0.02 * size), pad = 3 * b + 2;
+    int w = MAX(ink.width, 1) + 2 * pad, h = MAX(ink.height, 1) + 2 * pad;
+    clk.s = cairo_image_surface_create(CAIRO_FORMAT_A8, w, h);
+    cairo_t *tc = cairo_create(clk.s);
+    cairo_move_to(tc, pad - ink.x, pad - ink.y);
+    pango_cairo_update_layout(tc, l);
+    pango_cairo_show_layout(tc, l);
+    cairo_destroy(tc);
+    g_object_unref(l);
+    cairo_destroy(mc);
+    cairo_surface_destroy(one);
+    cairo_surface_flush(clk.s);
+    unsigned char *d = cairo_image_surface_get_data(clk.s);
+    int st = cairo_image_surface_get_stride(clk.s);
+    wp_blur_a8(d, w, h, st, b);
+    cairo_surface_mark_dirty(clk.s);
+    clk.ink_w = ink.width;
+    clk.ink_h = ink.height;
+    clk.base = pad + MAX(ink.height, 1);
+    ++clk.id;
+  }
+  m->data = cairo_image_surface_get_data(clk.s);
+  m->w = cairo_image_surface_get_width(clk.s);
+  m->h = cairo_image_surface_get_height(clk.s);
+  m->stride = cairo_image_surface_get_stride(clk.s);
+  m->ink_w = clk.ink_w;
+  m->ink_h = clk.ink_h;
+  m->base = clk.base;
+  m->id = clk.id;
+  return true;
 }
 
 /* Paint t with its origin's baseline at x, y (whole px, so it stays sharp)
@@ -292,8 +365,9 @@ static void lay_out(const struct wallpaper_config *c, int pw, int ph,
       L->cx + L->bmax / 2 + pad, L->sy + L->sh / 2 + L->slide + pad, pw, ph);
 }
 
+/* The side column may show: "side", or "terrain" falling back to it. */
 static bool sided(const struct wallpaper_config *c) {
-  return strcmp(c->peek_layout, "flanks") != 0;
+  return wp_peek_layout(c) != WP_LAYOUT_FLANKS;
 }
 
 static void lay_out_side(const struct wallpaper_config *c, int pw, int ph,
@@ -346,6 +420,9 @@ static void lay_out_side(const struct wallpaper_config *c, int pw, int ph,
                           dy + total + pad, pw, ph);
 }
 
+static struct wp_rect terrain_rect(const struct wallpaper_config *c, int pw,
+                                   int ph, const struct layout *L);
+
 void wp_peek_regions(const struct wallpaper_config *c, int pw, int ph,
                      struct wp_rect out[WP_PEEK_REGIONS]) {
   struct layout L;
@@ -353,12 +430,14 @@ void wp_peek_regions(const struct wallpaper_config *c, int pw, int ph,
   out[0] = L.left;
   out[1] = L.right;
   out[2] = L.strip;
-  out[3] = (struct wp_rect){0, 0, 0, 0};
+  out[3] = out[4] = (struct wp_rect){0, 0, 0, 0};
   if (sided(c)) {
     struct side S;
     lay_out_side(c, pw, ph, &S);
     out[3] = S.rect;
   }
+  if (wp_peek_layout(c) == WP_LAYOUT_TERRAIN)
+    out[4] = terrain_rect(c, pw, ph, &L);
 }
 
 static void clip_to(cairo_t *cr, const struct wp_rect *r) {
@@ -708,6 +787,154 @@ static void draw_side(cairo_t *cr, const struct wallpaper_config *c,
   draw_strip(cr, c, l, L, in, a, -off);
 }
 
+/* ---- "terrain": labels pinned to the landscape ---- */
+
+/* Where the labels hang at T: over each mesa's top, the seconds right of
+ * HH:MM on its plateau, the date on the ground in front of it. False for
+ * one behind the eye. */
+struct pins {
+  double mx[3], my[3];
+  bool mesa[3];
+  double sx, sy, dx, dy;
+  bool secs, date;
+};
+
+static void pin(const struct wallpaper_config *c, int pw, int ph,
+                const struct wp_terrain *T, struct pins *P) {
+  for (int i = 0; i < 3; ++i) {
+    double z = wp_terrain_z(c, pw, ph, T, T->mesa_x[i], T->mesa_y[i]);
+    P->mesa[i] = wp_cam_project(&T->cam, T->mesa_x[i], T->mesa_y[i], z,
+                                &P->mx[i], &P->my[i], NULL);
+  }
+  /* The digits' box: from the mask if it's made, else from the size. */
+  double hw = 1.3 * T->clk_size, ih = 0.72 * T->clk_size;
+  if (clk.s && clk.size == T->clk_size) {
+    hw = clk.ink_w / 2;
+    ih = clk.ink_h;
+  }
+  ih *= T->clk_stretch;
+  /* the seconds off the sign's right edge, high up; the date on the
+   * ground in front of its foot */
+  double p[3];
+  wp_terrain_clock_point(T, hw + 0.1 * T->clk_size, 0.72 * ih, p);
+  P->secs = wp_cam_project(&T->cam, p[0], p[1], p[2], &P->sx, &P->sy, NULL);
+  /* (along the ground towards the eye: r turned a quarter) */
+  double x = T->clk_x - T->clk_r[1] * 0.5 * T->clk_size;
+  double y = T->clk_y + T->clk_r[0] * 0.5 * T->clk_size;
+  double z = wp_terrain_z(c, pw, ph, T, x, y);
+  P->date = wp_cam_project(&T->cam, x, y, z, &P->dx, &P->dy, NULL);
+}
+
+/* Everywhere they can be, as the camera comes and goes and the mesas
+ * rise and fall. */
+static struct wp_rect terrain_rect(const struct wallpaper_config *c, int pw,
+                                   int ph, const struct layout *L) {
+  double x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
+  struct wp_frame f = {0};
+  for (int v = 0; v < 2; ++v) {
+    f.terrain_vals[0] = f.terrain_vals[1] = f.terrain_vals[2] = v;
+    for (int i = 0; i <= 8; ++i) {
+      struct wp_terrain T;
+      wp_terrain_at_t(c, pw, ph, &f, i / 8.0, &T);
+      struct pins P;
+      pin(c, pw, ph, &T, &P);
+      double xs[5] = {P.mx[0], P.mx[1], P.mx[2], P.sx, P.dx};
+      double ys[5] = {P.my[0], P.my[1], P.my[2], P.sy, P.dy};
+      bool ok[5] = {P.mesa[0], P.mesa[1], P.mesa[2], P.secs, P.date};
+      for (int j = 0; j < 5; ++j)
+        if (ok[j]) {
+          x0 = fmin(x0, xs[j]), x1 = fmax(x1, xs[j]);
+          y0 = fmin(y0, ys[j]), y1 = fmax(y1, ys[j]);
+        }
+    }
+  }
+  if (x0 > x1)
+    return (struct wp_rect){0, 0, 0, 0};
+  /* the widest label (the date) either way, the tallest over its pin */
+  double sh = c->react_shake ? ceil(c->react_shake_px * L->k) : 0;
+  double padx = 14 * L->sd + sh, pady = 3.2 * L->sr + L->ss + sh;
+  return wp_clamp_rect(x0 - padx, y0 - pady, x1 + padx, y1 + pady, pw, ph);
+}
+
+/* The labels, and the stats and workspaces along the bottom. */
+static void draw_terrain(cairo_t *cr, const struct wallpaper_config *c,
+                         const struct look *l, const struct layout *L, int pw,
+                         int ph, const struct wp_frame *f, double a) {
+  const struct info *in = f->peek;
+  struct wp_terrain T;
+  wp_terrain_at(c, pw, ph, f, &T);
+  struct pins P;
+  pin(c, pw, ph, &T, &P);
+  cairo_save(cr);
+  clip_to(cr, &(struct wp_rect){0, 0, pw, ph});
+  /* over each mesa: what it measures, its value */
+  bool low = in->has_battery && !in->charging && in->battery <= f->peek_low_pct;
+  char val[3][16];
+  if (in->cpu < 0)
+    snprintf(val[0], 16, "--");
+  else
+    snprintf(val[0], 16, "%d%%", in->cpu);
+  if (in->mem_total_gib > 0)
+    snprintf(val[1], 16, "%d%%",
+             (int)lround(100 * in->mem_used_gib / in->mem_total_gib));
+  else
+    snprintf(val[1], 16, "--");
+  if (in->has_battery)
+    snprintf(val[2], 16, "%d%%", in->battery);
+  else
+    snprintf(val[2], 16, "--");
+  const char *what[3] = {"CPU", "RAM", icon_battery(in)};
+  for (int i = 0; i < 3; ++i) {
+    if (!P.mesa[i])
+      continue;
+    const struct tile *vt = tile(c, val[i], L->sr, true, 0);
+    const struct tile *wt = tile(c, what[i], 0.75 * L->sr, false, 0);
+    double base = P.my[i] - 0.9 * L->sr;
+    paint_col(cr, c, vt, P.mx[i] - vt->w / 2, base,
+              i == 2 && low ? c->peek_warn : l->text, a);
+    paint_col(cr, c, wt, P.mx[i] - fmax(wt->w, wt->ink_w) / 2,
+              base - 1.15 * L->sr, l->dim, a);
+  }
+  /* the seconds on the clock's plateau, the date in front of it */
+  char hhmm[16], ss[8], date[96];
+  clock_text(in, hhmm, ss, date);
+  if (P.secs) {
+    const struct tile *st = tile(c, ss, L->ss, false, 0);
+    paint_col(cr, c, st, P.sx, P.sy, l->dim, a);
+  }
+  if (P.date) {
+    const struct tile *dt = tile(c, date, L->sd, false, 0);
+    paint_col(cr, c, dt, P.dx - dt->w / 2, P.dy, l->dim, a);
+  }
+  cairo_restore(cr);
+  /* along the bottom: network, volume, brightness, power, uptime */
+  char sig[16], name[64];
+  struct piece p[16];
+  int n = net_pieces(in, p, sig, name);
+  char cpu[16], pwr[24], mem[32], up[32], vol[16], bri[16];
+  stat_text(in, cpu, pwr, mem, up);
+  snprintf(vol, sizeof vol, in->has_volume ? "%d%%" : "--", in->volume);
+  snprintf(bri, sizeof bri, in->has_brightness ? "%d%%" : "--",
+           in->brightness);
+  p[n++] = (struct piece){"     ", true, false};
+  p[n++] = (struct piece){icon_volume(in), in->muted, true};
+  p[n++] = (struct piece){vol, in->muted, false};
+  p[n++] = (struct piece){"   ", true, false};
+  p[n++] = (struct piece){ICON_BRIGHT, false, true};
+  p[n++] = (struct piece){bri, false, false};
+  if (in->has_power) {
+    p[n++] = (struct piece){"     PWR ", true, false};
+    p[n++] = (struct piece){pwr, false, false};
+  }
+  p[n++] = (struct piece){"     up ", true, false};
+  p[n++] = (struct piece){up, false, false};
+  cairo_save(cr);
+  clip_to(cr, &L->strip);
+  pieces(cr, c, l, L, p, n, L->cx, L->stats, a);
+  draw_strip(cr, c, l, L, in, a, 0);
+  cairo_restore(cr);
+}
+
 void wp_draw_peek(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
                   const struct wp_frame *f) {
   if (!f->peek || f->peek_pop <= 0)
@@ -720,16 +947,23 @@ void wp_draw_peek(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
   /* They slide in from the sides as they show. */
   double off = (1 - a) * L.slide;
   /* "side": they fade as the snowflake moves aside, and stay out once the
-   * column has shown (so not back while it closes). */
-  bool side = sided(c);
-  double fa = side ? a * (1 - wp_peek_side(c, f)) * (1 - e) : a;
+   * column has shown (so not back while it closes); "terrain", as the map
+   * tips. */
+  enum wp_layout lay = wp_peek_layout(c);
+  bool terrain = lay == WP_LAYOUT_TERRAIN && f->terrain;
+  bool side = lay != WP_LAYOUT_FLANKS && !terrain;
+  /* (over the terrain they're gone before its clock and mesas rise) */
+  double moved = terrain ? clamp01(wp_peek_terrain(c, f) / 0.15)
+                         : wp_peek_side(c, f);
+  double fa = side || terrain ? a * (1 - moved) * (1 - e) : a;
   cairo_save(cr);
   if (fa > 0) {
     cairo_save(cr);
     clip_to(cr, &L.left);
     /* Over the GPU's map the topo lines show the hold (they gather in);
      * the snowflake does it, moving aside. */
-    double hold = side || (l.topo && f->map_under) ? 0 : f->peek_hold;
+    double hold =
+        side || terrain || (l.topo && f->map_under) ? 0 : f->peek_hold;
     draw_left(cr, c, &l, &L, f->peek, fa, e, hold, off);
     cairo_restore(cr);
     cairo_save(cr);
@@ -745,6 +979,8 @@ void wp_draw_peek(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
       cairo_restore(cr);
     }
   }
+  if (terrain && e > 0)
+    draw_terrain(cr, c, &l, &L, pw, ph, f, a * e);
   if (side && e > 0) {
     /* The column slides in from the left with the expand. */
     struct side S;

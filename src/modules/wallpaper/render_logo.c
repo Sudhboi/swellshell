@@ -383,7 +383,10 @@ void wp_logo_offset(const struct wallpaper_config *c, int pw, int ph,
 
 double wp_peek_side(const struct wallpaper_config *c,
                     const struct wp_frame *f) {
-  if (!f || !f->peek || !strcmp(c->peek_layout, "flanks"))
+  if (!f || !f->peek)
+    return 0;
+  enum wp_layout l = wp_peek_layout(c);
+  if (l == WP_LAYOUT_FLANKS || (l == WP_LAYOUT_TERRAIN && f->terrain))
     return 0;
   return fmin(fmax(f->peek_side, 0), 1);
 }
@@ -396,6 +399,14 @@ void wp_logo_place(const struct wallpaper_config *c, int pw, int ph,
   *cx = pw / 2.0 + dx;
   *cy = ph / 2.0 + dy;
   *s = 1;
+  if (wp_peek_terrain(c, f) > 0) {
+    /* Hovering over the summit, seen by the tipped eye (the GPU draws it
+     * in its plane; s stays the size in it). */
+    struct wp_terrain T;
+    wp_terrain_at(c, pw, ph, f, &T);
+    wp_cam_project(&T.cam, T.lx, T.ly, T.lz, cx, cy, NULL);
+    return;
+  }
   double m = wp_peek_side(c, f);
   if (m <= 0)
     return;
@@ -407,6 +418,25 @@ void wp_logo_place(const struct wallpaper_config *c, int pw, int ph,
 struct wp_rect wp_logo_box(const struct wallpaper_config *c, int pw, int ph,
                            const struct wp_frame *f) {
   double r = wp_logo_reach(c, pw), cx, cy, s;
+  if (wp_peek_terrain(c, f) > 0) {
+    /* Its square in its plane, and the layers' under it, seen. */
+    struct wp_terrain T;
+    wp_terrain_at(c, pw, ph, f, &T);
+    double depth = c->logo_tilt_depth * c->logo_radius * pw / WP_REF_WIDTH;
+    double x0 = INFINITY, y0 = INFINITY, x1 = -INFINITY, y1 = -INFINITY;
+    for (int i = 0; i < 8; ++i) {
+      double sx, sy;
+      if (!wp_cam_project(&T.cam, T.lx + (i & 1 ? r : -r),
+                          T.ly + (i & 2 ? r : -r), T.lz - (i & 4 ? depth : 0),
+                          &sx, &sy, NULL))
+        continue;
+      x0 = fmin(x0, sx), y0 = fmin(y0, sy);
+      x1 = fmax(x1, sx), y1 = fmax(y1, sy);
+    }
+    if (x0 > x1)
+      return (struct wp_rect){0, 0, 0, 0};
+    return wp_clamp_rect(x0 - 2, y0 - 2, x1 + 2, y1 + 2, pw, ph);
+  }
   wp_logo_place(c, pw, ph, f, &cx, &cy, &s);
   r *= s;
   return wp_clamp_rect(cx - r, cy - r, cx + r, cy + r, pw, ph);

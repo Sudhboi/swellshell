@@ -38,6 +38,16 @@ static struct {
       m_gather_reach, m_hold_front, m_hold_lit, m_hold_band, m_drift, m_drift_l,
       m_s_in, m_s_out, m_s_lit, m_s_lit_all, m_s_levels, m_pokes, m_npokes,
       m_poke_r, m_poke_light;
+  /* peek_layout "terrain": the heights again, filtered (mirrored past the
+   * grid), and the clock raised out of them */
+  GLuint hf_tex, clk_tex;
+  unsigned hf_grid, clk_id;
+  GLint m_terrain, m_hf, m_clk, m_lsdf, m_cam_o, m_cam_r, m_cam_d, m_cam_f,
+      m_cam_c, m_cam_F, m_t_t, m_t_tf, m_t_unit, m_t_zmax, m_t_fog,
+      m_t_shade, m_t_light, m_lmax, m_t_sum, m_t_sum_r, m_clk_o, m_clk_r,
+      m_clk_u, m_clk_n, m_clk_wh, m_clk_base, m_clk_st, m_clk_a, m_clk_depth,
+      m_glass, m_cedge0, m_cedge1, m_cedge2, m_mesa, m_mesa_r, m_mesa_col, m_l_pos, m_l_rot,
+      m_l_inv_s, m_l_scale, m_l_on, m_lsdf_org, m_lsdf_size;
   /* the topo snowflake */
   GLuint logo_prog, logo_tex[3]; /* distance field, shadow, glow */
   unsigned logo_ids[3];          /* what's in them */
@@ -45,7 +55,8 @@ static struct {
       l_inv_s, l_scale, l_sdf_org, l_sdf_size, l_sh_org, l_sh_size, l_ne_org,
       l_ne_size, l_sh_off, l_sh_alpha, l_neon_a, l_fill, l_edge0, l_edge1,
       l_edge2, l_edge_alpha, l_hw, l_axis0, l_axis, l_tilted, l_tm, l_tn,
-      l_focal, l_depth, l_layers, l_layer_a;
+      l_focal, l_depth, l_layers, l_layer_a, l_c_o, l_c_r, l_c_d, l_c_f,
+      l_c_c, l_c_F;
 } g;
 
 static const char *vs_src = "#version 300 es\n"
@@ -163,6 +174,17 @@ static const char *map_fs_src =
     "uniform vec4 line0, line1, line2;\n"
     "uniform vec3 bg0, bg1;\n"
     "uniform vec4 rings[" WP_RINGS_STR "];\n"
+    "uniform int terrain;\n"
+    "uniform highp sampler2D hf, clk, lsdf;\n"
+    "uniform vec3 cam_o, cam_r, cam_d, cam_f, t_light, t_sum, l_pos;\n"
+    "uniform vec2 cam_c, clk_wh, l_rot, lsdf_org,\n"
+    "    lsdf_size;\n"
+    "uniform float cam_F, t_t, t_tf, t_unit, t_zmax, t_fog, t_shade, lmax,\n"
+    "    t_sum_r, mesa_r, l_inv_s, l_scale, l_on, clk_base, clk_st, clk_a,\n"
+    "    clk_depth;\n"
+    "uniform vec3 clk_o, clk_r, clk_u, clk_n;\n"
+    "uniform vec4 glass, cedge0, cedge1, cedge2;\n"
+    "uniform vec4 mesa[3], mesa_col[3];\n"
     "out vec4 color;\n"
     "float at(ivec2 i) {\n"
     "  return texelFetch(heights, clamp(i, ivec2(0), gsize - 1), 0).r;\n"
@@ -185,6 +207,205 @@ static const char *map_fs_src =
     "}\n"
     "float bands(float t, float side) {\n"
     "  return mix(band(0, t), band(1, t), side);\n"
+    "}\n"
+    /* The terrain: the map's heights (drifting as the flat map does,
+     * mirrored past the grid), the summit under the snowflake and the
+     * mesas, each a pad at its floor and a column to its top. Units: the
+     * map's 0..1. */
+    "float ground(vec2 p) {\n"
+    "  if (drift != vec2(0.0))\n"
+    "    p -= drift * (1.0 + 0.3 * sin(p.yx / drift_l));\n"
+    "  return texture(hf, ((p - gorigin) / cell + 0.5) / vec2(gsize)).r;\n"
+    "}\n"
+    "float nm;\n" /* (th's) how far p is outside the nearest mesa */
+    "float th(vec2 p, out float cm) {\n"
+    "  nm = 1e9;\n"
+    "  float h = ground(p);\n"
+    "  vec2 s = p - t_sum.xy;\n"
+    "  h += t_sum.z * exp(-dot(s, s) / (t_sum_r * t_sum_r));\n"
+    "  cm = 0.0;\n"
+    "  for (int i = 0; i < 3; ++i) {\n"
+    "    float r = length(p - mesa[i].xy);\n"
+    "    nm = min(nm, r - mesa_r);\n"
+    "    if (r >= 1.35 * mesa_r)\n"
+    "      continue;\n"
+    "    h = mix(h, mesa[i].z,\n"
+    "            (1.0 - smoothstep(mesa_r, 1.35 * mesa_r, r)) * t_tf);\n"
+    "    h = mix(h, mesa[i].w,\n"
+    "            (1.0 - smoothstep(0.72 * mesa_r, mesa_r, r)) * t_tf);\n"
+    "  }\n"
+    "  return h;\n"
+    "}\n"
+    /* The clock's sign: where the ray o + d·t meets it (moved off px
+     * back), as the mask's uv (its foot at row clk_base, stretched up). */
+    "vec2 sign_uv(vec3 o, vec3 d, float off, out float t) {\n"
+    "  vec3 c = clk_o - clk_n * off;\n"
+    "  float dn = dot(d, clk_n);\n"
+    "  t = abs(dn) > 1e-6 ? dot(c - o, clk_n) / dn : -1.0;\n"
+    "  vec3 X = o + d * t - c;\n"
+    "  return vec2(0.5 + dot(X, clk_r) / clk_wh.x,\n"
+    "              (clk_base - dot(X, clk_u) / clk_st) / clk_wh.y);\n"
+    "}\n"
+    "float sign_at(vec2 uv) {\n"
+    "  return uv == clamp(uv, 0.0, 1.0) ? texture(clk, uv).r : 0.0;\n"
+    "}\n"
+    "vec4 sign_edge(float x) {\n"
+    "  return x < 0.5 ? mix(cedge0, cedge1, x * 2.0)\n"
+    "                 : mix(cedge1, cedge2, x * 2.0 - 1.0);\n"
+    "}\n"
+    /* Tipped (peek_layout "terrain"): the eye's ray through q marched to
+     * the ground (steps as long as it is above it over the steepest it
+     * likely is), then halved in on it, and the lines drawn there. The
+     * flat map's pushes (pe - q) fade as the camera goes. */
+    "vec4 tshade(vec2 q, vec2 pe, float x, float lit, float pclear, float sl) {\n"
+    "  float tfog, wsc, tsh, shd = 0.0, v;\n"
+    "  vec3 fill = vec3(0.0), tcol = vec3(0.0);\n"
+    "  float tamt = 0.0, xl;\n"
+
+    "  vec3 dir = normalize(cam_r * (q.x - cam_c.x) + cam_d * (q.y - cam_c.y)\n"
+    "                       + cam_f * cam_F);\n"
+    "  float far = cam_F + 3.5 * t_fog;\n"
+    "  bool sky = dir.z > -1e-4;\n"
+    "  dir.z = min(dir.z, -1e-4);\n"
+    "  float a0 = min(max((cam_o.z - t_zmax) / -dir.z, 0.0), far);\n"
+    "  float b0 = min(cam_o.z / -dir.z, far);\n"
+    "  float slope = 0.9 / (-dir.z + 1.2 * length(dir.xy));\n"
+    "  float st = a0, prev = a0, cm;\n"
+    "  for (int i = 0; i < 160; ++i) {\n"
+    "    vec3 P = cam_o + dir * st;\n"
+    "    float dz = P.z - t_unit * th(P.xy, cm);\n"
+    "    if (dz <= 0.0 || st >= b0)\n"
+    "      break;\n"
+    "    prev = st;\n"
+    "    float step = max(dz * slope, 2.5 * k);\n"
+    /* the mesas' walls are steeper than slope allows: near them, short
+     * enough steps not to pass through */
+    "    if (t_tf > 0.0)\n"
+    "      step = min(step, max(nm, 0.3 * mesa_r));\n"
+    "    st = min(st + step, b0);\n"
+    "  }\n"
+    "  float lo = prev, hi = st;\n"
+    "  float dlo = -1.0, dhi = 1.0;\n"
+    "  for (int i = 0; i < 8; ++i) {\n"
+    "    float m = 0.5 * (lo + hi);\n"
+    "    vec3 P = cam_o + dir * m;\n"
+    "    float dz = P.z - t_unit * th(P.xy, cm);\n"
+    "    if (dz <= 0.0) {\n"
+    "      hi = m;\n"
+    "      dhi = dz;\n"
+    "    } else {\n"
+    "      lo = m;\n"
+    "      dlo = dz;\n"
+    "    }\n"
+    "  }\n"
+    /* the last bit by where the line between the two crosses */
+    "  if (dlo > 0.0 && dhi < 0.0)\n"
+    "    hi = mix(lo, hi, dlo / (dlo - dhi));\n"
+    "  vec3 hp = cam_o + dir * hi;\n"
+    "  vec2 P2 = hp.xy + (pe - q) * (1.0 - t_t);\n"
+    "  float hh = th(P2, cm);\n"
+    "  v = hh * levels - 0.5;\n"
+    "  xl = clamp(dot(P2 - axis0, axis), 0.0, 1.0);\n"
+    "  tfog = exp(-max(hi - cam_F, 0.0) / t_fog);\n"
+    "  if (sky || hi >= far)\n"
+    "    tfog = 0.0;\n"
+    "  wsc = mix(1.0, clamp(cam_F / hi, 0.6, 1.5), t_t);\n"
+    "  vec3 n = cross(dFdx(hp), dFdy(hp));\n"
+    "  n = length(n) > 0.0 ? normalize(n) : vec3(0.0, 0.0, 1.0);\n"
+    "  n *= sign(n.z + 1e-6);\n"
+    "  float lam = max(dot(n, t_light), 0.0);\n"
+    "  tsh = mix(1.0, 0.4 + 0.75 * lam, t_t);\n"
+    /* the snowflake's shadow, its outline's light round it */
+    "  if (l_on > 0.0) {\n"
+    "    float s = (l_pos.z - hp.z) / t_light.z;\n"
+    "    if (s > 0.0) {\n"
+    "      vec2 X = hp.xy + t_light.xy * s - l_pos.xy;\n"
+    "      vec2 b = vec2(l_rot.x * X.x + l_rot.y * X.y,\n"
+    "                    l_rot.x * X.y - l_rot.y * X.x) * l_inv_s;\n"
+    "      vec2 uv = (b - lsdf_org) / lsdf_size;\n"
+    "      float d = uv == clamp(uv, 0.0, 1.0)\n"
+    "                ? texture(lsdf, uv).r * l_scale : 1e4;\n"
+    "      float pen = 2.0 * k + 0.012 * s;\n"
+    "      shd = l_on * (1.0 - smoothstep(-pen, pen, d));\n"
+    "      float u = (d - pen) / (pen + 12.0 * k);\n"
+    "      float rim = l_on * exp(-u * u);\n"
+    "      lit = max(lit, 0.9 * rim);\n"
+    "    }\n"
+    "  }\n"
+    /* the clock's sign's, falling in front of it */
+    "  if (clk_a > 0.0) {\n"
+    "    float ts;\n"
+    "    float m = sign_at(sign_uv(hp, t_light, 0.0, ts));\n"
+    "    if (ts > 0.0)\n"
+    "      shd = max(shd, 0.8 * clk_a * smoothstep(0.3, 0.7, m));\n"
+    "  }\n"
+    /* the mesas: their sides' lines in their colour, lit, their tops
+     * filled with it */
+    "  for (int i = 0; i < 3; ++i) {\n"
+    "    float r = length(P2 - mesa[i].xy);\n"
+    "    float side = (1.0 - smoothstep(0.98 * mesa_r, 1.08 * mesa_r, r)) * t_tf;\n"
+    "    float top = (1.0 - smoothstep(0.64 * mesa_r, 0.7 * mesa_r, r)) * t_tf;\n"
+    "    if (side > tamt) {\n"
+    "      tcol = mesa_col[i].rgb;\n"
+    "      tamt = side * mesa_col[i].a;\n"
+    "    }\n"
+    "    lit = max(lit, 0.7 * side * (1.0 - top));\n"
+    "    fill += mesa_col[i].rgb * mesa_col[i].a * 0.2 * top;\n"
+    "  }\n"
+    "  fill += t_shade * lam * t_t * mix(line0.rgb, line2.rgb, xl);\n"
+
+    /* past the grid the heights only mirror: the lines fade out there */
+    "  vec2 gx = max(max(vec2(gorigin) - P2, P2 - (vec2(gorigin) + vec2(gsize - 1) * cell)), 0.0);\n"
+    "  tfog *= 1.0 - smoothstep(0.0, 360.0 * k, max(gx.x, gx.y));\n"
+    "  fill *= (1.0 - shd) * tfog;\n"
+    "  float fw = max(length(vec2(dFdx(v), dFdy(v))), 1e-5);\n"
+    "  float li = floor(v + 0.5);\n"
+    "  float dist = abs(v - li) / fw;\n"
+    "  bool index = every > 0 && int(li) % every == every / 2;\n"
+    "  float dl = s_levels.x - li;\n"
+    "  if (s_levels.y > 0.0 && dl > 0.0)\n"
+    "    lit = max(lit, s_levels.y * exp(-(dl - 0.6) * (dl - 0.6) * 2.5));\n"
+    "  float w = lw * (index ? iw : 1.0) * (1.0 + light_w * lit) * wsc;\n"
+    "  float cov = li < 0.0 || li >= lmax ? 0.0\n"
+    "            : clamp(w * 0.5 - dist + 0.5, 0.0, 1.0);\n"
+    "  cov *= clamp(dl, 0.0, 1.0) * (1.0 - pclear) *\n"
+    "         (1.0 - smoothstep(s_in.x - s_in.y, s_in.x, sl)) *\n"
+    "         smoothstep(s_out.x - s_out.y, s_out.x, sl);\n"
+    "  cov *= tfog * (1.0 - 0.65 * shd);\n"
+    "  vec4 lc = xl < 0.5 ? mix(line0, line1, xl * 2.0)\n"
+    "                     : mix(line1, line2, xl * 2.0 - 1.0);\n"
+    "  lc.rgb = mix(lc.rgb, tcol, tamt);\n"
+    "  float a = min(lc.a * (1.0 + light * lit), 1.0) * tsh;\n"
+    "  vec3 c = mix(mix(bg0, bg1, x), lc.rgb, cov * a) + fill;\n"
+    /* The clock's sign, where it's nearer than the ground: its thickness
+     * as faint outlines behind, then its glass, the contours' levels
+     * running across it, and its outline in the snowflake's colours. */
+    "  if (clk_a > 0.0) {\n"
+    "    for (int i = 3; i >= 1; --i) {\n"
+    "      float tl;\n"
+    "      vec2 ul = sign_uv(cam_o, dir, clk_depth * float(i) / 3.0, tl);\n"
+    "      float m = sign_at(ul);\n"
+    "      float e = (1.0 - smoothstep(0.02, 0.09, abs(m - 0.5))) *\n"
+    "                step(0.0, tl) * step(tl, hi);\n"
+    "      vec4 ec = sign_edge(ul.x);\n"
+    "      c = mix(c, ec.rgb, e * ec.a * 0.4 * (1.0 - 0.22 * float(i)) * clk_a);\n"
+    "    }\n"
+    "    float tp;\n"
+    "    vec2 uv = sign_uv(cam_o, dir, 0.0, tp);\n"
+    "    float m = sign_at(uv);\n"
+    "    float fm = max(fwidth(m), 1e-4);\n"
+    "    float vis = clk_a * step(0.0, tp) * step(tp, hi);\n"
+    "    float inside = clamp((m - 0.5) / fm + 0.5, 0.0, 1.0) * vis;\n"
+    "    float edge = clamp(1.6 * k * wsc - abs(m - 0.5) / fm + 0.5, 0.0, 1.0) * vis;\n"
+    "    vec4 ec = sign_edge(uv.x);\n"
+    "    float sv = (cam_o.z + dir.z * tp) / max(t_unit, 1e-3) * levels - 0.5;\n"
+    "    float sd = abs(sv - floor(sv + 0.5)) / max(fwidth(sv), 1e-5);\n"
+    "    float stripe = clamp(lw * wsc * 0.5 - sd + 0.5, 0.0, 1.0);\n"
+    "    c = mix(c, glass.rgb, inside * glass.a);\n"
+    "    c = mix(c, ec.rgb, inside * stripe * 0.75 * ec.a);\n"
+    "    c = mix(c, ec.rgb, edge * ec.a);\n"
+    "  }\n"
+    "  return vec4(c * bright, 1.0);\n"
     "}\n"
     "void main() {\n"
     "  vec2 q = origin + vec2(gl_FragCoord.x, bh - gl_FragCoord.y) * stp -\n"
@@ -257,6 +478,10 @@ static const char *map_fs_src =
     "    p += sway * vec2(sin(q.y / wl + time * 1.7),\n"
     "                     sin(q.x / wl * 0.8 + time * 2.3 + 1.0));\n"
     "  }\n"
+    "  if (terrain == 1) {\n"
+    "    color = tshade(q, p, x, lit, pclear, sl);\n"
+    "    return;\n"
+    "  }\n"
     "  if (drift != vec2(0.0))\n"
     "    p -= drift * (1.0 + 0.3 * sin(q.yx / drift_l));\n"
     "  float v = height(p) * levels - 0.5;\n"
@@ -304,6 +529,9 @@ static const char *logo_fs_src =
     "uniform mat3 tm;\n"
     "uniform vec3 tn;\n"
     "uniform float focal, depth, layer_a;\n"
+    "uniform vec3 c_o, c_r, c_d, c_f;\n"
+    "uniform vec2 c_c;\n"
+    "uniform float c_F;\n"
     "out vec4 color;\n"
     "vec2 back(vec2 d) {\n"
     "  return vec2(rot.x * d.x + rot.y * d.y, rot.x * d.y - rot.y * d.x) *\n"
@@ -314,6 +542,16 @@ static const char *logo_fs_src =
     "  float t = (off - focal * tn.z) / dot(r, tn);\n"
     "  return (tm * (vec3(0.0, 0.0, focal) + r * t)).xy;\n"
     "}\n"
+    /* Over the terrain (tilted 2): the eye's ray through q onto the plane
+     * off px over the snowflake's, which is level, the eye at c_o from its
+     * centre. */
+    "vec2 seen(vec2 q, float off) {\n"
+    "  vec3 r = c_r * (q.x - c_c.x) + c_d * (q.y - c_c.y) + c_f * c_F;\n"
+    "  return c_o.xy + r.xy * ((off - c_o.z) / r.z);\n"
+    "}\n"
+    "vec2 layer(vec2 q, vec2 d0, float off) {\n"
+    "  return tilted == 2 ? seen(q, off) : onto(d0, off);\n"
+    "}\n"
     "void main() {\n"
     "  vec2 q = origin + vec2(gl_FragCoord.x, bh - gl_FragCoord.y) * stp;\n"
     "  vec2 d0 = q - centre;\n"
@@ -321,6 +559,9 @@ static const char *logo_fs_src =
     "  if (tilted == 1) {\n"
     "    ds = onto(ds, 0.0);\n"
     "    dp = onto(d0, 0.0);\n"
+    "  } else if (tilted == 2) {\n"
+    "    dp = seen(q, 0.0);\n"
+    "    ds = dp - sh_off;\n"
     "  }\n"
     "  vec4 o = vec4(0.0);\n"
     "  if (sh_alpha > 0.0)\n"
@@ -336,13 +577,13 @@ static const char *logo_fs_src =
     "  float d = texture(sdf, (p - sdf_org) / sdf_size).r * scale;\n"
     "  float fa = fill.a * clamp(0.5 - d, 0.0, 1.0);\n"
     "  o = vec4(fill.rgb * fa, fa) + o * (1.0 - fa);\n"
-    "  if (tilted == 1 && layer_a > 0.0 && hw > 0.0) {\n"
+    "  if (tilted >= 1 && layer_a > 0.0 && hw > 0.0) {\n"
     "    float seen = 1.0 - 0.6 * fa / max(fill.a, 0.001);\n"
     "    for (int i = 8; i >= 1; --i) {\n"
     "      if (i > layers)\n"
     "        continue;\n"
     "      float f = float(i) / float(layers);\n"
-    "      vec2 pl = back(onto(d0, -depth * f));\n"
+    "      vec2 pl = back(layer(q, d0, -depth * f));\n"
     "      float dl = texture(sdf, (pl - sdf_org) / sdf_size).r * scale;\n"
     "      float la = layer_a * ec.a * edge_alpha * 0.75 * (1.0 - 0.7 * f) *\n"
     "                 clamp(0.8 * hw - abs(dl) + 0.5, 0.0, 1.0) * seen;\n"
@@ -419,7 +660,14 @@ static bool build_program(void) {
   M(ripple_span), M(light), M(light_w), M(gather), M(gather_reach);
   M(hold_front), M(hold_lit), M(hold_band), M(drift), M(drift_l);
   M(s_in), M(s_out), M(s_lit), M(s_lit_all), M(s_levels), M(pokes);
-  M(npokes), M(poke_r), M(poke_light);
+  M(npokes), M(poke_r), M(poke_light), M(terrain), M(hf), M(clk), M(lsdf);
+  M(cam_o), M(cam_r), M(cam_d), M(cam_f), M(cam_c), M(cam_F), M(t_t);
+  M(t_tf), M(t_unit), M(t_zmax), M(t_fog), M(t_shade), M(t_light), M(lmax);
+  M(t_sum), M(t_sum_r), M(clk_o), M(clk_r), M(clk_u), M(clk_n), M(clk_wh);
+  M(clk_base), M(clk_st), M(clk_a), M(clk_depth), M(glass), M(cedge0);
+  M(cedge1), M(cedge2);
+  M(mesa), M(mesa_r), M(mesa_col), M(l_pos), M(l_rot), M(l_inv_s);
+  M(l_scale), M(l_on), M(lsdf_org), M(lsdf_size);
 #undef M
   g.m_step = glGetUniformLocation(g.map_prog, "stp");
 
@@ -443,7 +691,8 @@ static bool build_program(void) {
   L(scale), L(sdf_org), L(sdf_size), L(sh_org), L(sh_size), L(ne_org);
   L(ne_size), L(sh_off), L(sh_alpha), L(neon_a), L(fill), L(edge0), L(edge1);
   L(edge2), L(edge_alpha), L(hw), L(axis0), L(axis), L(tilted), L(tm);
-  L(tn), L(focal), L(depth), L(layers), L(layer_a);
+  L(tn), L(focal), L(depth), L(layers), L(layer_a), L(c_o), L(c_r), L(c_d);
+  L(c_f), L(c_c), L(c_F);
 #undef L
   g.l_step = glGetUniformLocation(g.logo_prog, "stp");
   glGenTextures(3, g.logo_tex);
@@ -456,6 +705,18 @@ static bool build_program(void) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   }
+  glGenTextures(1, &g.hf_tex);
+  glBindTexture(GL_TEXTURE_2D, g.hf_tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
+  glGenTextures(1, &g.clk_tex);
+  glBindTexture(GL_TEXTURE_2D, g.clk_tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glGenTextures(1, &g.map_tex);
   glBindTexture(GL_TEXTURE_2D, g.map_tex);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -536,6 +797,10 @@ void wp_gl_finish(void) {
         glDeleteProgram(g.prog);
       if (g.map_tex)
         glDeleteTextures(1, &g.map_tex);
+      if (g.hf_tex)
+        glDeleteTextures(1, &g.hf_tex);
+      if (g.clk_tex)
+        glDeleteTextures(1, &g.clk_tex);
       if (g.map_prog)
         glDeleteProgram(g.map_prog);
       if (g.logo_tex[0])
@@ -707,6 +972,133 @@ static void set_color(GLint u, uint32_t c, double a) {
   glUniform4f(u, col_r(c), col_g(c), col_b(c), col_a(c) * a);
 }
 
+/* The snowflake's distance field into logo_tex[0] (bound to the active
+ * unit) if it isn't there. */
+static void bind_sdf(const struct wp_logo_sdf *sdf) {
+  glBindTexture(GL_TEXTURE_2D, g.logo_tex[0]);
+  if (g.logo_ids[0] != sdf->id) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, sdf->w, sdf->h, 0, GL_RED,
+                 GL_FLOAT, sdf->d);
+    g.logo_ids[0] = sdf->id;
+  }
+}
+
+static void vec3u(GLint u, const double v[3]) {
+  glUniform3f(u, v[0], v[1], v[2]);
+}
+
+/* peek_layout "terrain"'s uniforms (terrain.c has the landscape): off at
+ * t 0, the flat map's code exactly. */
+static void map_terrain(const struct wallpaper_config *c, int pw, int ph,
+                        const struct wp_frame *f,
+                        const struct wp_topo_grid *grid, double k) {
+  glUniform1i(g.m_hf, 3);
+  glUniform1i(g.m_clk, 4);
+  glUniform1i(g.m_lsdf, 5);
+  struct wp_terrain T;
+  wp_terrain_at(c, pw, ph, f, &T);
+  bool on = T.t > 0;
+  glUniform1i(g.m_terrain, on);
+  bool lines = c->topo_line_width > 0 && c->topo_line_alpha > 0;
+  glUniform1f(g.m_lmax, lines ? c->topo_levels + (on ? 60 : 0) : 0);
+  if (!on)
+    return;
+  glActiveTexture(GL_TEXTURE3);
+  glBindTexture(GL_TEXTURE_2D, g.hf_tex);
+  if (g.hf_grid != grid->id) {
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, grid->nx, grid->ny, 0, GL_RED,
+                 GL_FLOAT, grid->h);
+    g.hf_grid = grid->id;
+  }
+  vec3u(g.m_cam_o, T.cam.o);
+  vec3u(g.m_cam_r, T.cam.r);
+  vec3u(g.m_cam_d, T.cam.d);
+  vec3u(g.m_cam_f, T.cam.fw);
+  glUniform2f(g.m_cam_c, T.cam.cx, T.cam.cy);
+  glUniform1f(g.m_cam_F, T.cam.focal);
+  glUniform1f(g.m_t_t, T.t);
+  glUniform1f(g.m_t_tf, T.tf);
+  glUniform1f(g.m_t_unit, T.unit);
+  glUniform1f(g.m_t_zmax, T.zmax);
+  glUniform1f(g.m_t_fog, fmax(c->peek_terrain_fog * ph, 1));
+  glUniform1f(g.m_t_shade, c->peek_terrain_shade);
+  vec3u(g.m_t_light, T.light);
+  glUniform3f(g.m_t_sum, T.lx, T.ly, T.sum_h);
+  glUniform1f(g.m_t_sum_r, T.sum_r);
+  /* HH:MM's sign, a texel per px across, in the snowflake's glass */
+  struct wp_clock_mask cm;
+  bool clock = f->peek && T.tf > 0 &&
+               wp_peek_clock_mask(c, f->peek, T.clk_size, &cm);
+  glUniform1f(g.m_clk_a, clock ? T.tf : 0);
+  if (clock) {
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, g.clk_tex);
+    if (g.clk_id != cm.id) {
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, cm.stride);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, cm.w, cm.h, 0, GL_RED,
+                   GL_UNSIGNED_BYTE, cm.data);
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+      g.clk_id = cm.id;
+    }
+    vec3u(g.m_clk_o, T.clk_o);
+    vec3u(g.m_clk_r, T.clk_r);
+    vec3u(g.m_clk_u, T.clk_u);
+    vec3u(g.m_clk_n, T.clk_n);
+    glUniform2f(g.m_clk_wh, cm.w, cm.h);
+    glUniform1f(g.m_clk_base, cm.base);
+    glUniform1f(g.m_clk_st, T.clk_stretch);
+    glUniform1f(g.m_clk_depth, T.clk_depth);
+    struct wp_glass look;
+    wp_glass_look(c, f, k, &look);
+    set_color(g.m_glass, look.fill, 1);
+    set_color(g.m_cedge0, look.edge[0], 1);
+    set_color(g.m_cedge1, look.edge[1], 1);
+    set_color(g.m_cedge2, look.edge[2], 1);
+  }
+  /* the mesas: CPU, memory, battery (warning when low) */
+  float mesa[3][4], col[3][4];
+  const struct info *in = f->peek;
+  bool low = in && in->has_battery && !in->charging &&
+             in->battery <= f->peek_low_pct;
+  uint32_t cols[3] = {c->topo_edge_a, c->topo_edge_mid,
+                      low ? c->peek_warn : c->topo_edge_b};
+  for (int i = 0; i < 3; ++i) {
+    mesa[i][0] = (float)T.mesa_x[i];
+    mesa[i][1] = (float)T.mesa_y[i];
+    mesa[i][2] = (float)T.mesa_floor[i];
+    mesa[i][3] = (float)T.mesa_top[i];
+    col[i][0] = (float)col_r(cols[i]);
+    col[i][1] = (float)col_g(cols[i]);
+    col[i][2] = (float)col_b(cols[i]);
+    col[i][3] = 1;
+  }
+  glUniform4fv(g.m_mesa, 3, mesa[0]);
+  glUniform4fv(g.m_mesa_col, 3, col[0]);
+  glUniform1f(g.m_mesa_r, T.mesa_r);
+  /* the snowflake's shadow, cast along the light */
+  double r0 = c->logo_radius * k;
+  double s = 1 + c->react_pulse_scale * f->pulse;
+  bool shadow = r0 > 0 && wp_logo_whole(f) && f->fade < 1;
+  glUniform1f(g.m_l_on, shadow ? T.tf : 0);
+  if (shadow) {
+    const struct wp_logo_sdf *sdf = wp_logo_sdf(c, pw, 1);
+    glActiveTexture(GL_TEXTURE5);
+    bind_sdf(sdf);
+    glUniform2f(g.m_lsdf_org, sdf->x, sdf->y);
+    glUniform2f(g.m_lsdf_size, (double)sdf->w / sdf->res,
+                (double)sdf->h / sdf->res);
+    glUniform3f(g.m_l_pos, T.lx, T.ly, T.lz);
+    glUniform2f(g.m_l_rot, cos(f->angle), sin(f->angle));
+    glUniform1f(g.m_l_inv_s, 1 / s);
+    glUniform1f(g.m_l_scale, s);
+  }
+  glActiveTexture(GL_TEXTURE0);
+}
+
 void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
                     const struct wp_frame *f, double ox, double oy, double sx,
                     double sy, int bw, int bh) {
@@ -823,6 +1215,7 @@ void wp_gl_map_draw(const struct wallpaper_config *c, int pw, int ph,
   glUniform1f(g.m_hold_lit,
               held ? c->topo_hold_light * f->peek_pop * (1 - f->peek_expand)
                    : 0);
+  map_terrain(c, pw, ph, f, grid, k);
   glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
@@ -876,13 +1269,7 @@ void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
   const struct wp_logo_sdf *sdf = wp_logo_sdf(c, pw, res);
   glUseProgram(g.logo_prog);
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, g.logo_tex[0]);
-  if (g.logo_ids[0] != sdf->id) {
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, sdf->w, sdf->h, 0, GL_RED,
-                 GL_FLOAT, sdf->d);
-    g.logo_ids[0] = sdf->id;
-  }
+  bind_sdf(sdf);
   glUniform1i(g.l_sdf, 0);
   glUniform1i(g.l_shadow, 1);
   glUniform1i(g.l_neon, 2);
@@ -941,6 +1328,25 @@ void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
     glUniform1i(g.l_layers, c->logo_tilt_layers);
     /* The layers come in over the first half of the way to logo_tilt. */
     glUniform1f(g.l_layer_a, fmin(th / (0.5 * c->logo_tilt * M_PI / 180), 1));
+  }
+  /* Hovering over the terrain: level, seen by its eye; its shadow falls
+   * on the ground (the map's), the layers show its thickness. */
+  if (wp_peek_terrain(c, f) > 0) {
+    struct wp_terrain T;
+    wp_terrain_at(c, pw, ph, f, &T);
+    glUniform1i(g.l_tilted, 2);
+    glUniform3f(g.l_c_o, T.cam.o[0] - T.lx, T.cam.o[1] - T.ly,
+                T.cam.o[2] - T.lz);
+    vec3u(g.l_c_r, T.cam.r);
+    vec3u(g.l_c_d, T.cam.d);
+    vec3u(g.l_c_f, T.cam.fw);
+    glUniform2f(g.l_c_c, T.cam.cx + round(f->shake_x * k),
+                T.cam.cy + round(f->shake_y * k));
+    glUniform1f(g.l_c_F, T.cam.focal);
+    glUniform1f(g.l_depth, c->logo_tilt_depth * r0 * s);
+    glUniform1i(g.l_layers, c->logo_tilt_layers);
+    glUniform1f(g.l_layer_a, T.tf);
+    glUniform1f(g.l_sh_alpha, shadow ? c->topo_shadow_alpha * (1 - T.tf) : 0);
   }
   glDrawArrays(GL_TRIANGLES, 0, 3);
 }

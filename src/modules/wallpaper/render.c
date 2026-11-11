@@ -286,7 +286,8 @@ static double text_line(cairo_t *cr, PangoLayout *l,
  * the popup's details. */
 static double text_alpha(const struct wallpaper_config *c,
                          const struct wp_frame *f) {
-  return fmin(f->media_alpha, 1) * (1 - wp_peek_side(c, f));
+  return fmin(f->media_alpha, 1) * (1 - wp_peek_side(c, f)) *
+         (1 - wp_peek_terrain(c, f));
 }
 
 static void draw_text(cairo_t *cr, const struct wallpaper_config *c, int pw,
@@ -484,7 +485,16 @@ void wp_render(cairo_t *cr, const struct wallpaper_config *c, int pw, int ph,
    * slide out (both 0 without music). */
   double rp = r * ls * (1 + c->react_pulse_scale * f->pulse) *
               (1 - fmin(fmax(f->logo_shrink, -0.5), 1));
-  wp_draw_hex(cr, c, cx, cy, r, rp, f);
+  /* Over the terrain the cover goes as the map tips. */
+  double tt = wp_peek_terrain(c, f);
+  if (tt <= 0) {
+    wp_draw_hex(cr, c, cx, cy, r, rp, f);
+  } else if (tt < 1) {
+    cairo_push_group(cr);
+    wp_draw_hex(cr, c, cx, cy, r, rp, f);
+    cairo_pop_group_to_source(cr);
+    cairo_paint_with_alpha(cr, 1 - tt);
+  }
   if (rp > 0 && topo && f->logo_gpu)
     ; /* the GPU draws it over the buffer */
   else if (rp > 0 && topo)

@@ -143,7 +143,7 @@ static void test_style(const struct wallpaper_config *c, const char *style) {
   wp_peek_regions(c, W, H, r);
   double reach = wp_logo_reach(c, W);
   for (int i = 0; i < WP_PEEK_REGIONS; ++i) {
-    if (i == 3) { /* the side column: none under flanks */
+    if (i >= 3) { /* the side column, terrain's labels: none under flanks */
       assert(r[i].w == 0 && r[i].h == 0);
       continue;
     }
@@ -565,8 +565,12 @@ int main(int argc, char **argv) {
   test_frame();
   test_gather();
   test_side_frame();
-  const struct wallpaper_config *side = wallpaper_module.defaults;
-  assert(wp_topo(side) && !strcmp(side->peek_layout, "side"));
+  const struct wallpaper_config *def = wallpaper_module.defaults;
+  assert(wp_topo(def) && !strcmp(def->peek_layout, "terrain"));
+  /* (terrain without the GPU is side; the side tests name it) */
+  struct wallpaper_config side_c = *def;
+  strcpy(side_c.peek_layout, "side");
+  const struct wallpaper_config *side = &side_c;
   /* The flanks layout (all of it as before). */
   struct wallpaper_config topo = *side;
   strcpy(topo.peek_layout, "flanks");

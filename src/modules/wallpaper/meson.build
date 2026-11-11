@@ -12,6 +12,7 @@ wallpaper_src = files(
   'settings.c',
   'show.c',
   'surface.c',
+  'terrain.c',
   'topo.c',
   'viz.c',
   'wallpaper.c',

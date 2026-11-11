@@ -209,12 +209,32 @@ struct wallpaper_config {
   double peek_hold_width; /* the line under the clock while held, ref px */
   uint32_t peek_warn;                    /* low battery, urgent workspaces */
   /* "side": while held, the snowflake moves right and grows and the
-   * details stack on the left; "flanks": they stay round it */
+   * details stack on the left; "flanks": they stay round it; "terrain":
+   * the map tips into a landscape seen in perspective (terrain.c; GPU
+   * only, else "side") */
   char peek_layout[16];
   double peek_side_x, peek_side_y; /* the snowflake's centre, 0..1 of w, h */
   double peek_side_scale;          /* its radius there, x logo_radius */
   double peek_side_dim;            /* the map's brightness taken away */
   double peek_side_width, peek_side_margin; /* the column, reference px */
+  /* "terrain": the camera tipped by pitch (deg from straight down) and
+   * turned by yaw (deg) about the screen's middle, focal x the output's
+   * height from it; height: reference px per unit of the map's heights
+   * (lowest 0, highest 1); fog: the far lines gone over this (x the
+   * height) past the middle; summit: a hill this tall (height units) and
+   * wide (ref px) under the snowflake, which hovers hover ref px over it;
+   * the clock (HH:MM, size ref px) standing up as a glass sign
+   * clock_depth ref px thick, its foot at clock_x/y; the gauges (CPU, memory, battery) as mesas
+   * mesa_r ref px wide, one contour per 10%, from mesa_x/y mesa_gap ref
+   * px apart; shade: the slopes facing the light filled this much */
+  double peek_terrain_pitch, peek_terrain_yaw, peek_terrain_focal;
+  double peek_terrain_height, peek_terrain_fog;
+  double peek_terrain_summit, peek_terrain_summit_r, peek_terrain_hover;
+  double peek_terrain_clock_size, peek_terrain_clock_depth;
+  double peek_terrain_clock_x, peek_terrain_clock_y;
+  double peek_terrain_mesa_r, peek_terrain_mesa_x, peek_terrain_mesa_y;
+  double peek_terrain_mesa_gap;
+  double peek_terrain_shade;
   /* a restart (`swell daemon` again, e.g. on a sway reload): the old
    * daemon's lines fade out, then the new one's fade in, each this long */
   int handover_ms;
@@ -329,6 +349,11 @@ struct wp_frame {
   /* how far the hold has taken the snowflake to its place right of the
    * details, 0..1 (peek_layout "side"; see wp_peek_side) */
   double peek_side;
+  /* the GPU draws the map and the snowflake, so peek_layout "terrain" can
+   * be (else it is "side"); set by surface.c */
+  bool terrain;
+  /* the terrain's mesas: CPU, memory and battery, 0..1, eased */
+  double terrain_vals[3];
   bool peek_area; /* repaint wp_peek_regions() too (a buffer holds them) */
   int nbars;      /* visualiser bars per side, 0: no ring */
   float bars[2][WP_VIZ_MAX]; /* 0..1, bass first; [0] left, [1] right */
@@ -427,9 +452,10 @@ double wp_map_brightness(const struct wallpaper_config *c,
                          const struct wp_frame *f);
 /* render_peek.c: the buffer areas the popup's contents can cover in a pw x
  * ph buffer: the left column (clock, date, the hold line), the right one
- * (levels), the bottom (stats row, workspace strip), and peek_layout
- * "side"'s column (empty under "flanks"). */
-#define WP_PEEK_REGIONS 4
+ * (levels), the bottom (stats row, workspace strip), peek_layout
+ * "side"'s column (also "terrain"'s, its fallback; empty under "flanks"),
+ * and the labels "terrain" pins to its landscape. */
+#define WP_PEEK_REGIONS 5
 void wp_peek_regions(const struct wallpaper_config *c, int pw, int ph,
                      struct wp_rect out[WP_PEEK_REGIONS]);
 /* Free wp_render()'s cache. */
@@ -443,8 +469,79 @@ double wp_logo_reach(const struct wallpaper_config *c, int pw);
 void wp_logo_offset(const struct wallpaper_config *c, int pw, int ph,
                     const struct wp_frame *f, double *dx, double *dy);
 /* How far frame f has the snowflake moved aside for the popup's details,
- * 0..1 (0 unless peek_layout is "side"). */
+ * 0..1 (0 unless peek_layout is "side", or "terrain" without the GPU). */
 double wp_peek_side(const struct wallpaper_config *c, const struct wp_frame *f);
+
+/* terrain.c: peek_layout "terrain". */
+enum wp_layout { WP_LAYOUT_SIDE, WP_LAYOUT_FLANKS, WP_LAYOUT_TERRAIN };
+/* peek_layout's value (unknown: side). */
+enum wp_layout wp_peek_layout(const struct wallpaper_config *c);
+/* How far frame f has tipped the map into a landscape, 0..1 (0 unless
+ * peek_layout is "terrain" and f->terrain). */
+double wp_peek_terrain(const struct wallpaper_config *c,
+                       const struct wp_frame *f);
+/* The camera: its eye, right, down and forward (unit), the focal length
+ * and the screen point straight ahead, buffer px. The ground is z = 0, x
+ * and y the buffer's (y down), z up towards the untipped eye. */
+struct wp_cam {
+  double o[3], r[3], d[3], fw[3];
+  double focal, cx, cy;
+};
+/* Where world point (x, y, z) shows on screen, and the px per world px
+ * there; false behind the eye. */
+bool wp_cam_project(const struct wp_cam *m, double x, double y, double z,
+                    double *sx, double *sy, double *scale);
+/* The landscape of frame f in a pw x ph buffer (t 0: the flat map). */
+struct wp_terrain {
+  double t;  /* the camera's way, 0..1 */
+  double tf; /* the features' growth (summit, clock, mesas), 0..1 */
+  struct wp_cam cam;
+  double unit;       /* px of height per unit, already x t */
+  double light[3];   /* towards the light, unit */
+  double lx, ly, lz; /* the snowflake's centre */
+  double sum_h, sum_r; /* the summit (units x tf), its radius px */
+  /* the clock: a sign hinged up from the ground (lying flat at tf 0,
+   * upright at 1), its foot's middle at o (on the ground), r along it,
+   * u up it, n out of its face towards the eye */
+  double clk_x, clk_y, clk_o[3], clk_r[3], clk_u[3], clk_n[3];
+  double clk_size;    /* its font px */
+  double clk_stretch; /* its height x this (so it reads true to the eye) */
+  double clk_depth;   /* its thickness, px */
+  double mesa_x[3], mesa_y[3], mesa_r;
+  double mesa_floor[3], mesa_top[3]; /* units (both blended in by tf) */
+  double zmax; /* the highest the ground reaches, px */
+};
+void wp_terrain_at(const struct wallpaper_config *c, int pw, int ph,
+                   const struct wp_frame *f, struct wp_terrain *T);
+/* The same at t (f NULL: no wander, the mesas at 0). */
+void wp_terrain_at_t(const struct wallpaper_config *c, int pw, int ph,
+                     const struct wp_frame *f, double t,
+                     struct wp_terrain *T);
+/* The map's height (units) at (x, y) in a pw x ph buffer, without the
+ * features: as the GPU's map, bilinear. */
+double wp_terrain_ground(const struct wallpaper_config *c, int pw, int ph,
+                         double x, double y);
+/* A world point on the ground of T near (x, y) (features included where
+ * the CPU knows them: the summit and the mesas). */
+double wp_terrain_z(const struct wallpaper_config *c, int pw, int ph,
+                    const struct wp_terrain *T, double x, double y);
+/* The world point u px along the clock's sign from its foot's middle and
+ * v px up it. */
+void wp_terrain_clock_point(const struct wp_terrain *T, double u, double v,
+                            double p[3]);
+/* render_peek.c: the clock's sign: HH:MM at size px, a blurred A8 mask w
+ * x h (rows stride bytes apart), its ink centred across, its ink's bottom
+ * at row base; id changes with it. */
+struct wp_clock_mask {
+  const unsigned char *data;
+  int w, h, stride;
+  double ink_w, ink_h; /* the digits' extent in it */
+  double base;
+  unsigned id;
+};
+bool wp_peek_clock_mask(const struct wallpaper_config *c,
+                        const struct info *in, double size,
+                        struct wp_clock_mask *m);
 /* Where frame f puts the snowflake's centre in a pw x ph buffer, and its
  * size there (x its resting radius): the wander's place, or on its way to
  * the popup's side place. */

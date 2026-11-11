@@ -59,7 +59,8 @@ struct painted {
 };
 
 /* What the GPU's snowflake is drawn from (logo_key()). */
-#define LOGO_KEY 13
+#define LOGO_KEY 14
+#define TERRAIN_SETTLED_MS 33
 
 /* Either buffer holds it. */
 #define EITHER(out, field) ((out)->painted[0].field || (out)->painted[1].field)
@@ -85,6 +86,7 @@ struct output {
   bool map_moved;       /* the last map frame had rings, sway, the spectrum or a
                            gather */
   double map_drift[2];  /* the GPU map's drift as last drawn, px */
+  int64_t map_at;       /* when it was last drawn */
   /* The topo snowflake on the GPU, on a subsurface over the logo's box. */
   bool lgpu;            /* the GPU draws it (but in shows and slides) */
   struct strip logo;    /* surface NULL until the GPU first draws it */
@@ -423,7 +425,8 @@ static void logo_key(const struct wp_frame *f, double key[LOGO_KEY]) {
   double k[LOGO_KEY] = {f->angle,    f->pulse,    f->glow,     f->over,
                         f->flash,    f->map_fade, f->shake_x,  f->shake_y,
                         f->wander_x, f->wander_y, wp_peek_side(wp_config(), f),
-                        f->tilt_x,   f->tilt_y};
+                        f->tilt_x,   f->tilt_y,
+                        wp_peek_terrain(wp_config(), f)};
   memcpy(key, k, sizeof(k));
 }
 
@@ -538,6 +541,11 @@ static void draw_one(struct output *out, bool full, bool plain) {
   int64_t now = now_ms();
   struct wp_frame f;
   wp_frame_at(now, &f);
+  /* The terrain needs the GPU's map and snowflake (else it's "side"). */
+  f.terrain = lgpu;
+  if (wp_peek_terrain(wp_config(), &f) > 0)
+    for (int i = 0; i < 6; ++i)
+      f.slide[i] = 0; /* (whole, so the GPU keeps it) */
   if (plain) {
     f.wander_x = f.wander_y = 0;
     f.bar_fade = 0;
@@ -556,10 +564,17 @@ static void draw_one(struct output *out, bool full, bool plain) {
   bool shaking = f.shake_x != 0 || f.shake_y != 0;
   /* The held popup key gathers the lines in and lights them. */
   /* (Or, side layout, the snowflake moves aside and the lines follow.) */
+  /* (Or the terrain: its shadow turns with the snowflake, so redrawn
+   * every frame while it shows.) */
   double side = wp_peek_side(wp_config(), &f);
-  bool sided = strcmp(wp_config()->peek_layout, "flanks") != 0;
+  double terr = wp_peek_terrain(wp_config(), &f);
+  bool sided = wp_peek_layout(wp_config()) != WP_LAYOUT_FLANKS;
+  /* Settled, the terrain (7 ms of GPU a frame at 2880x1800) is redrawn
+   * at most every TERRAIN_SETTLED_MS: the shadow turns slowly. */
+  bool terr_wait = terr >= 1 && now - out->map_at < TERRAIN_SETTLED_MS;
   bool gathering =
-      sided ? side > 0 && side < 1
+      terr > 0 ? !terr_wait
+      : sided  ? side > 0 && side < 1
             : (f.peek_gather != 0 && wp_config()->topo_gather_px > 0) ||
                   (f.peek && f.peek_hold > 0 && f.peek_pop > 0 &&
                    f.peek_expand < 1 && wp_config()->topo_hold_light > 0);
@@ -583,7 +598,8 @@ static void draw_one(struct output *out, bool full, bool plain) {
       0.25;
   long cdx = lround(dx), cdy = lround(dy);
   bool map_due = under && (out->map_bright != bright || moving || drifted ||
-                           out->map_moved || !out->map.surface);
+                           (out->map_moved && !terr_wait) ||
+                           !out->map.surface);
   if (!under && wp_topo(wp_config()) &&
       (p->cpu_bright != bright || shaking || p->shook ||
        cdx != p->cpu_drift[0] || cdy != p->cpu_drift[1]))
@@ -596,7 +612,7 @@ static void draw_one(struct output *out, bool full, bool plain) {
    * again once it's back. */
   /* Moved aside, so is the hexagon. */
   bool hex = wp_hex_shows(wp_config(), &f);
-  bool off = f.wander_x != 0 || f.wander_y != 0 || side > 0;
+  bool off = f.wander_x != 0 || f.wander_y != 0 || side > 0 || terr > 0;
   bool wandering = off && (!gl_logo || f.over > 0 || (side > 0 && hex));
   if (wandering || p->wandered)
     whole = true;
@@ -642,6 +658,7 @@ static void draw_one(struct output *out, bool full, bool plain) {
     }
     out->map_bright = bright;
     out->map_moved = moving;
+    out->map_at = now;
     out->map_drift[0] = dx;
     out->map_drift[1] = dy;
   }
