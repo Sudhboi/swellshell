@@ -58,6 +58,9 @@ struct painted {
   bool peeked;       /* the popup's contents */
 };
 
+/* What the GPU's snowflake is drawn from (logo_key()). */
+#define LOGO_KEY 13
+
 /* Either buffer holds it. */
 #define EITHER(out, field) ((out)->painted[0].field || (out)->painted[1].field)
 
@@ -86,7 +89,7 @@ struct output {
   bool lgpu;            /* the GPU draws it (but in shows and slides) */
   struct strip logo;    /* surface NULL until the GPU first draws it */
   bool logo_on;         /* it holds a snowflake, not nothing */
-  double logo_key[11];  /* the frame it was drawn from, NAN: redraw */
+  double logo_key[LOGO_KEY]; /* the frame it was drawn from, NAN: redraw */
   double bar_sx, bar_sy; /* the shake of the last commit, px */
   double bar_fade;       /* of the last commit */
   struct wp_text_key text_shown; /* the title the compositor last got */
@@ -416,10 +419,11 @@ static bool logo_draw(struct output *out, int pw, int ph,
 }
 
 /* What the GPU's snowflake is drawn from. */
-static void logo_key(const struct wp_frame *f, double key[11]) {
-  double k[11] = {f->angle,    f->pulse,    f->glow,     f->over,
-                  f->flash,    f->map_fade, f->shake_x,  f->shake_y,
-                  f->wander_x, f->wander_y, wp_peek_side(wp_config(), f)};
+static void logo_key(const struct wp_frame *f, double key[LOGO_KEY]) {
+  double k[LOGO_KEY] = {f->angle,    f->pulse,    f->glow,     f->over,
+                        f->flash,    f->map_fade, f->shake_x,  f->shake_y,
+                        f->wander_x, f->wander_y, wp_peek_side(wp_config(), f),
+                        f->tilt_x,   f->tilt_y};
   memcpy(key, k, sizeof(k));
 }
 
@@ -596,7 +600,7 @@ static void draw_one(struct output *out, bool full, bool plain) {
   bool wandering = off && (!gl_logo || f.over > 0 || (side > 0 && hex));
   if (wandering || p->wandered)
     whole = true;
-  double key[11];
+  double key[LOGO_KEY];
   logo_key(&f, key);
   bool logo_due = gl_logo ? !out->logo_on || memcmp(key, out->logo_key,
                                                     sizeof(key)) != 0
@@ -967,4 +971,14 @@ int wp_surfaces_count(void) {
   struct output *out;
   wl_list_for_each(out, &outputs, link) n += out->surface != NULL;
   return n;
+}
+
+bool wp_surfaces_size(const void *o, int *w, int *h) {
+  struct output *out;
+  wl_list_for_each(out, &outputs, link) if (out == o && out->configured) {
+    *w = out->width;
+    *h = out->height;
+    return true;
+  }
+  return false;
 }

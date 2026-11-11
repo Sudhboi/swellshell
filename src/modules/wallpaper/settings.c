@@ -98,6 +98,10 @@ static const struct wallpaper_config defaults = {
     .spin_max = 100,
     .spin_decay_s = 1.2,
     .spin_hold_ms = 200,
+    .logo_tilt = 18,
+    .logo_tilt_depth = 0.15,
+    .logo_tilt_layers = 4,
+    .logo_tilt_idle_ms = 500,
     .spin_visible_max = 200,
     .bloom = 0x808080ffu,
     .bloom_radius = 1.6,
@@ -388,6 +392,18 @@ static const struct cfg_field fields[] = {
     CFG_INT(S, spin_hold_ms, 0, 60000,
             "the extra speed only decays once the pointer has been still "
             "this long, so it keeps building while the pointer moves"),
+    CFG_DOUBLE(S, logo_tilt, 0, 60,
+               "while the pointer moves over the empty wallpaper, the topo "
+               "snowflake tips towards it this far, degrees, with the "
+               "pointer at the screen's edge (needs logo_gpu; 0 = never)"),
+    CFG_DOUBLE(S, logo_tilt_depth, 0, 1,
+               "how far back the outlines layered behind the tipped "
+               "snowflake reach (x logo_radius)"),
+    CFG_INT(S, logo_tilt_layers, 0, 8,
+            "outlines layered behind the tipped snowflake (0 = none)"),
+    CFG_INT(S, logo_tilt_idle_ms, 0, 60000,
+            "the snowflake tips back flat once the pointer has been still "
+            "this long"),
     CFG_DOUBLE(S, spin_visible_max, 0, 3600,
                "fastest the snowflake visibly turns, degrees/s; more speed "
                "shows as a bloom and speed lines"),

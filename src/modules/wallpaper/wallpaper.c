@@ -69,6 +69,11 @@ static struct {
   bool have_pointer;
   double px, py;
   int64_t last_motion; /* ms of the last boosting pointer motion */
+  /* the snowflake tipped towards the pointer (wp_frame tilt_x/y), on a
+   * spring: radians and rad/s; motion: ms of the last pointer motion;
+   * closing: ms since it has to go flat for a window, 0: it needn't */
+  double tilt[2], tilt_v[2];
+  int64_t tilt_motion, tilt_last, tilt_closing;
   /* the pointer's wake through the topo lines, on poke_out: points
    * dropped every topo_poke_spacing (logical px), oldest first, the last
    * one following the pointer; wake_drop is where the last was dropped */
@@ -169,11 +174,18 @@ static bool handing(void) {
   return at && now_ms() < at + w.cfg.handover_ms;
 }
 
+/* The snowflake is tipped, or still moving. */
+static bool tilting(void) {
+  return w.tilt[0] != 0 || w.tilt[1] != 0 || w.tilt_v[0] != 0 ||
+         w.tilt_v[1] != 0;
+}
+
 bool wp_ticking(void) {
   if (show_holding())
     return false;
   return w.animating || w.dozing || w.saving || w.saver_mix > 0 ||
-         w.cover > 0 || wp_showing() || map_fading() || w.peek || handing();
+         w.cover > 0 || wp_showing() || map_fading() || w.peek || handing() ||
+         tilting();
 }
 
 static bool viz_showing(void) {
@@ -210,7 +222,7 @@ int wp_fps_cap(void) {
     return 0;
   if (w.saving)
     return w.cfg.saver_fps;
-  if (w.boost > 0.05)
+  if (w.boost > 0.05 || tilting())
     return w.cfg.fps_spin;
   return viz_showing() || reacting() ? w.cfg.fps_audio : w.cfg.fps;
 }
@@ -361,6 +373,70 @@ static void advance_map(int64_t now) {
   double step = dt * 1000 / w.cfg.topo_fade_ms;
   w.map_alpha = target > w.map_alpha ? fmin(w.map_alpha + step, target)
                                      : fmax(w.map_alpha - step, target);
+}
+
+/* The tilt's spring (the pointer mode of the samples the user picked):
+ * stiffness and damping, per s^2 and per s. A window opened, it is flat
+ * again within TILT_WINDOW_MS whatever the spring is doing. */
+#define TILT_K 30.0
+#define TILT_C 7.0
+#define TILT_WINDOW_MS 2000
+
+/* Where the snowflake is tipped to now, radians: towards the pointer while
+ * it moves over the animating wallpaper, at logo_tilt with the pointer at
+ * its output's edge. False (and flat) otherwise. */
+static bool tilt_target(int64_t now, double t[2]) {
+  t[0] = t[1] = 0;
+  int ow, oh;
+  if (w.cfg.logo_tilt <= 0 || !w.animating || saver_on() || w.peek ||
+      wp_showing() || !w.have_pointer ||
+      now - w.tilt_motion >= w.cfg.logo_tilt_idle_ms ||
+      !wp_surfaces_size(w.poke_out, &ow, &oh) || ow <= 0 || oh <= 0)
+    return false;
+  double x = (w.px - ow / 2.0) / (ow / 2.0);
+  double y = (w.py - oh / 2.0) / (oh / 2.0);
+  double l = hypot(x, y);
+  if (l > 1) {
+    x /= l;
+    y /= l;
+  }
+  double a = w.cfg.logo_tilt * M_PI / 180;
+  t[0] = x * a;
+  t[1] = y * a;
+  return true;
+}
+
+static void tilt_flat(void) {
+  w.tilt[0] = w.tilt[1] = w.tilt_v[0] = w.tilt_v[1] = 0;
+}
+
+/* Spring the tilt towards its target. */
+static void advance_tilt(int64_t now) {
+  double dt = fmin(fmax((now - w.tilt_last) / 1000.0, 0), 0.1);
+  w.tilt_last = now;
+  double t[2];
+  bool on = tilt_target(now, t);
+  if (on || w.ws_empty)
+    w.tilt_closing = 0;
+  else if (!w.tilt_closing)
+    w.tilt_closing = now;
+  if (!on && !tilting())
+    return;
+  if (w.tilt_closing && now - w.tilt_closing >= TILT_WINDOW_MS) {
+    tilt_flat();
+    return;
+  }
+  /* In steps of at most 1/240 s, so any frame rate moves it alike. */
+  int n = (int)ceil(dt * 240);
+  double h = n > 0 ? dt / n : 0;
+  for (int i = 0; i < n; ++i)
+    for (int k = 0; k < 2; ++k) {
+      w.tilt_v[k] += (-(w.tilt[k] - t[k]) * TILT_K - w.tilt_v[k] * TILT_C) * h;
+      w.tilt[k] += w.tilt_v[k] * h;
+    }
+  if (!on && hypot(w.tilt[0], w.tilt[1]) < 1e-4 &&
+      hypot(w.tilt_v[0], w.tilt_v[1]) < 1e-3)
+    tilt_flat();
 }
 
 /* Ease the snowflake off the centre (saving) or back, and wander on. */
@@ -614,6 +690,9 @@ void wp_frame_at(int64_t now, struct wp_frame *f) {
   f->shake_x = shake * sin(2 * M_PI * 11 * w.react.shake_t);
   f->shake_y = shake * sin(2 * M_PI * 14 * w.react.shake_t + 1.3);
   wander(&f->wander_x, &f->wander_y);
+  advance_tilt(now);
+  f->tilt_x = w.tilt[0];
+  f->tilt_y = w.tilt[1];
   /* The screensaver fades the title and the bar out. */
   double saver = smooth(w.saver_mix);
   f->media_alpha = w.media_alpha * (1 - saver);
@@ -833,7 +912,8 @@ static void update_animating(void) {
   /* A window opened (or the user idled) mid-spin or mid-song: don't
    * leave the brightened logo, the bars or the hexagon as the frozen
    * frame. Dozing draws on for the bar. */
-  if (glowing || doze || save || cleared || w.media_alpha > 0)
+  /* (A tipped snowflake goes flat on the frames this asks for.) */
+  if (glowing || doze || save || cleared || w.media_alpha > 0 || tilting())
     wp_surfaces_draw(false);
   bus_emit("wallpaper.freeze", NULL);
 }
@@ -992,7 +1072,7 @@ static void pointer_motion(void *data, double x, double y) {
   if (wp_topo(&w.cfg) && w.cfg.topo_poke && d > 0)
     wake_move(x, y);
   if (d > 0)
-    w.last_motion = now_ms();
+    w.last_motion = w.tilt_motion = now_ms();
 }
 
 const struct swell_input wp_input = {
@@ -1245,6 +1325,7 @@ int wp_command(int argc, char **argv, struct reply *r) {
                  w.override >= 0 ? " (override)" : "", shown_percent());
     reply_printf(r, "fps: %.1f\n", wp_ticking() ? w.fps : 0.0);
     reply_printf(r, "spin: x%.2f\n", 1 + w.boost);
+    reply_printf(r, "tilt: %.1f deg\n", hypot(w.tilt[0], w.tilt[1]) * 180 / M_PI);
     if (wp_topo(&w.cfg))
       reply_printf(r, "topo seed: %d, angle %.0f%s\n", w.cfg.topo_seed,
                    w.cfg.topo_angle,

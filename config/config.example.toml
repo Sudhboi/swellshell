@@ -603,6 +603,14 @@ spin_max = 100.0
 spin_decay_s = 1.2
 # the extra speed only decays once the pointer has been still this long, so it keeps building while the pointer moves
 spin_hold_ms = 200
+# while the pointer moves over the empty wallpaper, the topo snowflake tips towards it this far, degrees, with the pointer at the screen's edge (needs logo_gpu; 0 = never)
+logo_tilt = 18.0
+# how far back the outlines layered behind the tipped snowflake reach (x logo_radius)
+logo_tilt_depth = 0.15
+# outlines layered behind the tipped snowflake (0 = none)
+logo_tilt_layers = 4
+# the snowflake tips back flat once the pointer has been still this long
+logo_tilt_idle_ms = 500
 # fastest the snowflake visibly turns, degrees/s; more speed shows as a bloom and speed lines
 spin_visible_max = 200.0
 # glow behind the snowflake past spin_visible_max (classic; topo: topo_neon_alpha)

@@ -354,7 +354,20 @@ double wp_logo_reach(const struct wallpaper_config *c, int pw) {
                     fmax(c->topo_edge_width, c->topo_window_edge_width) / 2) *
                    k +
                6;
-  return (c->logo_radius * k + ext) * (1 + c->react_pulse_scale) + sh;
+  double r = (c->logo_radius * k + ext) * (1 + c->react_pulse_scale) + sh;
+  /* Tipped (gl.c), its near side comes closer to the eye and grows, by
+   * 1 / (1 - x sin(tilt) / WP_TILT_FOCAL) at x logo radii out. What this
+   * reaches past the snowflake's tips (~0.95) leaves room up to ~20 deg;
+   * only more grows the box. */
+  if (c->logo_tilt > 20 && c->logo_radius > 0) {
+    double x = r / (c->logo_radius * k);
+    double g = (1 - x * sin(20 * M_PI / 180) / WP_TILT_FOCAL) /
+               (1 - fmin(x * sin(fmin(c->logo_tilt, 60) * M_PI / 180) /
+                             WP_TILT_FOCAL,
+                         0.5));
+    r *= fmax(g, 1);
+  }
+  return r;
 }
 
 void wp_logo_offset(const struct wallpaper_config *c, int pw, int ph,

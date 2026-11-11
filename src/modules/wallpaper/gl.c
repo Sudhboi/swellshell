@@ -44,7 +44,8 @@ static struct {
   GLint l_sdf, l_shadow, l_neon, l_origin, l_step, l_bh, l_centre, l_rot,
       l_inv_s, l_scale, l_sdf_org, l_sdf_size, l_sh_org, l_sh_size, l_ne_org,
       l_ne_size, l_sh_off, l_sh_alpha, l_neon_a, l_fill, l_edge0, l_edge1,
-      l_edge2, l_edge_alpha, l_hw, l_axis0, l_axis;
+      l_edge2, l_edge_alpha, l_hw, l_axis0, l_axis, l_tilted, l_tm, l_tn,
+      l_focal, l_depth, l_layers, l_layer_a;
 } g;
 
 static const char *vs_src = "#version 300 es\n"
@@ -286,7 +287,11 @@ static const char *map_fs_src =
  * field is negative and the outline stroked where it is near 0, both in
  * screen px (the field times the pulse). The masks and the field are in
  * the resting snowflake's px; p is the pixel there, turned back and
- * shrunk by the pulse. The outline's gradient stays put on the screen. */
+ * shrunk by the pulse. The outline's gradient stays put on the screen.
+ * Tipped (tilted), each pixel is first taken onto the tipped plane, seen
+ * in perspective from focal px in front of it (tm turns the screen's
+ * space to the plane's, tn is its normal), and up to layers outlines on
+ * planes behind it, depth px at the back, show faintly through it. */
 static const char *logo_fs_src =
     "#version 300 es\n"
     "precision highp float;\n"
@@ -295,28 +300,55 @@ static const char *logo_fs_src =
     "    sh_size, ne_org, ne_size, sh_off, axis0, axis;\n"
     "uniform float bh, inv_s, scale, sh_alpha, neon_a, edge_alpha, hw;\n"
     "uniform vec4 fill, edge0, edge1, edge2;\n"
+    "uniform int tilted, layers;\n"
+    "uniform mat3 tm;\n"
+    "uniform vec3 tn;\n"
+    "uniform float focal, depth, layer_a;\n"
     "out vec4 color;\n"
     "vec2 back(vec2 d) {\n"
     "  return vec2(rot.x * d.x + rot.y * d.y, rot.x * d.y - rot.y * d.x) *\n"
     "         inv_s;\n"
     "}\n"
+    "vec2 onto(vec2 d, float off) {\n"
+    "  vec3 r = vec3(d, -focal);\n"
+    "  float t = (off - focal * tn.z) / dot(r, tn);\n"
+    "  return (tm * (vec3(0.0, 0.0, focal) + r * t)).xy;\n"
+    "}\n"
     "void main() {\n"
     "  vec2 q = origin + vec2(gl_FragCoord.x, bh - gl_FragCoord.y) * stp;\n"
     "  vec2 d0 = q - centre;\n"
+    "  vec2 ds = d0 - sh_off, dp = d0;\n"
+    "  if (tilted == 1) {\n"
+    "    ds = onto(ds, 0.0);\n"
+    "    dp = onto(d0, 0.0);\n"
+    "  }\n"
     "  vec4 o = vec4(0.0);\n"
     "  if (sh_alpha > 0.0)\n"
     "    o.a = sh_alpha *\n"
-    "          texture(shadow, (back(d0 - sh_off) - sh_org) / sh_size).r;\n"
+    "          texture(shadow, (back(ds) - sh_org) / sh_size).r;\n"
     "  float x = clamp(dot(q - axis0, axis), 0.0, 1.0);\n"
     "  vec4 ec = x < 0.5 ? mix(edge0, edge1, x * 2.0)\n"
     "                    : mix(edge1, edge2, x * 2.0 - 1.0);\n"
-    "  vec2 p = back(d0);\n"
+    "  vec2 p = back(dp);\n"
     "  if (neon_a > 0.0)\n"
     "    o.rgb += ec.rgb * neon_a *\n"
     "             texture(neon, (p - ne_org) / ne_size).r;\n"
     "  float d = texture(sdf, (p - sdf_org) / sdf_size).r * scale;\n"
     "  float fa = fill.a * clamp(0.5 - d, 0.0, 1.0);\n"
     "  o = vec4(fill.rgb * fa, fa) + o * (1.0 - fa);\n"
+    "  if (tilted == 1 && layer_a > 0.0 && hw > 0.0) {\n"
+    "    float seen = 1.0 - 0.6 * fa / max(fill.a, 0.001);\n"
+    "    for (int i = 8; i >= 1; --i) {\n"
+    "      if (i > layers)\n"
+    "        continue;\n"
+    "      float f = float(i) / float(layers);\n"
+    "      vec2 pl = back(onto(d0, -depth * f));\n"
+    "      float dl = texture(sdf, (pl - sdf_org) / sdf_size).r * scale;\n"
+    "      float la = layer_a * ec.a * edge_alpha * 0.75 * (1.0 - 0.7 * f) *\n"
+    "                 clamp(0.8 * hw - abs(dl) + 0.5, 0.0, 1.0) * seen;\n"
+    "      o = vec4(ec.rgb * la, la) + o * (1.0 - la);\n"
+    "    }\n"
+    "  }\n"
     "  if (hw > 0.0) {\n"
     "    float ea = ec.a * edge_alpha * clamp(hw - abs(d) + 0.5, 0.0, 1.0);\n"
     "    o = vec4(ec.rgb * ea, ea) + o * (1.0 - ea);\n"
@@ -410,7 +442,8 @@ static bool build_program(void) {
   L(sdf), L(shadow), L(neon), L(origin), L(bh), L(centre), L(rot), L(inv_s);
   L(scale), L(sdf_org), L(sdf_size), L(sh_org), L(sh_size), L(ne_org);
   L(ne_size), L(sh_off), L(sh_alpha), L(neon_a), L(fill), L(edge0), L(edge1);
-  L(edge2), L(edge_alpha), L(hw), L(axis0), L(axis);
+  L(edge2), L(edge_alpha), L(hw), L(axis0), L(axis), L(tilted), L(tm);
+  L(tn), L(focal), L(depth), L(layers), L(layer_a);
 #undef L
   g.l_step = glGetUniformLocation(g.logo_prog, "stp");
   glGenTextures(3, g.logo_tex);
@@ -889,6 +922,26 @@ void wp_gl_logo_draw(const struct wallpaper_config *c, int pw, int ph,
   double e = 0.6 * r0 * s;
   glUniform2f(g.l_axis0, cx - e, cy - e);
   glUniform2f(g.l_axis, 1 / (4 * e), 1 / (4 * e));
+  /* Tipped towards the pointer: its face turned towards screen direction
+   * (ux, uy) by th, about the axis (-uy, ux, 0) in the screen's plane. */
+  double th = hypot(f->tilt_x, f->tilt_y);
+  bool tilted = th > 1e-6 && c->logo_tilt > 0;
+  glUniform1i(g.l_tilted, tilted);
+  if (tilted) {
+    double ux = f->tilt_x / th, uy = f->tilt_y / th, kx = -uy, ky = ux;
+    double co = cos(th), si = sin(th);
+    /* Row by row; read column by column, it's the inverse. */
+    float m[9] = {co + (1 - co) * kx * kx, (1 - co) * kx * ky, si * ky,
+                  (1 - co) * kx * ky,      co + (1 - co) * ky * ky, -si * kx,
+                  -si * ky,                si * kx,                 co};
+    glUniformMatrix3fv(g.l_tm, 1, GL_FALSE, m);
+    glUniform3f(g.l_tn, si * ux, si * uy, co);
+    glUniform1f(g.l_focal, WP_TILT_FOCAL * r0 * ls);
+    glUniform1f(g.l_depth, c->logo_tilt_depth * r0 * s);
+    glUniform1i(g.l_layers, c->logo_tilt_layers);
+    /* The layers come in over the first half of the way to logo_tilt. */
+    glUniform1f(g.l_layer_a, fmin(th / (0.5 * c->logo_tilt * M_PI / 180), 1));
+  }
   glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 

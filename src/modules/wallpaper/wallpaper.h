@@ -17,6 +17,8 @@
 /* Geometry is given in pixels of a 2880 px wide output (the laptop panel
  * the GIFs were made for) and scaled to each output's buffer width. */
 #define WP_REF_WIDTH 2880.0
+/* The eye's distance from the tipped snowflake, x its radius. */
+#define WP_TILT_FOCAL 7.25
 
 /* Most visualiser bars per side of the ring. */
 #define WP_VIZ_MAX 128
@@ -116,6 +118,13 @@ struct wallpaper_config {
   double spin_speed;  /* deg/s, clockwise */
   double spin_gain, spin_max, spin_decay_s;
   int spin_hold_ms; /* no decay until the pointer is still this long */
+  /* while the pointer moves, the GPU's topo snowflake tips towards it (in
+   * perspective), this far (deg) with the pointer at the screen's edge, 0:
+   * never; outlines layered behind it give it depth */
+  double logo_tilt;
+  double logo_tilt_depth; /* the layers reach this far back, x logo_radius */
+  int logo_tilt_layers;
+  int logo_tilt_idle_ms; /* it tips back once the pointer is this still */
   /* past this speed (deg/s) the logo turns no faster; a bloom and speed
    * lines show the rest */
   double spin_visible_max;
@@ -250,6 +259,10 @@ struct wp_frame {
   /* the snowflake (and what's round it) moved off the centre by this, -1..1
    * of the way to the screen's edges (wp_logo_offset) */
   double wander_x, wander_y;
+  /* the snowflake tipped out of the screen (GPU only): its face turned
+   * towards screen direction (tilt_x, tilt_y) (y down) by their length,
+   * radians */
+  double tilt_x, tilt_y;
   double media_alpha; /* the details (title, artist, hexagon), 0: none */
   const char *title, *artist;
   double progress; /* 0..1 of the way round from the top, -1: none */
@@ -657,6 +670,9 @@ const char *wp_surfaces_viz_renderer(void);
  * module is animating, each draw also asks for the next frame. */
 void wp_surfaces_draw(bool full);
 int wp_surfaces_count(void);
+/* Output out's (as the pointer handlers get it) logical size; false if it
+ * is gone or not configured. */
+bool wp_surfaces_size(const void *out, int *w, int *h);
 /* Make sure every output has the saver's cover (an overlay layer surface
  * drawing the saver frame over the windows, faded by wp_cover_alpha). It
  * goes by itself once wp_cover_alpha() < 0. */

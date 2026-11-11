@@ -678,6 +678,113 @@ static double outside_light(const struct wallpaper_config *c,
   return (double)sum / n;
 }
 
+/* Light at the edge of the logo box past the map's, at most. */
+static int box_rim(cairo_surface_t *s, struct wp_rect r, int bg) {
+  int worst = 0;
+  for (int y = r.y; y < r.y + r.h; ++y)
+    for (int x = r.x; x < r.x + r.w; ++x) {
+      if (y != r.y && y != r.y + r.h - 1 && x != r.x && x != r.x + r.w - 1)
+        continue;
+      int e = abs(lum(s, x, y) - bg);
+      worst = e > worst ? e : worst;
+    }
+  return worst;
+}
+
+/* The snowflake tipped towards the pointer (GPU only): the side turned
+ * away is smaller, layered outlines show behind it, logo_tilt 0 turns it
+ * off, and it stays inside its box. */
+static void check_tilt(const char *dir) {
+  struct wallpaper_config c =
+      *(const struct wallpaper_config *)wallpaper_module.defaults;
+  c.topo_line_alpha = 0;
+  c.topo_bg_left = c.topo_bg_right = 0x505050ffu;
+  c.battery_bar = false;
+  double a = c.logo_tilt * M_PI / 180;
+  struct wp_frame f = {.percent = 50, .level = 1};
+  struct wp_rect r = wp_logo_box(&c, W, H, &f);
+  cairo_surface_t *s0 = gpu_logo(&c, &f, dir, NULL);
+  int bg = lum(s0, r.x, r.y);
+  cairo_surface_destroy(s0);
+
+  /* Turned to the right (no shadow, to measure): its right reaches less
+   * far than its left; untipped they match. */
+  struct wallpaper_config ns = c;
+  ns.topo_shadow_alpha = 0;
+  for (int t = 0; t < 2; ++t) {
+    struct wp_frame tf = f;
+    tf.tilt_x = t ? a : 0;
+    cairo_surface_t *s = gpu_logo(&ns, &tf, dir, NULL);
+    int left = W, right = 0;
+    for (int y = r.y; y < r.y + r.h; ++y)
+      for (int x = r.x; x < r.x + r.w; ++x)
+        if (abs(lum(s, x, y) - bg) > 30) {
+          left = x < left ? x : left;
+          right = x > right ? x : right;
+        }
+    double l = W / 2.0 - left, rr = right - W / 2.0;
+    fprintf(stderr, "tilt %d: reaches left %.0f, right %.0f\n", t, l, rr);
+    assert(t ? l - rr > 0.03 * l : fabs(l - rr) < 4);
+    cairo_surface_destroy(s);
+  }
+
+  /* The layers behind: only lighter, a fair number of pixels. */
+  struct wp_frame tf = f;
+  tf.tilt_x = a * 0.6;
+  tf.tilt_y = -a * 0.8;
+  tf.angle = 0.4;
+  cairo_surface_t *with = gpu_logo(&c, &tf, dir, "wallpaper_gl_logo_tilt");
+  struct wallpaper_config nl = c;
+  nl.logo_tilt_layers = 0;
+  cairo_surface_t *without = gpu_logo(&nl, &tf, dir, NULL);
+  long lit = 0, darker = 0;
+  for (int y = r.y; y < r.y + r.h; ++y)
+    for (int x = r.x; x < r.x + r.w; ++x) {
+      int e = lum(with, x, y) - lum(without, x, y);
+      lit += e > 8;
+      darker += e < -8;
+    }
+  fprintf(stderr, "tilt layers: %ld px lighter, %ld darker\n", lit, darker);
+  assert(lit > 2000 && darker == 0);
+  cairo_surface_destroy(with);
+  cairo_surface_destroy(without);
+
+  /* logo_tilt 0: flat whatever the frame says. */
+  struct wallpaper_config off = c;
+  off.logo_tilt = 0;
+  struct wp_frame ft = f;
+  ft.angle = tf.angle;
+  cairo_surface_t *flat = gpu_logo(&off, &tf, dir, NULL);
+  cairo_surface_t *plain = gpu_logo(&off, &ft, dir, NULL);
+  assert(memcmp(cairo_image_surface_get_data(flat),
+                cairo_image_surface_get_data(plain),
+                (size_t)cairo_image_surface_get_stride(flat) * H) == 0);
+  cairo_surface_destroy(flat);
+  cairo_surface_destroy(plain);
+
+  /* At its most, grown by the pulse, glowing, tipped any way: nothing
+   * reaches the box's edge that doesn't untipped. */
+  struct wp_frame big = f;
+  big.pulse = 1;
+  big.over = 1;
+  big.glow = 1;
+  cairo_surface_t *rest = gpu_logo(&c, &big, dir, NULL);
+  int rim0 = box_rim(rest, r, bg);
+  cairo_surface_destroy(rest);
+  for (int k = 0; k < 8; ++k) {
+    struct wp_frame b = big;
+    b.tilt_x = a * cos(k * M_PI / 4);
+    b.tilt_y = a * sin(k * M_PI / 4);
+    b.angle = 0.13 * k;
+    cairo_surface_t *s = gpu_logo(&c, &b, dir, NULL);
+    int rim = box_rim(s, r, bg);
+    if (rim > rim0 + 1)
+      fprintf(stderr, "tilt %d: box edge %d, untipped %d\n", k, rim, rim0);
+    assert(rim <= rim0 + 1);
+    cairo_surface_destroy(s);
+  }
+}
+
 /* The GPU's glass snowflake against cairo's draw_glass_logo(). */
 static void check_logo(const char *dir) {
   struct wallpaper_config c =
@@ -928,6 +1035,7 @@ int main(int argc, char **argv) {
   check_map(dir);
   check_shows(dir);
   check_logo(dir);
+  check_tilt(dir);
   wp_gl_finish();
   wp_render_finish();
   return 0;
